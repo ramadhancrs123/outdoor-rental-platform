@@ -2,7 +2,23 @@ import { render, screen, within } from "@testing-library/react";
 import App from "@/App";
 import { stubFetch } from "./helpers";
 import { mockViewport } from "./viewport";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
+
+vi.mock("@/app/providers/supabase/client", () => ({
+  supabase: {
+    auth: {
+      getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "test-auth-user" } } }, error: null }),
+      getUser: vi.fn().mockResolvedValue({ data: { user: { id: "test-auth-user", email: "admin@akasha.com" } }, error: null }),
+    },
+    from: vi.fn(() => ({
+      select: vi.fn(() => ({
+        eq: vi.fn(() => ({
+          maybeSingle: vi.fn().mockResolvedValue({ data: { akun_admin_id: "test-admin", nama_tampilan: "Admin Akasha", role: "super_admin", status: "active" }, error: null }),
+        })),
+      })),
+    })),
+  },
+}));
 
 describe("scenario B — responsive admin shell", () => {
   test("mobile viewport renders the mobile header with a sidebar trigger", async () => {

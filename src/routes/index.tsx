@@ -4,7 +4,8 @@ import { ErrorComponent } from "@/components/refine-ui/layout/error-component";
 import { Layout } from "@/components/refine-ui/layout/layout";
 import { Login } from "@/pages/login";
 import { Dashboard } from "@/pages/dashboard";
-import { KatalogList, KatalogShow } from "@/pages/katalog";
+import { CatalogList, CatalogShow } from "@/pages/katalog";
+
 import { RenterList, RenterShow } from "@/pages/penyewa";
 import {
   BlogPostCreate,
@@ -38,8 +39,8 @@ export function AppRoutes() {
         <Route path={paths.dashboard} element={<Dashboard />} />
 
         <Route path={paths.katalog}>
-          <Route index element={<KatalogList />} />
-          <Route path="show/:id" element={<KatalogShow />} />
+          <Route index element={<CatalogList />} />
+          <Route path="show/:id" element={<CatalogShow />} />
         </Route>
 
         <Route path={paths.penyewa}>

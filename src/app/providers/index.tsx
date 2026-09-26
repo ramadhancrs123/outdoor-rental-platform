@@ -1,4 +1,5 @@
 import { Refine } from "@refinedev/core";
+import { authProvider } from "./auth";
 import { DevtoolsPanel, DevtoolsProvider } from "@refinedev/devtools";
 import { RefineKbar, RefineKbarProvider } from "@refinedev/kbar";
 import routerProvider, {
@@ -19,6 +20,7 @@ export function AppProviders({ children }: PropsWithChildren) {
       <ThemeProvider>
         <DevtoolsProvider>
           <Refine
+            authProvider={authProvider}
             notificationProvider={useNotificationProvider()}
             routerProvider={routerProvider}
             dataProvider={dataProvider}

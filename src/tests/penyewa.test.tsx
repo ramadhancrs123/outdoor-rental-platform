@@ -2,6 +2,17 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { describe, expect, test, vi } from "vitest";
 import { AppProviders } from "@/app/providers";
+
+vi.mock("@/app/providers/auth", () => ({
+  authProvider: {
+    login: async () => ({ success: true }),
+    logout: async () => ({ success: true }),
+    check: async () => ({ authenticated: true }),
+    getIdentity: async () => ({ id: "user-1", name: "Test Admin", email: "test@example.com" }),
+    getPermissions: async () => "super_admin",
+    onError: async (error: unknown) => ({ error }),
+  },
+}));
 import { RenterList } from "@/pages/penyewa/list";
 import { RenterShow } from "@/pages/penyewa/show";
 import { buildRenterDetailPath, buildRenterListPath } from "@/features/penyewa/service";
