@@ -1,5 +1,8 @@
 export const paths = {
   home: "/",
+  dashboard: "/dashboard",
+  katalog: "/katalog",
+  penyewa: "/penyewa",
   blogPosts: "/blog-posts",
   categories: "/categories",
 } as const;
