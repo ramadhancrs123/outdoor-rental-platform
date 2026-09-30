@@ -1,0 +1,105 @@
+{
+  "assignment": "A5",
+  "operation": "commercial_financial_integration_gate",
+  "technical_state": "VERIFIED",
+  "formal_gate_state": "PENDING_ACTIVE_WAVE_W008",
+  "timestamp": "2026-09-29T08:49:33.591Z",
+  "target": "rental-outdoor",
+  "scope": {
+    "ui": "parallel_uiux_session_not_owned_here",
+    "backend": "read-integration-and-verification",
+    "database": "live_supabase"
+  },
+  "governance": {
+    "active_wave": "W008",
+    "active_assignment": "A1-W008",
+    "controller_untouched": true,
+    "note": "AGENT-EXECUTION controller remains authoritative; this session does not rewrite run/agent control state."
+  },
+  "evidence": {
+    "sentinelx": {
+      "state": "VERIFIED",
+      "host": "arch-din",
+      "host_id": "host_1a83b4bc1d1cabf7",
+      "observed": "connected"
+    },
+    "local_tests": {
+      "state": "VERIFIED",
+      "report_integration": "3/3 pass",
+      "service_regression": "10 service test files, 66/66 tests passed",
+      "tsc": "PASS"
+    },
+    "database": {
+      "project_id": "nbirkybutpvtrqifaxlt",
+      "tenant_id": "b0dc9553-1a62-4599-85d7-51a288d33567",
+      "rls": "VERIFIED",
+      "orphan_integrity": {
+        "purchase_to_inventory_provenance_orphans": 0,
+        "reservation_to_renter_orphans": 0,
+        "rental_to_renter_orphans": 0,
+        "purchase_to_supplier_orphans": 0,
+        "purchase_to_line_orphans": 0,
+        "rental_to_reservation_orphans": 0,
+        "finance_payment_transaction_orphans": 0,
+        "finance_expense_transaction_orphans": 0
+      },
+      "procurement_receiving": {
+        "state": "VERIFIED_DEFERRED_BASELINE",
+        "decision_file": "changes/decisions/A5-receiving-baseline-deferred.md",
+        "canonical_receiving_entity": false,
+        "rental_handover_entity": "serah_terima",
+        "purchase_inventory_provenance": "unit_barang.sumber_pembelian_detail_id -> detail_pembelian"
+      }
+    },
+    "report_consumer": {
+      "state": "VERIFIED",
+      "service": "src/features/laporan/service.ts",
+      "types": "src/features/laporan/types.ts",
+      "tests": "src/tests/laporan.service.test.ts",
+      "rule": "Report delegates financial facts to Finance server-side contracts and validates period consistency; no local Money Truth calculation/mutation."
+    }
+  },
+  "checks": [
+    {
+      "id": "catalog_to_reservation_rental",
+      "state": "VERIFIED",
+      "evidence": "Product/variant references exist on reservation/rental detail contracts; service tests pass."
+    },
+    {
+      "id": "renter_to_reservation_rental",
+      "state": "VERIFIED",
+      "evidence": "Tenant-safe renter relations; orphan check 0."
+    },
+    {
+      "id": "supplier_to_purchase",
+      "state": "VERIFIED",
+      "evidence": "Purchase supplier relation and service tests; orphan check 0."
+    },
+    {
+      "id": "purchase_to_receiving_to_inventory",
+      "state": "VERIFIED_DEFERRED_BASELINE",
+      "evidence": "Receiving is explicitly not modeled; system verifies that it does not infer receiving and preserves purchase provenance into Inventory. Future receiving requires separate ADR/ERD/database change."
+    },
+    {
+      "id": "purchase_to_finance",
+      "state": "VERIFIED",
+      "evidence": "Finance expense command supports purchase source and validates source within tenant."
+    },
+    {
+      "id": "maintenance_to_finance_context",
+      "state": "VERIFIED",
+      "evidence": "Finance expense command supports maintenance source and validates source within tenant; maintenance cost remains separate from payment."
+    },
+    {
+      "id": "finance_to_report",
+      "state": "VERIFIED",
+      "evidence": "Dedicated Laporan service consumes Finance server contracts for summary, transaction page, expense analysis, product attribution and unit attribution; 3/3 integration tests pass; TypeScript passes."
+    },
+    {
+      "id": "finance_to_audit_traceability",
+      "state": "VERIFIED",
+      "evidence": "Finance commands retain audit/outbox and live structural orphan checks are 0. Auth-gated finance_reconciliation remains last authenticated runtime evidence because raw SQL execution lacks auth.uid()."
+    }
+  ],
+  "next_action": "When controller releases W008 and opens the Assignment 5 wave, promote this technical evidence to the formal VERIFIED gate without changing the documented boundaries."
+}

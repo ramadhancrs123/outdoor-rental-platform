@@ -103,7 +103,10 @@
     "lint:fix": "eslint . --fix",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "visual:verify": "node scripts/browser-verify/runner.mjs",
+    "visual:doctor": "node scripts/browser-verify/doctor.mjs",
+    "visual:verify:penyewa": "node scripts/browser-verify/runner.mjs --scenario=penyewa --path=/penyewa"
   },
   "browserslist": {
     "production": [

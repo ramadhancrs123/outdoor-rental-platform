@@ -1,154 +1,123 @@
-import {
-  useRefineOptions,
-  useActiveAuthProvider,
-  useLogout,
-} from "@refinedev/core";
-import {
-  DropdownMenu,
-  DropdownMenuItem,
-  DropdownMenuContent,
-} from "@/components/ui/dropdown-menu";
-import { DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+"use client";
+
+import { ArrowLeft, Bell, EllipsisVertical, Menu, Search, SunMoon } from "lucide-react";
+import { Link, useLocation } from "react-router";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { ThemeToggle } from "@/components/refine-ui/theme/theme-toggle";
-import { UserAvatar } from "@/components/refine-ui/layout/user-avatar";
-import { useSidebar, SidebarTrigger } from "@/components/ui/sidebar";
-import { LogOutIcon } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { SidebarTrigger } from "@/components/ui/sidebar";
+import { paths } from "@/routes/paths";
+import { useCurrentUsaha } from "@/app/current-usaha-context";
+import { useEffect, useState } from "react";
+import { getUnreadNotificationCount } from "@/features/pemberitahuan/service";
 
-export const Header = () => {
-  const { isMobile } = useSidebar();
-
-  return <>{isMobile ? <MobileHeader /> : <DesktopHeader />}</>;
-};
-
-function DesktopHeader() {
-  return (
-    <header
-      className={cn(
-        "sticky",
-        "top-0",
-        "flex",
-        "h-16",
-        "shrink-0",
-        "items-center",
-        "gap-4",
-        "border-b",
-        "border-border",
-        "bg-sidebar",
-        "pr-3",
-        "justify-end",
-        "z-40"
-      )}
-    >
-      <ThemeToggle />
-      <UserDropdown />
-    </header>
-  );
+function financeHeader(pathname: string) {
+  if (!pathname.startsWith(paths.keuangan)) return null;
+  if (pathname === paths.keuangan) return { title: "Keuangan", back: paths.dashboard };
+  if (pathname === paths.keuangan + "/pembayaran") return { title: "Pembayaran", back: paths.keuangan };
+  if (pathname.startsWith(paths.keuangan + "/pembayaran/create")) return { title: "Catat Pembayaran", back: paths.keuangan + "/pembayaran" };
+  if (pathname.startsWith(paths.keuangan + "/pembayaran/")) return { title: "Detail Pembayaran", back: paths.keuangan + "/pembayaran" };
+  if (pathname === paths.keuangan + "/pengeluaran") return { title: "Pengeluaran", back: paths.keuangan };
+  if (pathname.startsWith(paths.keuangan + "/pengeluaran/create")) return { title: "Catat Pengeluaran", back: paths.keuangan + "/pengeluaran" };
+  if (pathname.startsWith(paths.keuangan + "/pengeluaran/")) return { title: "Detail Pengeluaran", back: paths.keuangan + "/pengeluaran" };
+  if (pathname === paths.keuangan + "/transaksi") return { title: "Transaksi", back: paths.keuangan };
+  if (pathname.startsWith(paths.keuangan + "/transaksi/")) return { title: "Detail Transaksi", back: paths.keuangan + "/transaksi" };
+  return { title: "Keuangan", back: paths.dashboard };
 }
 
-function MobileHeader() {
-  const { open, isMobile } = useSidebar();
+export function Header() {
+  const location = useLocation();
+  const finance = financeHeader(location.pathname);
+  const { current } = useCurrentUsaha();
+  const usahaId = current?.usahaId;
+  const adminId = current?.akunAdminId;
+  const [unreadCount, setUnreadCount] = useState(0);
 
-  const { title } = useRefineOptions();
+  useEffect(() => {
+    let active = true;
+    if (!usahaId || !adminId) {
+      setUnreadCount(0);
+      return () => { active = false; };
+    }
+    void getUnreadNotificationCount(usahaId, adminId)
+      .then((count) => { if (active) setUnreadCount(count); })
+      .catch(() => { if (active) setUnreadCount(0); });
+    return () => { active = false; };
+  }, [usahaId, adminId]);
 
   return (
-    <header
-      className={cn(
-        "sticky",
-        "top-0",
-        "flex",
-        "h-12",
-        "shrink-0",
-        "items-center",
-        "gap-2",
-        "border-b",
-        "border-border",
-        "bg-sidebar",
-        "pr-3",
-        "justify-between",
-        "z-40"
+    <header className="sticky top-0 z-40 flex min-h-14 items-center gap-3 border-b border-border/80 bg-background/92 px-3 backdrop-blur-md sm:px-5">
+      {finance ? (
+        <div className="flex min-w-0 flex-1 items-center gap-2 md:hidden">
+          <Button asChild variant="ghost" size="icon" aria-label="Kembali" className="size-9 shrink-0">
+            <Link to={finance.back}><ArrowLeft className="size-5" /></Link>
+          </Button>
+          <div className="min-w-0">
+            <p className="truncate text-[15px] font-bold">{finance.title}</p>
+            <p className="text-[10px] text-muted-foreground">Keuangan</p>
+          </div>
+        </div>
+      ) : (
+        <SidebarTrigger aria-label="Toggle Sidebar" className="size-9 md:hidden">
+          <Menu className="size-5" />
+        </SidebarTrigger>
       )}
-    >
-      <SidebarTrigger
-        className={cn("text-muted-foreground", "rotate-180", "ml-1", {
-          "opacity-0": open,
-          "opacity-100": !open || isMobile,
-          "pointer-events-auto": !open || isMobile,
-          "pointer-events-none": open && !isMobile,
-        })}
-      />
 
-      <div
-        className={cn(
-          "whitespace-nowrap",
-          "flex",
-          "flex-row",
-          "h-full",
-          "items-center",
-          "justify-start",
-          "gap-2",
-          "transition-discrete",
-          "duration-200",
-          {
-            "pl-3": !open,
-            "pl-5": open,
-          }
-        )}
-      >
-        <div>{title.icon}</div>
-        <h2
-          className={cn(
-            "text-sm",
-            "font-bold",
-            "transition-opacity",
-            "duration-200",
-            {
-              "opacity-0": !open,
-              "opacity-100": open,
-            }
-          )}
-        >
-          {title.text}
-        </h2>
+      <div className="flex min-w-0 flex-1 items-center gap-3">
+        <div className="hidden items-center gap-2 lg:flex">
+          <div className="grid size-8 place-items-center rounded-lg bg-primary text-primary-foreground">
+            <TentMark />
+          </div>
+          <div className="leading-tight">
+            <p className="text-sm font-bold">Akasha Store</p>
+            <p className="text-[10px] text-muted-foreground">management system</p>
+          </div>
+        </div>
+
+        <div className="relative hidden w-full max-w-2xl md:block">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+          <Input aria-label="Cari operasional" placeholder="Cari penyewa, barang, kode rental, atau QR..." className="h-10 border-0 bg-muted/60 pl-9 pr-14 shadow-none focus-visible:ring-1" />
+          <kbd className="pointer-events-none absolute right-2 top-1/2 hidden -translate-y-1/2 rounded-md border bg-background px-2 py-0.5 text-[10px] text-muted-foreground lg:block">⌘K</kbd>
+        </div>
+
+        {!finance ? (
+          <div className="flex min-w-0 flex-1 items-center gap-2 md:hidden">
+            <div className="grid size-8 shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground"><TentMark /></div>
+            <div className="min-w-0 leading-tight">
+              <p className="truncate text-sm font-bold">Akasha Store</p>
+              <p className="text-[10px] text-muted-foreground">management system</p>
+            </div>
+          </div>
+        ) : null}
+        <Button variant="outline" className="hidden h-10 min-w-0 flex-1 justify-start gap-2 bg-muted/50 text-muted-foreground sm:max-md:flex">
+          <Search className="size-4" />Cari...
+        </Button>
       </div>
 
-      <ThemeToggle className={cn("h-8", "w-8")} />
+      <div className="flex items-center gap-1">
+        {finance ? (
+          <Button variant="ghost" size="icon" aria-label="Menu Keuangan" className="md:hidden">
+            <EllipsisVertical className="size-[18px]" />
+          </Button>
+        ) : (
+          <Button asChild variant="ghost" size="icon" aria-label={unreadCount ? "Pemberitahuan, ada yang belum dibaca" : "Pemberitahuan"} className="relative">
+            <Link to={paths.pemberitahuan}>
+              <Bell className="size-[18px]" />
+              {unreadCount > 0 ? <span className="absolute -right-0.5 -top-0.5 grid min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[9px] font-bold leading-4 text-white">{unreadCount > 9 ? "9+" : unreadCount}</span> : null}
+            </Link>
+          </Button>
+        )}
+        <ThemeToggle className="hidden sm:inline-flex" />
+        <Button variant="ghost" size="icon" aria-label="Tema" className="sm:hidden">
+          <SunMoon className="size-[18px]" />
+        </Button>
+      </div>
     </header>
   );
 }
 
-const UserDropdown = () => {
-  const { mutate: logout, isPending: isLoggingOut } = useLogout();
-
-  const authProvider = useActiveAuthProvider();
-
-  if (!authProvider?.getIdentity) {
-    return null;
-  }
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger>
-        <UserAvatar />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuItem
-          onClick={() => {
-            logout();
-          }}
-        >
-          <LogOutIcon
-            className={cn("text-destructive", "hover:text-destructive")}
-          />
-          <span className={cn("text-destructive", "hover:text-destructive")}>
-            {isLoggingOut ? "Logging out..." : "Logout"}
-          </span>
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-};
+function TentMark() {
+  return <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden="true"><path d="M3 19 12 5l9 14H3Z" /><path d="m8 19 4-6 4 6" /></svg>;
+}
 
 Header.displayName = "Header";
-MobileHeader.displayName = "MobileHeader";
-DesktopHeader.displayName = "DesktopHeader";

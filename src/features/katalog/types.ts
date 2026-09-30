@@ -101,3 +101,34 @@ export const DEFAULT_CATALOG_FILTERS: CatalogListFilters = {
   page: 1,
   pageSize: 20,
 };
+
+export type CatalogPackage = {
+  paket_sewa_id: string;
+  usaha_id: string;
+  nama: string;
+  slug: string;
+  deskripsi: string | null;
+  harga_dasar: number | null;
+  currency_code: string;
+  status: string;
+  is_public: boolean;
+  metadata: Record<string, unknown> | null;
+  updated_at: string;
+};
+
+export type CatalogPackageComponent = {
+  komponen_paket_id: string;
+  usaha_id: string;
+  paket_sewa_id: string;
+  barang_id: string | null;
+  varian_barang_id: string | null;
+  jumlah: number;
+  catatan: string | null;
+  updated_at: string;
+};
+
+export type CatalogVariantOption = CatalogVariant & {
+  barang_nama: string;
+};
+
+export const CATALOG_PRODUCT_MEDIA_BUCKET = "rental-public-media";

@@ -1,7 +1,13 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router";
-import { describe, expect, test, vi } from "vitest";
+import { describe, expect, test, vi, afterEach } from "vitest";
 import { AppProviders } from "@/app/providers";
+import { useCurrentUsaha } from "@/app/current-usaha-context";
+import { RenterList } from "@/pages/penyewa/list";
+import { RenterShow } from "@/pages/penyewa/show";
+import { buildRenterDetailPath, buildRenterListPath } from "@/features/penyewa/service";
+import { mockViewport } from "./viewport";
 
 vi.mock("@/app/providers/auth", () => ({
   authProvider: {
@@ -13,34 +19,44 @@ vi.mock("@/app/providers/auth", () => ({
     onError: async (error: unknown) => ({ error }),
   },
 }));
-import { RenterList } from "@/pages/penyewa/list";
-import { RenterShow } from "@/pages/penyewa/show";
-import { buildRenterDetailPath, buildRenterListPath } from "@/features/penyewa/service";
-import { mockViewport } from "./viewport";
 
-const tenant = { akunAdminId: "admin-1", usahaId: "usaha-a", usahaNama: "Usaha A" };
-const renter = {
+const tenantA = { akunAdminId: "admin-1", usahaId: "usaha-a", usahaNama: "Usaha A" };
+const tenantB = { akunAdminId: "admin-1", usahaId: "usaha-b", usahaNama: "Usaha B" };
+const renterA = {
   penyewa_id: "renter-1", nama_lengkap: "Siti Sintetis", nomor_telepon: "081234567890",
-  alamat: "Alamat sintetis", status: "active", created_at: "2026-01-01T00:00:00Z",
+  alamat: "Alamat sintetis A", status: "active", created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-02T00:00:00Z",
+};
+const renterB = {
+  penyewa_id: "renter-2", nama_lengkap: "Budi Beta", nomor_telepon: "089876543210",
+  alamat: "Alamat sintetis B", status: "active", created_at: "2026-01-03T00:00:00Z",
+  updated_at: "2026-01-04T00:00:00Z",
 };
 
 function tokenFor(sub = "user-1") {
   const payload = btoa(JSON.stringify({ sub }));
-  return `header.${payload}.signature`;
+  return "header." + payload + ".signature";
 }
+
 function response(rows: unknown[], status = 200) {
   return new Response(JSON.stringify(rows), { status, headers: { "Content-Type": "application/json" } });
 }
+
 function installAuth() {
-  window.localStorage.setItem("sb-nbirkybutpvtrqifaxlt-auth-token", JSON.stringify({ access_token: tokenFor() }));
+  window.localStorage.setItem(
+    "sb-nbirkybutpvtrqifaxlt-auth-token",
+    JSON.stringify({ access_token: tokenFor() }),
+  );
 }
-function installTenantFetch(renters: unknown[] = [renter]) {
+
+function installTenantFetch(renters: unknown[] = [renterA]) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
-    if (url.includes("akun_admin?")) return response([{ akun_admin_id: tenant.akunAdminId }]);
-    if (url.includes("keanggotaan_usaha?")) return response([{ usaha_id: tenant.usahaId }]);
-    if (url.includes("usaha?")) return response([{ usaha_id: tenant.usahaId, nama: tenant.usahaNama, status: "active" }]);
+    if (url.includes("akun_admin?")) return response([{ akun_admin_id: tenantA.akunAdminId }]);
+    if (url.includes("keanggotaan_usaha?")) return response([{ usaha_id: tenantA.usahaId }]);
+    if (url.includes("usaha?")) return response([{ usaha_id: tenantA.usahaId, nama: tenantA.usahaNama, status: "active" }]);
+    if (url.includes("foto_penyewa?")) return response([]);
+    if (url.includes("bukti_identitas_penyewa?")) return response([]);
     if (url.includes("penyewa?")) return response(renters);
     return response([], 404);
   });
@@ -48,15 +64,73 @@ function installTenantFetch(renters: unknown[] = [renter]) {
   installAuth();
   return fetchMock;
 }
-function renderList() {
-  return render(<MemoryRouter initialEntries={["/penyewa"]}><AppProviders><RenterList /></AppProviders></MemoryRouter>);
+
+function installMultiUsahaFetch() {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("akun_admin?")) return response([{ akun_admin_id: tenantA.akunAdminId }]);
+    if (url.includes("keanggotaan_usaha?")) {
+      return response([{ usaha_id: tenantA.usahaId }, { usaha_id: tenantB.usahaId }]);
+    }
+    if (url.includes("usaha?") && url.includes("usaha-a")) {
+      return response([{ usaha_id: tenantA.usahaId, nama: tenantA.usahaNama, status: "active" }]);
+    }
+    if (url.includes("usaha?") && url.includes("usaha-b")) {
+      return response([{ usaha_id: tenantB.usahaId, nama: tenantB.usahaNama, status: "active" }]);
+    }
+    if (url.includes("penyewa?") && url.includes("usaha_id=eq.usaha-a")) return response([renterA]);
+    if (url.includes("penyewa?") && url.includes("usaha_id=eq.usaha-b")) return response([renterB]);
+    return response([], 404);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  installAuth();
+  window.sessionStorage.setItem("rental-admin.current-usaha-id", tenantA.usahaId);
+  return fetchMock;
 }
 
-describe("Penyewa read-side contract", () => {
+function renderList() {
+  return render(
+    <MemoryRouter initialEntries={["/penyewa"]}>
+      <AppProviders><RenterList /></AppProviders>
+    </MemoryRouter>,
+  );
+}
+
+function renderDetail() {
+  return render(
+    <MemoryRouter initialEntries={["/penyewa/" + renterA.penyewa_id]}>
+      <AppProviders>
+        <Routes><Route path="/penyewa/:id" element={<RenterShow />} /></Routes>
+      </AppProviders>
+    </MemoryRouter>,
+  );
+}
+
+function UsahaSwitchProbe() {
+  const { current, available, selectUsaha } = useCurrentUsaha();
+  return (
+    <div>
+      <p data-testid="current-usaha">{current?.usahaNama ?? "none"}</p>
+      {available.map((usaha) => (
+        <button key={usaha.usahaId} type="button" onClick={() => void selectUsaha(usaha.usahaId)}>
+          Ganti ke {usaha.usahaNama}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  window.localStorage.clear();
+  window.sessionStorage.clear();
+});
+
+describe("Penyewa Phase 1 read-side contract", () => {
   test("tenant-scoped list and detail always bind usaha_id", () => {
-    expect(buildRenterListPath(tenant.usahaId)).toContain("usaha_id=eq.usaha-a");
-    expect(buildRenterListPath(tenant.usahaId)).not.toContain("usaha-b");
-    expect(buildRenterDetailPath(tenant.usahaId, renter.penyewa_id)).toContain("usaha_id=eq.usaha-a");
+    expect(buildRenterListPath(tenantA.usahaId)).toContain("usaha_id=eq.usaha-a");
+    expect(buildRenterListPath(tenantA.usahaId)).not.toContain("usaha-b");
+    expect(buildRenterDetailPath(tenantA.usahaId, renterA.penyewa_id)).toContain("usaha_id=eq.usaha-a");
   });
 
   test("search uses name/normalized phone inside tenant scope", async () => {
@@ -64,7 +138,8 @@ describe("Penyewa read-side contract", () => {
     renderList();
     await screen.findAllByText("Siti Sintetis");
     fireEvent.change(screen.getByLabelText(/nama atau nomor telepon/i), { target: { value: "08123" } });
-    fireEvent.click(screen.getByRole("button", { name: "Cari" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cari penyewa" }));
+
     await waitFor(() => {
       const urls = fetchMock.mock.calls.map(([input]) => String(input));
       expect(urls.some((url) => url.includes("nomor_telepon_normalized"))).toBe(true);
@@ -72,10 +147,42 @@ describe("Penyewa read-side contract", () => {
     });
   });
 
-  test("empty state is explicit", async () => {
+  test("empty database has a dedicated empty state", async () => {
     installTenantFetch([]);
     renderList();
     expect(await screen.findByText("Belum ada penyewa")).toBeInTheDocument();
+    expect(screen.queryByText(/Tidak ada penyewa yang cocok/)).not.toBeInTheDocument();
+  });
+
+  test("search no-result is distinct from an empty database", async () => {
+    installTenantFetch([]);
+    renderList();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Cari penyewa" })).not.toBeDisabled());
+
+    fireEvent.change(screen.getByLabelText(/nama atau nomor telepon/i), { target: { value: "08123" } });
+    fireEvent.click(screen.getByRole("button", { name: "Cari penyewa" }));
+
+    expect(await screen.findByText("Penyewa tidak ditemukan")).toBeInTheDocument();
+    expect(screen.getByText(/Tidak ada penyewa yang cocok dengan pencarian/)).toBeInTheDocument();
+    expect(screen.queryByText("Belum ada penyewa")).not.toBeInTheDocument();
+  });
+
+  test("authorization error is not rendered as an empty state", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("akun_admin?")) return response([{ akun_admin_id: tenantA.akunAdminId }]);
+      if (url.includes("keanggotaan_usaha?")) return response([{ usaha_id: tenantA.usahaId }]);
+      if (url.includes("usaha?")) return response([], 403);
+      return response([], 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    installAuth();
+
+    renderList();
+
+    expect(await screen.findByText("Akses ditolak")).toBeInTheDocument();
+    expect(screen.getByText("Anda tidak memiliki akses ke data penyewa pada Usaha ini.")).toBeInTheDocument();
+    expect(screen.queryByText("Belum ada penyewa")).not.toBeInTheDocument();
   });
 
   test("read failure exposes retry state", async () => {
@@ -86,51 +193,98 @@ describe("Penyewa read-side contract", () => {
     expect(screen.getByRole("button", { name: "Coba lagi" })).toBeInTheDocument();
   });
 
-  test("list projection excludes full address and identity/storage-sensitive fields", async () => {
+  test("detail route keeps sensitive media lazy and does not invent unavailable cross-module data", async () => {
     const fetchMock = installTenantFetch();
-    renderList();
-    await screen.findAllByText("Siti Sintetis");
+    renderDetail();
 
-    const renterUrl = fetchMock.mock.calls
-      .map(([input]) => String(input))
-      .find((url) => url.includes("penyewa?"));
-    expect(renterUrl).toBeDefined();
-    expect(renterUrl).not.toContain("alamat");
-    expect(screen.queryByText("Alamat sintetis")).not.toBeInTheDocument();
-    expect(screen.queryByText(/nomor identitas|storage path|catatan internal/i)).not.toBeInTheDocument();
-  });
-
-  test("detail route renders authorized tenant detail without media URL", async () => {
-    installTenantFetch();
-    render(<MemoryRouter initialEntries={[`/penyewa/${renter.penyewa_id}`]}><AppProviders><Routes><Route path="/penyewa/:id" element={<RenterShow />} /></Routes></AppProviders></MemoryRouter>);
     expect(await screen.findByRole("heading", { level: 1, name: "Siti Sintetis" })).toBeInTheDocument();
-    expect(screen.getByText("Media privat belum tersedia.")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Identitas" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Kontak" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Operasional" })).toBeInTheDocument();
+
+    const initialUrls = fetchMock.mock.calls.map(([input]) => String(input));
+    expect(initialUrls.some((url) => url.includes("bukti_identitas_penyewa?"))).toBe(false);
+    expect(initialUrls.some((url) => url.includes("foto_penyewa?"))).toBe(false);
+
+    expect(screen.getByRole("tab", { name: "Ringkasan" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Identitas" })).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByRole("tabpanel", { name: "Ringkasan" })).toBeInTheDocument();
+
+    installAuth();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: "Identitas" }));
+    expect(screen.getByRole("tab", { name: "Identitas" })).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByText("Bukti Identitas")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Tambah KTP/SIM" })).toBeInTheDocument();
+
+    await waitFor(() => {
+      const urls = fetchMock.mock.calls.map(([input]) => String(input));
+
+      expect(urls.some((url) => url.includes("bukti_identitas_penyewa?"))).toBe(true);
+      expect(urls.some((url) => url.includes("foto_penyewa?"))).toBe(true);
+    });
+    expect(screen.getByText("Belum ada bukti identitas")).toBeInTheDocument();
+    expect(screen.getByText("Belum ada foto penyewa")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Operasional" }));
+    expect(screen.getByRole("tab", { name: "Operasional" })).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByText("Tidak ada rental aktif")).toBeInTheDocument();
+    expect(screen.queryByText("Reservasi Aktif")).not.toBeInTheDocument();
+    expect(screen.queryByText("Pengembalian Terkait")).not.toBeInTheDocument();
   });
 
-  test("unauthorized deep-link does not expose a renter record", async () => {
+  test("404 detail uses a security-safe not-found state", async () => {
     const fetchMock = installTenantFetch();
     fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes("akun_admin?")) return response([{ akun_admin_id: tenant.akunAdminId }]);
-      if (url.includes("keanggotaan_usaha?")) return response([{ usaha_id: tenant.usahaId }]);
-      if (url.includes("usaha?")) return response([{ usaha_id: tenant.usahaId, nama: tenant.usahaNama, status: "active" }]);
+      if (url.includes("akun_admin?")) return response([{ akun_admin_id: tenantA.akunAdminId }]);
+      if (url.includes("keanggotaan_usaha?")) return response([{ usaha_id: tenantA.usahaId }]);
+      if (url.includes("usaha?")) return response([{ usaha_id: tenantA.usahaId, nama: tenantA.usahaNama, status: "active" }]);
       if (url.includes("penyewa?")) return response([]);
       return response([], 404);
     });
-    render(<MemoryRouter initialEntries={["/penyewa/renter-not-owned"]}><AppProviders><Routes><Route path="/penyewa/:id" element={<RenterShow />} /></Routes></AppProviders></MemoryRouter>);
-    expect(await screen.findByText("Detail tidak tersedia")).toBeInTheDocument();
+
+    renderDetail();
+
+    expect(await screen.findByText("Penyewa tidak ditemukan")).toBeInTheDocument();
+    expect(screen.getByText("Penyewa tidak ditemukan atau tidak tersedia dalam Usaha aktif.")).toBeInTheDocument();
     expect(screen.queryByText("Siti Sintetis")).not.toBeInTheDocument();
   });
 
-  test("mobile viewport selects the implemented card presentation branch", async () => {
+  test("current Usaha switch invalidates renter state and revalidates against the selected Usaha", async () => {
+    installMultiUsahaFetch();
+
+    render(
+      <MemoryRouter initialEntries={["/penyewa"]}>
+        <AppProviders>
+          <UsahaSwitchProbe />
+          <RenterList />
+        </AppProviders>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByTestId("current-usaha")).toHaveTextContent("Usaha A");
+    expect((await screen.findAllByText("Siti Sintetis")).length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Ganti ke Usaha B" }));
+
+    await waitFor(() => expect(screen.getByTestId("current-usaha")).toHaveTextContent("Usaha B"));
+    expect((await screen.findAllByText("Budi Beta")).length).toBeGreaterThan(0);
+    expect(screen.queryByText("Siti Sintetis")).not.toBeInTheDocument();
+
+    const urls = vi.mocked(globalThis.fetch).mock.calls.map(([input]) => String(input));
+    expect(urls.some((url) => url.includes("penyewa?") && url.includes("usaha_id=eq.usaha-b"))).toBe(true);
+  });
+
+  test("mobile viewport keeps the mobile card presentation", async () => {
     mockViewport(375, 812);
     installTenantFetch();
     const { container } = renderList();
 
     expect(await screen.findAllByText("Siti Sintetis")).not.toHaveLength(0);
 
-    const mobileBranch = container.querySelector(".md\\:hidden");
-    const desktopBranch = container.querySelector(".hidden.md\\:block");
+    const mobileBranch = container.querySelector("[class~=\"md:hidden\"]");
+    const desktopBranch = container.querySelector("[class~=\"hidden\"][class~=\"md:block\"]");
 
     expect(mobileBranch).toBeInTheDocument();
     expect(mobileBranch?.querySelector('a[href="/penyewa/renter-1"]')).toBeInTheDocument();

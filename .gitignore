@@ -30,3 +30,20 @@ _.sln
 \*.sw?
 .vercel
 .env*
+
+.visual-verify/
+
+**/visual-verify.env
+
+# Local agent/editor artifacts — never commit generated backups
+*.bak.*
+
+# Local visual verification configuration
+.config/rental-outdoor/*.env
+!.config/rental-outdoor/*.env.example
+
+# Supabase CLI local state
+supabase/.temp/
+
+# Local reference screenshot
+/ref-ui.png

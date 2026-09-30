@@ -6,6 +6,7 @@ import { mockViewport, stubScrollAndPointer } from "./viewport";
 beforeEach(() => {
   mockViewport(1280, 800);
   window.localStorage.clear();
+  window.sessionStorage.clear();
   stubScrollAndPointer();
 });
 

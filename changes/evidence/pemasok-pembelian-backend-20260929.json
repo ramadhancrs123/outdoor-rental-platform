@@ -1,0 +1,81 @@
+{
+  "operation": "pemasok_pembelian_backend_and_ui_contract_wave",
+  "state": "VERIFIED_WITH_REPO_WIDE_CI_BLOCKER",
+  "scope": {
+    "ui_ux_final_design": false,
+    "functional_frontend_contract": true,
+    "database_migrations": true
+  },
+  "database": {
+    "state": "VERIFIED",
+    "migrations": [
+      "20260929004640_pemasok_pembelian_trusted_commands",
+      "20260929005343_pemasok_pembelian_public_rpc_wrappers"
+    ],
+    "remote_history_verified": true,
+    "note": "No additional migration was required for the frontend contract foundation; the trusted backend migrations were already applied and remain present remotely."
+  },
+  "frontend_contract": {
+    "routes": [
+      "/pemasok",
+      "/pemasok/create",
+      "/pemasok/:id",
+      "/pemasok/:id/edit",
+      "/pembelian",
+      "/pembelian/create",
+      "/pembelian/:id",
+      "/pembelian/:id/edit"
+    ],
+    "states": [
+      "idle",
+      "review",
+      "processing",
+      "success",
+      "error",
+      "unknown",
+      "stale"
+    ],
+    "commands": [
+      "create_supplier",
+      "update_supplier",
+      "set_supplier_status",
+      "create_purchase",
+      "update_purchase_draft",
+      "command_reconcile_procurement_mutation"
+    ],
+    "designer_contract": "changes/contracts/pemasok-pembelian-ui-contract.md"
+  },
+  "verification": {
+    "targeted_tests": "10/10 passed",
+    "targeted_typecheck": "passed",
+    "targeted_eslint": "passed",
+    "git_diff_check": "passed",
+    "production_build": "passed",
+    "browser_contract": {
+      "desktop_1280x800": "VERIFIED",
+      "mobile_390x844": "VERIFIED",
+      "console_errors": 0,
+      "page_errors": 0,
+      "http_errors": 0,
+      "request_failures": 0,
+      "mutations_committed": false
+    },
+    "full_repo_suite": {
+      "state": "BLOCKED_UNRELATED",
+      "passed": 131,
+      "failed": 3,
+      "failures": [
+        "src/tests/app-boot.test.tsx — admin shell navigation timeout",
+        "src/tests/inventaris.test.tsx — TD4P-001 expectation",
+        "src/tests/pengembalian.test.tsx — RNT-2026-001 expectation"
+      ],
+      "scope_note": "All three failures are outside Pemasok/Pembelian and no claim is made that they are caused by this wave."
+    }
+  },
+  "safety": {
+    "synthetic_data_committed_by_browser_verification": false,
+    "production_deployment": false,
+    "purchase_finalization_semantics_invented": false
+  },
+  "next_action": "Handoff can be produced after explicit review of the functional contract and repo-wide CI blocker."
+}
