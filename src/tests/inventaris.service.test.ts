@@ -13,6 +13,7 @@ vi.mock("@/app/providers/supabase/client", () => ({
 import {
   findInventoryUnitCandidates,
   getInventoryStateCapabilities,
+  listInventoryUnits,
   lookupInventoryUnitByQr,
   markInventoryUnitInspectionPending,
   markInventoryUnitReady,
@@ -41,6 +42,49 @@ describe("Inventaris trusted command service", () => {
       "findInventoryUnitCandidates",
       "getInventoryOperationalContext",
     ]));
+  });
+
+  test("unit list uses tenant-safe PostgREST relationships for barang, varian and lokasi", async () => {
+    const builder = {
+      select: vi.fn(() => builder),
+      eq: vi.fn(() => builder),
+      order: vi.fn(() => builder),
+      range: vi.fn(async () => ({
+        data: [
+          {
+            unit_barang_id: "unit-1",
+            usaha_id: "usaha-1",
+            barang_id: "barang-1",
+            varian_barang_id: "variant-1",
+            kode_unit: "SPT-001",
+          },
+        ],
+        error: null,
+        count: 1,
+      })),
+      in: vi.fn(() => builder),
+    };
+
+    fromMock.mockReturnValue(builder);
+
+    await expect(
+      listInventoryUnits("usaha-1", {
+        page: 1,
+        pageSize: 20,
+        search: "",
+        status: "all",
+        barangId: "all",
+        varianBarangId: "all",
+        locationId: "all",
+        availabilityContext: "all",
+        sort: "updated_desc",
+      }),
+    ).resolves.toMatchObject({ total: 1 });
+
+    const selectArgument = builder.select.mock.calls[0]?.[0] as string;
+    expect(selectArgument).toContain("barang:barang!unit_barang_tenant_fk(");
+    expect(selectArgument).toContain("varian:varian_barang!unit_variant_product_tenant_fk(");
+    expect(selectArgument).toContain("lokasi:lokasi!unit_lokasi_tenant_fk(");
   });
 
   test("register command preserves tenant, source and idempotency contract", async () => {

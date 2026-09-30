@@ -22,7 +22,7 @@ import { sanitizeInventorySearch } from "./utils";
 type MembershipRow = { usaha_id: string; status: string; revoked_at: string | null };
 
 const UNIT_SELECT =
-  "unit_barang_id,usaha_id,barang_id,varian_barang_id,kode_unit,serial_number,lokasi_id,tanggal_diperoleh,sumber_pembelian_detail_id,status,kondisi_ringkas,catatan_internal,created_at,updated_at,barang:barang(barang_id,nama,slug,status),varian:varian_barang(varian_barang_id,nama,kode_internal,status),lokasi:lokasi(lokasi_id,nama,tipe,status)";
+  "unit_barang_id,usaha_id,barang_id,varian_barang_id,kode_unit,serial_number,lokasi_id,tanggal_diperoleh,sumber_pembelian_detail_id,status,kondisi_ringkas,catatan_internal,created_at,updated_at,barang:barang!unit_barang_tenant_fk(barang_id,nama,slug,status),varian:varian_barang!unit_variant_product_tenant_fk(varian_barang_id,nama,kode_internal,status),lokasi:lokasi!unit_lokasi_tenant_fk(lokasi_id,nama,tipe,status)";
 
 export async function getInventarisContext(): Promise<InventoryContext> {
   const { data: userData, error: userError } = await supabase.auth.getUser();
