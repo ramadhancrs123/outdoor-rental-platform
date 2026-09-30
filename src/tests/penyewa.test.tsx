@@ -6,6 +6,7 @@ import { AppProviders } from "@/app/providers";
 import { useCurrentUsaha } from "@/app/current-usaha-context";
 import { RenterList } from "@/pages/penyewa/list";
 import { RenterShow } from "@/pages/penyewa/show";
+import { appConfig } from "@/app/config";
 import { buildRenterDetailPath, buildRenterListPath } from "@/features/penyewa/service";
 import { mockViewport } from "./viewport";
 
@@ -44,7 +45,7 @@ function response(rows: unknown[], status = 200) {
 
 function installAuth() {
   window.localStorage.setItem(
-    "sb-nbirkybutpvtrqifaxlt-auth-token",
+    `sb-${appConfig.supabase.projectRef}-auth-token`,
     JSON.stringify({ access_token: tokenFor() }),
   );
 }
@@ -62,6 +63,7 @@ function installTenantFetch(renters: unknown[] = [renterA]) {
   });
   vi.stubGlobal("fetch", fetchMock);
   installAuth();
+  window.sessionStorage.setItem("rental-admin.current-usaha-id", tenantA.usahaId);
   return fetchMock;
 }
 

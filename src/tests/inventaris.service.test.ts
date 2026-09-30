@@ -13,6 +13,7 @@ vi.mock("@/app/providers/supabase/client", () => ({
 import {
   findInventoryUnitCandidates,
   getInventoryStateCapabilities,
+  lookupInventoryUnitByQr,
   markInventoryUnitInspectionPending,
   markInventoryUnitReady,
   moveInventoryUnit,
@@ -257,4 +258,53 @@ describe("Inventaris trusted command service", () => {
     });
   });
 
+  test("QR lookup resolves stable kode_unit before falling back to a UUID", async () => {
+    let callNumber = 0;
+    const firstQueryFilters: Array<[string, unknown]> = [];
+
+    fromMock.mockImplementation(() => {
+      callNumber += 1;
+      const currentCall = callNumber;
+      const builder: Record<string, ReturnType<typeof vi.fn>> = {};
+
+      for (const method of ["select", "eq", "in", "or", "is", "order", "range", "limit"]) {
+        builder[method] = vi.fn((field: string, value: unknown) => {
+          if (currentCall === 1 && method === "eq") firstQueryFilters.push([field, value]);
+          return builder;
+        });
+      }
+
+      builder.maybeSingle = vi.fn(async () => {
+        if (currentCall === 1) return { data: { unit_barang_id: "unit-1" }, error: null };
+        if (currentCall === 2) {
+          return {
+            data: {
+              unit_barang_id: "unit-1",
+              usaha_id: "usaha-1",
+              kode_unit: "TD4P-001",
+              status: "ready",
+            },
+            error: null,
+          };
+        }
+        return { data: null, error: null };
+      });
+
+      builder.then = vi.fn((resolve: (value: unknown) => unknown) =>
+        Promise.resolve({ data: [], error: null }).then(resolve),
+      );
+
+      return builder;
+    });
+
+    await expect(lookupInventoryUnitByQr("usaha-1", " TD4P-001 ")).resolves.toMatchObject({
+      unit: expect.objectContaining({ unit_barang_id: "unit-1", kode_unit: "TD4P-001" }),
+    });
+
+    expect(firstQueryFilters).toEqual([
+      ["usaha_id", "usaha-1"],
+      ["kode_unit", "TD4P-001"],
+    ]);
+    expect(callNumber).toBe(4);
+  });
 });

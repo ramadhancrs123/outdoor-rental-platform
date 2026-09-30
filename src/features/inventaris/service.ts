@@ -351,13 +351,30 @@ export async function reconcileInventoryCommand(
   return data as InventoryReconciliationResult;
 }
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 export async function lookupInventoryUnitByQr(
   usahaId: string,
   stableUnitIdentifier: string,
 ) {
   const identifier = stableUnitIdentifier.trim();
   if (!identifier) throw new Error("Identifier QR unit wajib diisi.");
-  return getInventoryUnit(usahaId, identifier);
+
+  const { data: byCode, error: codeError } = await supabase
+    .from("unit_barang")
+    .select("unit_barang_id")
+    .eq("usaha_id", usahaId)
+    .eq("kode_unit", identifier)
+    .maybeSingle();
+
+  if (codeError) throw codeError;
+  if (byCode?.unit_barang_id) return getInventoryUnit(usahaId, byCode.unit_barang_id);
+
+  if (UUID_PATTERN.test(identifier)) {
+    return getInventoryUnit(usahaId, identifier);
+  }
+
+  throw new Error("Unit dari QR tidak ditemukan dalam Usaha aktif.");
 }
 
 export async function findInventoryUnitCandidates(

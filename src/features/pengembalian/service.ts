@@ -478,17 +478,35 @@ export async function getReturnWorkspace(usahaId: string, rentalId: string): Pro
   };
 }
 
+const QR_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 export async function lookupReturnRentalByQr(usahaId: string, stableUnitIdentifier: string) {
   const value = stableUnitIdentifier.trim();
   if (!value) throw new Error("Identifier QR wajib diisi.");
 
-  const { data: unit, error: unitError } = await supabase
+  const byCode = await supabase
     .from("unit_barang")
     .select("unit_barang_id,kode_unit,usaha_id,status")
     .eq("usaha_id", usahaId)
-    .or("unit_barang_id.eq." + value + ",kode_unit.eq." + value)
+    .eq("kode_unit", value)
     .maybeSingle();
-  if (unitError) throw unitError;
+
+  if (byCode.error) throw byCode.error;
+
+  let unit = byCode.data;
+
+  if (!unit && QR_UUID_PATTERN.test(value)) {
+    const byId = await supabase
+      .from("unit_barang")
+      .select("unit_barang_id,kode_unit,usaha_id,status")
+      .eq("usaha_id", usahaId)
+      .eq("unit_barang_id", value)
+      .maybeSingle();
+
+    if (byId.error) throw byId.error;
+    unit = byId.data;
+  }
+
   if (!unit) throw new Error("Unit dari QR tidak ditemukan dalam Usaha aktif.");
 
   const { data: assignments, error: assignmentError } = await supabase
