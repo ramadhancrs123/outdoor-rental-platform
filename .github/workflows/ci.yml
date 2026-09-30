@@ -17,6 +17,12 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # Tests instantiate the Supabase client during module import. These are
+      # non-production placeholders; tests must not depend on production data.
+      VITE_SUPABASE_URL: https://example.supabase.co
+      VITE_SUPABASE_ANON_KEY: ci-test-anon-key
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
