@@ -81,7 +81,9 @@ describe("Inventaris trusted command service", () => {
       }),
     ).resolves.toMatchObject({ total: 1 });
 
-    const selectArgument = builder.select.mock.calls[0]?.[0] as string;
+    expect(builder.select).toHaveBeenCalledTimes(1);
+    const selectCalls = builder.select.mock.calls as unknown as Array<[string]>;
+    const selectArgument = selectCalls[0][0];
     expect(selectArgument).toContain("barang:barang!unit_barang_tenant_fk(");
     expect(selectArgument).toContain("varian:varian_barang!unit_variant_product_tenant_fk(");
     expect(selectArgument).toContain("lokasi:lokasi!unit_lokasi_tenant_fk(");
