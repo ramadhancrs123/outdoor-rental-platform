@@ -1,41 +1,73 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import App from "@/App";
 import { stubFetch } from "./helpers";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
+
+vi.mock("@/app/providers/supabase/client", () => ({
+  supabase: {
+    auth: {
+      getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "test-auth-user" } } }, error: null }),
+      getUser: vi.fn().mockResolvedValue({ data: { user: { id: "test-auth-user", email: "admin@rentaloutdoor.test" } }, error: null }),
+    },
+    from: vi.fn(() => ({
+      select: vi.fn(() => ({
+        eq: vi.fn(() => ({
+          maybeSingle: vi.fn().mockResolvedValue({
+            data: { akun_admin_id: "test-admin", nama_tampilan: "Nurdin Ramadhan", role: "super_admin", status: "active" },
+            error: null,
+          }),
+        })),
+      })),
+    })),
+  },
+}));
+
+const navigation = [
+  "Dashboard",
+  "Permintaan",
+  "Reservasi",
+  "Penyewaan",
+  "Pengembalian",
+  "Inventaris",
+  "Pemeriksaan",
+  "Perawatan",
+  "Penyewa",
+  "Katalog",
+  "Pemasok",
+  "Pembelian",
+  "Keuangan",
+  "Pemberitahuan",
+  "Laporan",
+];
 
 describe("scenario A — app boot", () => {
-  test("boots without runtime error and lands on the first resource", async () => {
-    stubFetch({ rows: [{ id: "1", title: "Post pertama" }] });
+  test("boots the canonical dashboard workspace without runtime error", async () => {
+    stubFetch({ rows: [] });
+    window.history.pushState({}, "", "/dashboard");
+    render(<App />);
 
-    window.history.pushState({}, "", "/");
-    const { container } = render(<App />);
+    await waitFor(() => expect(window.location.pathname).toBe("/dashboard"));
 
-    await waitFor(() => expect(window.location.pathname).toBe("/blog-posts"));
-
-    expect(container.querySelector("main")).toBeInTheDocument();
-    expect(screen.getByRole("banner")).toBeInTheDocument();
+    expect(await screen.findByTestId("dashboard-root")).toBeInTheDocument();
+    expect(await screen.findByText("Perlu Perhatian")).toBeInTheDocument();
   });
 
   test("router boot — unknown route renders the error component", async () => {
     stubFetch({ rows: [] });
-
     window.history.pushState({}, "", "/tidak-ada");
     render(<App />);
-
     expect(await screen.findByText("Page not found.")).toBeInTheDocument();
   });
 
-  test("Refine provider boot — resources are registered in the sidebar menu", async () => {
-    stubFetch({ rows: [{ id: "1", title: "Post pertama" }] });
-
-    window.history.pushState({}, "", "/blog-posts");
+  test("admin shell exposes the approved navigation template", async () => {
+    stubFetch({ rows: [] });
+    window.history.pushState({}, "", "/dashboard");
     render(<App />);
 
-    expect(
-      await screen.findByRole("link", { name: /blog posts/i }),
-    ).toBeInTheDocument();
-    expect(
-      await screen.findByRole("link", { name: /categories/i }),
-    ).toBeInTheDocument();
-  });
+    for (const label of navigation) {
+      await waitFor(() => {
+        expect(screen.getAllByRole("link", { name: new RegExp(`^${label}$`) })).not.toHaveLength(0);
+      }, { timeout: 10000 });
+    }
+  }, 30000);
 });

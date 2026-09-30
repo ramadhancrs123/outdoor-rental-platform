@@ -1,0 +1,103 @@
+{
+  "operation": "FINAL_INTEGRATION",
+  "state": "VERIFIED",
+  "evidence_source": [
+    "SentinelX host arch-din / host_1a83b4bc1d1cabf7",
+    "Supabase project nbirkybutpvtrqifaxlt",
+    "Browser verification on isolated Vite 4173"
+  ],
+  "target": "rental-admin",
+  "revision": {
+    "branch": "agent/e2e-admin-auth-dashboard",
+    "head": "7720f2223599813a8574680eae8957e3dcd3b214",
+    "working_tree_dirty_count": 453,
+    "candidate_sha": "NOT_ESTABLISHED"
+  },
+  "verification": {
+    "typecheck": "PASS",
+    "lint": "PASS_WITH_8_EXISTING_FAST_REFRESH_WARNINGS",
+    "unit_and_component_tests": {
+      "files": 26,
+      "tests": 143,
+      "result": "PASS"
+    },
+    "production_build": "PASS_WITH_CHUNK_SIZE_WARNING",
+    "browser_matrix": {
+      "result": "PASS",
+      "scenarios_total": 11,
+      "scenarios_verified": 11,
+      "failures": 0,
+      "scenarios": [
+        "dashboard-integration",
+        "finance",
+        "katalog",
+        "pemasok-pembelian",
+        "pemberitahuan",
+        "laporan",
+        "pemeriksaan",
+        "pengembalian",
+        "penyewa",
+        "penyewaan-walk-in",
+        "perawatan"
+      ],
+      "diagnostics": "Final verified runs reported 0 console errors, 0 page errors, 0 HTTP errors, and 0 request failures."
+    }
+  },
+  "database": {
+    "project_ref": "nbirkybutpvtrqifaxlt",
+    "pg_cron": "1.6.4",
+    "notification_outbox_consumer": {
+      "schedule": "* * * * *",
+      "active": true,
+      "command": "SELECT app_private.consume_notification_outbox(50);"
+    },
+    "outbox": {
+      "orphan_events_marked_stale": 2,
+      "failed_pending_events": 0
+    },
+    "notification_revalidation": {
+      "authenticated_execute": true,
+      "anon_execute": false,
+      "authenticated_consumer_execute": false,
+      "service_role_consumer_execute": true
+    },
+    "migrations_verified": [
+      "20260929145932_notification_stale_policy_and_scheduler",
+      "20260929150030_notification_stale_read_revalidation",
+      "20260929150233_notification_revalidation_rpc_wrapper"
+    ]
+  },
+  "integration_findings": [
+    "Fixed local-calendar date generation for Dashboard and Laporan; Finance periods remain 2026-09-01 through 2026-10-01 in Asia/Jakarta.",
+    "Added Finance RPC response normalization so live {period:{...}} payloads map to the existing module contract.",
+    "Notification source revalidation is tenant/admin scoped; stale sources remain history and lose navigation targets in the UI.",
+    "In-database pg_cron consumer is enabled; orphan outbox events are represented as stale instead of creating false notifications.",
+    "Test harness now clears sessionStorage between tests to prevent CurrentUsaha context leakage.",
+    "Browser verification harness scenarios now use runner baseURL instead of hardcoded localhost:5173 URLs."
+  ],
+  "production_gate": {
+    "state": "BLOCKED",
+    "reason": "Working tree contains 453 pre-existing/cross-wave changes; no clean candidate commit SHA was established. Production approval and promotion were not bypassed."
+  },
+  "next_action": "Create a clean, reviewed candidate commit/PR from the verified working tree, then run CI/staging gates before any production promotion.",
+  "production_readiness": {
+    "checked_at_utc": "2026-09-30T00:58:32.746969+00:00",
+    "verdict": "READY_FOR_CANDIDATE_GATING",
+    "vercel": {
+      "project": "outdoor-rental-platform",
+      "project_id": "prj_TMbPdHXv6iOTI3wNGnbhw7lz9ukx",
+      "production_deployment_id": "dpl_Afy5dPDKRUTUEeMiNuoE3BHeEQYn",
+      "state": "READY",
+      "target": "production",
+      "github_commit_sha": "dedf7b240ce07cd2ae7a8bd38346ba55fff6e98d",
+      "runtime_errors_24h": 0,
+      "production_http_status": 200,
+      "note": "Existing production deployment is healthy but predates the FINAL_INTEGRATION candidate; it is not the verified candidate for promotion."
+    },
+    "candidate_gate": {
+      "state": "BLOCKED",
+      "reason": "No clean candidate SHA; working tree remains dirty with 453 changes.",
+      "promotion_executed": false
+    }
+  }
+}

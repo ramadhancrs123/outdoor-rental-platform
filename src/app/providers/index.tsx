@@ -1,5 +1,5 @@
 import { Refine } from "@refinedev/core";
-import { DevtoolsPanel, DevtoolsProvider } from "@refinedev/devtools";
+import { authProvider } from "./auth";
 import { RefineKbar, RefineKbarProvider } from "@refinedev/kbar";
 import routerProvider, {
   DocumentTitleHandler,
@@ -12,13 +12,15 @@ import { useNotificationProvider } from "@/components/refine-ui/notification/use
 import { Toaster } from "@/components/refine-ui/notification/toaster";
 import { ThemeProvider } from "@/components/refine-ui/theme/theme-provider";
 import { dataProvider } from "./data";
+import { CurrentUsahaProvider } from "@/app/current-usaha";
 
 export function AppProviders({ children }: PropsWithChildren) {
   return (
     <RefineKbarProvider>
       <ThemeProvider>
-        <DevtoolsProvider>
+        <CurrentUsahaProvider>
           <Refine
+            authProvider={authProvider}
             notificationProvider={useNotificationProvider()}
             routerProvider={routerProvider}
             dataProvider={dataProvider}
@@ -35,8 +37,7 @@ export function AppProviders({ children }: PropsWithChildren) {
             <UnsavedChangesNotifier />
             <DocumentTitleHandler />
           </Refine>
-          <DevtoolsPanel />
-        </DevtoolsProvider>
+        </CurrentUsahaProvider>
       </ThemeProvider>
     </RefineKbarProvider>
   );

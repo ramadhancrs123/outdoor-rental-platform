@@ -1,0 +1,356 @@
+import { describe, expect, test, vi, beforeEach } from "vitest";
+
+const rpcMock = vi.hoisted(() => vi.fn());
+const fromMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@/app/providers/supabase/client", () => ({
+  supabase: {
+    rpc: rpcMock,
+    from: fromMock,
+  },
+}));
+
+import {
+  findInventoryUnitCandidates,
+  getInventoryStateCapabilities,
+  listInventoryUnits,
+  lookupInventoryUnitByQr,
+  markInventoryUnitInspectionPending,
+  markInventoryUnitReady,
+  moveInventoryUnit,
+  registerInventoryUnit,
+} from "@/features/inventaris/service";
+
+describe("Inventaris trusted command service", () => {
+  beforeEach(() => {
+    rpcMock.mockReset();
+  });
+
+  test("capabilities expose trusted mutation commands", () => {
+    const capabilities = getInventoryStateCapabilities();
+    expect(capabilities.read).toBe(true);
+    expect(capabilities.mutation).toBe(true);
+    expect(capabilities.commands).toEqual(expect.arrayContaining([
+      "register_inventory_unit",
+      "move_inventory_unit",
+      "mark_inventory_unit_ready",
+      "command_mark_inventory_unit_inspection_pending",
+      "command_reconcile_inventory_unit_mutation",
+    ]));
+    expect(capabilities.queries).toEqual(expect.arrayContaining([
+      "lookupInventoryUnitByQr",
+      "findInventoryUnitCandidates",
+      "getInventoryOperationalContext",
+    ]));
+  });
+
+  test("unit list uses tenant-safe PostgREST relationships for barang, varian and lokasi", async () => {
+    const builder = {
+      select: vi.fn(() => builder),
+      eq: vi.fn(() => builder),
+      order: vi.fn(() => builder),
+      range: vi.fn(async () => ({
+        data: [
+          {
+            unit_barang_id: "unit-1",
+            usaha_id: "usaha-1",
+            barang_id: "barang-1",
+            varian_barang_id: "variant-1",
+            kode_unit: "SPT-001",
+          },
+        ],
+        error: null,
+        count: 1,
+      })),
+      in: vi.fn(() => builder),
+    };
+
+    fromMock.mockReturnValue(builder);
+
+    await expect(
+      listInventoryUnits("usaha-1", {
+        page: 1,
+        pageSize: 20,
+        search: "",
+        status: "all",
+        barangId: "all",
+        varianBarangId: "all",
+        locationId: "all",
+        availabilityContext: "all",
+        sort: "updated_desc",
+      }),
+    ).resolves.toMatchObject({ total: 1 });
+
+    expect(builder.select).toHaveBeenCalledTimes(1);
+    const selectCalls = builder.select.mock.calls as unknown as Array<[string]>;
+    const selectArgument = selectCalls[0][0];
+    expect(selectArgument).toContain("barang:barang!unit_barang_tenant_fk(");
+    expect(selectArgument).toContain("varian:varian_barang!unit_variant_product_tenant_fk(");
+    expect(selectArgument).toContain("lokasi:lokasi!unit_lokasi_tenant_fk(");
+  });
+
+  test("register command preserves tenant, source and idempotency contract", async () => {
+    rpcMock.mockResolvedValue({
+      data: {
+        unit_barang_id: "unit-1",
+        usaha_id: "usaha-1",
+        kode_unit: "TD4P-001",
+        status: "inspection_pending",
+        lokasi_id: "loc-1",
+      },
+      error: null,
+    });
+
+    await expect(registerInventoryUnit("usaha-1", {
+      barangId: "barang-1",
+      varianBarangId: "variant-1",
+      kodeUnit: " TD4P-001 ",
+      serialNumber: " SN-001 ",
+      lokasiId: "loc-1",
+      tanggalDiperoleh: "2026-09-28",
+      sumberPembelianDetailId: "purchase-detail-1",
+      catatanInternal: " Unit baru ",
+    }, {
+      idempotencyKey: "inventory-register-key",
+      requestId: "request-1",
+    })).resolves.toMatchObject({
+      unit_barang_id: "unit-1",
+      status: "inspection_pending",
+    });
+
+    expect(rpcMock).toHaveBeenCalledWith("command_register_inventory_unit", {
+      p_usaha_id: "usaha-1",
+      p_barang_id: "barang-1",
+      p_varian_barang_id: "variant-1",
+      p_kode_unit: "TD4P-001",
+      p_serial_number: "SN-001",
+      p_lokasi_id: "loc-1",
+      p_tanggal_diperoleh: "2026-09-28",
+      p_sumber_pembelian_detail_id: "purchase-detail-1",
+      p_catatan_internal: "Unit baru",
+      p_idempotency_key: "inventory-register-key",
+      p_request_id: "request-1",
+    });
+  });
+
+  test("unknown outcome reconciles before returning committed response and never blind-retries mutation", async () => {
+    rpcMock
+      .mockResolvedValueOnce({ data: null, error: new Error("network timeout") })
+      .mockResolvedValueOnce({
+        data: {
+          state: "committed",
+          response: {
+            unit_barang_id: "unit-1",
+            status: "inspection_pending",
+          },
+        },
+        error: null,
+      });
+
+    await expect(moveInventoryUnit(
+      "usaha-1",
+      "unit-1",
+      "loc-2",
+      "Pindah lokasi",
+      {
+        idempotencyKey: "move-key",
+        requestId: "request-2",
+        expectedUpdatedAt: "2026-09-28T02:00:00.000Z",
+      },
+    )).resolves.toMatchObject({
+      unit_barang_id: "unit-1",
+      status: "inspection_pending",
+    });
+
+    expect(rpcMock).toHaveBeenNthCalledWith(1, "command_move_inventory_unit", expect.objectContaining({
+      p_usaha_id: "usaha-1",
+      p_unit_barang_id: "unit-1",
+      p_lokasi_id: "loc-2",
+      p_idempotency_key: "move-key",
+      p_request_id: "request-2",
+      p_expected_updated_at: "2026-09-28T02:00:00.000Z",
+    }));
+    expect(rpcMock).toHaveBeenNthCalledWith(2, "command_reconcile_inventory_unit_mutation", {
+      p_usaha_id: "usaha-1",
+      p_command_name: "move_inventory_unit",
+      p_idempotency_key: "move-key",
+    });
+    expect(rpcMock).toHaveBeenCalledTimes(2);
+  });
+
+  test("unknown reconciliation state stops retry path", async () => {
+    rpcMock
+      .mockResolvedValueOnce({ data: null, error: new Error("network timeout") })
+      .mockResolvedValueOnce({ data: { state: "unknown", response: null }, error: null });
+
+    await expect(markInventoryUnitReady(
+      "usaha-1",
+      "unit-1",
+      undefined,
+      {
+        idempotencyKey: "ready-key",
+        requestId: "request-3",
+        expectedUpdatedAt: "2026-09-28T02:00:00.000Z",
+      },
+    )).rejects.toThrow(/UNKNOWN_OUTCOME: command Inventaris/i);
+
+    expect(rpcMock).toHaveBeenCalledTimes(2);
+    expect(rpcMock.mock.calls.map(([name]) => name)).toEqual([
+      "command_mark_inventory_unit_ready",
+      "command_reconcile_inventory_unit_mutation",
+    ]);
+  });
+
+  test("business command error with no committed idempotency state surfaces original error", async () => {
+    rpcMock
+      .mockResolvedValueOnce({ data: null, error: new Error("BUSINESS_CONFLICT: unit rented") })
+      .mockResolvedValueOnce({ data: { state: "not_found", response: null }, error: null });
+
+    await expect(moveInventoryUnit(
+      "usaha-1",
+      "unit-1",
+      "loc-2",
+      undefined,
+      {
+        idempotencyKey: "move-conflict-key",
+        requestId: "request-4",
+        expectedUpdatedAt: "2026-09-28T02:00:00.000Z",
+      },
+    )).rejects.toThrow(/Pemindahan unit: BUSINESS_CONFLICT: unit rented/i);
+
+    expect(rpcMock).toHaveBeenCalledTimes(2);
+  });
+
+  test("move rejects without server-current timestamp guard", async () => {
+    await expect(
+      moveInventoryUnit("usaha-1", "unit-1", "loc-2", undefined, {
+        idempotencyKey: "missing-stale-key",
+        requestId: "request-stale",
+      }),
+    ).rejects.toThrow(/State unit terbaru wajib diverifikasi/i);
+
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
+
+  test("candidate query delegates temporal conflict evaluation to trusted database", async () => {
+    rpcMock.mockResolvedValue({
+      data: [{
+        unit_barang_id: "unit-1",
+        unit_code: "TD4P-001",
+        status: "ready",
+        lokasi_id: "loc-1",
+        lokasi_nama: "Gudang",
+        eligibility: true,
+        conflict: false,
+        conflict_reason: null,
+        preferred: true,
+      }],
+      error: null,
+    });
+
+    await expect(findInventoryUnitCandidates("usaha-1", {
+      barangId: "barang-1",
+      varianBarangId: null,
+      startAt: "2026-10-10T01:00:00.000Z",
+      endAt: "2026-10-12T01:00:00.000Z",
+      preferredUnitId: "unit-1",
+      limit: 20,
+    })).resolves.toMatchObject([{ unit_barang_id: "unit-1", eligibility: true }]);
+
+    expect(rpcMock).toHaveBeenCalledWith("find_inventory_unit_candidates", {
+      p_usaha_id: "usaha-1",
+      p_barang_id: "barang-1",
+      p_varian_barang_id: null,
+      p_start_at: "2026-10-10T01:00:00.000Z",
+      p_end_at: "2026-10-12T01:00:00.000Z",
+      p_preferred_unit_id: "unit-1",
+      p_exclude_penyewaan_id: null,
+      p_limit: 20,
+    });
+  });
+
+  test("return handoff command preserves expected-state and return-detail provenance", async () => {
+    rpcMock.mockResolvedValue({
+      data: {
+        unit_barang_id: "unit-1",
+        status: "inspection_pending",
+        detail_pengembalian_id: "return-detail-1",
+      },
+      error: null,
+    });
+
+    await expect(markInventoryUnitInspectionPending(
+      "usaha-1",
+      "unit-1",
+      { detailPengembalianId: "return-detail-1" },
+      {
+        idempotencyKey: "return-handoff-key",
+        requestId: "request-handoff",
+        expectedUpdatedAt: "2026-09-28T02:00:00.000Z",
+      },
+    )).resolves.toMatchObject({
+      unit_barang_id: "unit-1",
+      status: "inspection_pending",
+      detail_pengembalian_id: "return-detail-1",
+    });
+
+    expect(rpcMock).toHaveBeenCalledWith("command_mark_inventory_unit_inspection_pending", {
+      p_usaha_id: "usaha-1",
+      p_unit_barang_id: "unit-1",
+      p_detail_pengembalian_id: "return-detail-1",
+      p_idempotency_key: "return-handoff-key",
+      p_request_id: "request-handoff",
+      p_expected_updated_at: "2026-09-28T02:00:00.000Z",
+    });
+  });
+
+  test("QR lookup resolves stable kode_unit before falling back to a UUID", async () => {
+    let callNumber = 0;
+    const firstQueryFilters: Array<[string, unknown]> = [];
+
+    fromMock.mockImplementation(() => {
+      callNumber += 1;
+      const currentCall = callNumber;
+      const builder: Record<string, ReturnType<typeof vi.fn>> = {};
+
+      for (const method of ["select", "eq", "in", "or", "is", "order", "range", "limit"]) {
+        builder[method] = vi.fn((field: string, value: unknown) => {
+          if (currentCall === 1 && method === "eq") firstQueryFilters.push([field, value]);
+          return builder;
+        });
+      }
+
+      builder.maybeSingle = vi.fn(async () => {
+        if (currentCall === 1) return { data: { unit_barang_id: "unit-1" }, error: null };
+        if (currentCall === 2) {
+          return {
+            data: {
+              unit_barang_id: "unit-1",
+              usaha_id: "usaha-1",
+              kode_unit: "TD4P-001",
+              status: "ready",
+            },
+            error: null,
+          };
+        }
+        return { data: null, error: null };
+      });
+
+      builder.then = vi.fn((resolve: (value: unknown) => unknown) =>
+        Promise.resolve({ data: [], error: null }).then(resolve),
+      );
+
+      return builder;
+    });
+
+    await expect(lookupInventoryUnitByQr("usaha-1", " TD4P-001 ")).resolves.toMatchObject({
+      unit: expect.objectContaining({ unit_barang_id: "unit-1", kode_unit: "TD4P-001" }),
+    });
+
+    expect(firstQueryFilters).toEqual([
+      ["usaha_id", "usaha-1"],
+      ["kode_unit", "TD4P-001"],
+    ]);
+    expect(callNumber).toBe(4);
+  });
+});
