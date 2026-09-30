@@ -265,7 +265,7 @@ describe("Penyewa Phase 1 read-side contract", () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByTestId("current-usaha")).toHaveTextContent("Usaha A");
+    await waitFor(() => expect(screen.getByTestId("current-usaha")).toHaveTextContent("Usaha A"), { timeout: 5000 });
     expect((await screen.findAllByText("Siti Sintetis")).length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByRole("button", { name: "Ganti ke Usaha B" }));
