@@ -111,3 +111,27 @@ export function resolveNotificationTarget(notification: NotificationRecord): str
   if (!notification.source_exists) return null;
   return notification.action_target?.trim() || null;
 }
+
+
+export function subscribeToAdminNotifications(
+  usahaId: string,
+  adminId: string,
+  onNotification: (notification: NotificationRecord) => void,
+) {
+  const channel = supabase
+    .channel("admin-notifications:" + usahaId + ":" + adminId + ":" + crypto.randomUUID())
+    .on(
+      "postgres_changes",
+      { event: "INSERT", schema: "public", table: "pemberitahuan" },
+      (payload) => {
+        const row = payload.new as Partial<NotificationRecord>;
+        if (row.usaha_id !== usahaId || row.penerima_akun_admin_id !== adminId) return;
+        onNotification(payload.new as NotificationRecord);
+      },
+    )
+    .subscribe();
+
+  return () => {
+    void supabase.removeChannel(channel);
+  };
+}

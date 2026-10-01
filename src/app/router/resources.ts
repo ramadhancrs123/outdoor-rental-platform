@@ -8,7 +8,6 @@ export const resources: ResourceProps[] = [
   { name: "penyewaan", list: paths.penyewaan, meta: { label: "Penyewaan" } },
   { name: "pengembalian", list: paths.pengembalian, meta: { label: "Pengembalian" } },
   { name: "inventaris", list: paths.inventaris, create: paths.inventarisCreate, meta: { label: "Inventaris" } },
-  { name: "pemeriksaan", list: paths.pemeriksaan, meta: { label: "Pemeriksaan" } },
   { name: "perawatan", list: paths.perawatan, meta: { label: "Perawatan" } },
   { name: "penyewa", list: paths.penyewa, meta: { label: "Penyewa" } },
   { name: "katalog", list: paths.katalog, edit: paths.katalogEdit + "/:id", meta: { label: "Katalog" } },

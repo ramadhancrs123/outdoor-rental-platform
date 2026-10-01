@@ -1,7 +1,7 @@
 # Logs
 
 logs
-_.log
+*.log
 npm-debug.log_
 yarn-debug.log*
 yarn-error.log*
@@ -19,7 +19,7 @@ dist-ssr
 
 # Editor directories and files
 
-.vscode/_
+.vscode/*
 !.vscode/extensions.json
 .idea
 .DS_Store
@@ -30,6 +30,8 @@ _.sln
 \*.sw?
 .vercel
 .env*
+!.env.example
+!.env.*.example
 
 .visual-verify/
 

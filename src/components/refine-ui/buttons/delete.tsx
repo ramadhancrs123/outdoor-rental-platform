@@ -61,9 +61,9 @@ export const DeleteButton = React.forwardRef<
 
   if (isHidden) return null;
 
-  const confirmCancelText = defaultCancelLabel;
-  const confirmOkText = defaultConfirmOkLabel;
-  const confirmTitle = defaultConfirmTitle;
+  const confirmCancelText = defaultCancelLabel ?? "Batal";
+  const confirmOkText = defaultConfirmOkLabel ?? "Hapus";
+  const confirmTitle = defaultConfirmTitle ?? "Hapus data ini?";
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -79,7 +79,7 @@ export const DeleteButton = React.forwardRef<
             {children ?? (
               <div className="flex items-center gap-2 font-semibold">
                 <Trash className="h-4 w-4" />
-                <span>{label}</span>
+                <span>{label ?? "Hapus"}</span>
               </div>
             )}
           </Button>

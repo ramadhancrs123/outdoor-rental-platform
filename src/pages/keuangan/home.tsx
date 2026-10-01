@@ -236,7 +236,7 @@ export function FinanceHome() {
               </div>
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-semibold">Pembayaran</p>
-                <p className="mt-1 text-xs text-muted-foreground">Telusuri payment facts.</p>
+                <p className="mt-1 text-xs text-muted-foreground">Telusuri data pembayaran.</p>
               </div>
               <ArrowRight className="size-4 text-muted-foreground transition-transform group-hover:translate-x-1" />
             </CardContent>
@@ -292,7 +292,7 @@ export function FinanceHome() {
             principle={health.data.principle}
           />
         ) : (
-          <Card><CardContent className="p-5 text-sm text-muted-foreground">Finance health belum tersedia.</CardContent></Card>
+          <Card><CardContent className="p-5 text-sm text-muted-foreground">Status Keuangan belum tersedia.</CardContent></Card>
         )}
         <Card className="shadow-sm">
           <CardContent className="space-y-4 p-5">

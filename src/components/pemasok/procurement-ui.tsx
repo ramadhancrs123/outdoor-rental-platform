@@ -12,7 +12,7 @@ export function ProcurementSteps({
   labels: string[];
 }) {
   return (
-    <nav aria-label="Tahapan workflow" className="flex items-center gap-2">
+    <nav aria-label="Tahapan Proses" className="flex items-center gap-2">
       {labels.map((label, index) => {
         const step = index + 1;
         const active = step === current;

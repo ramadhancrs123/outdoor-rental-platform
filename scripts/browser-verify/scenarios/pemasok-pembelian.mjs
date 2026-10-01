@@ -142,6 +142,27 @@ export default async function pemasokPembelianScenario({ page, baseURL, capture 
   });
 
   await page.route("**/rest/v1/rpc/command_create_purchase", async (route) => {
+    let payload = {};
+    try {
+      payload = JSON.parse(route.request().postData() ?? "{}");
+    } catch {
+      // Let the deterministic visual response handle malformed payloads.
+    }
+
+    const lines = Array.isArray(payload.p_lines) ? payload.p_lines : [];
+    const invalidTarget = lines.some((line) => Boolean(line?.barang_id) && Boolean(line?.varian_barang_id));
+    if (invalidTarget) {
+      await route.fulfill({
+        status: 400,
+        contentType: "application/json",
+        body: JSON.stringify({
+          code: "23514",
+          message: "detail_pembelian_satu_target: line harus memiliki tepat satu target barang atau varian",
+        }),
+      });
+      return;
+    }
+
     await route.fulfill({
       status: 200,
       contentType: "application/json",

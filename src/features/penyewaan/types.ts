@@ -3,6 +3,9 @@ export type RentalTenantContext = {
   usahaId: string;
   usahaNama: string;
   timezone: string;
+  defaultToleranceHours: number;
+  lateFeeEnabled: boolean;
+  lateFeePerHour: number;
 };
 
 export type AssignableRentalUnit = {
@@ -118,6 +121,38 @@ export type RentalHandover = {
   catatan: string | null;
 };
 
+export type RentalToleranceHistory = {
+  riwayat_toleransi_penyewaan_id: string;
+  usaha_id: string;
+  penyewaan_id: string;
+  tolerance_sebelum: string;
+  tolerance_sesudah: string;
+  tambahan_menit: number;
+  alasan: string;
+  actor_akun_admin_id: string;
+  actor_nama_tampilan?: string | null;
+  request_id: string | null;
+  occurred_at: string;
+  created_at: string;
+};
+
+export type RentalPolicyInput = {
+  defaultToleranceHours: number;
+  lateFeeEnabled: boolean;
+  lateFeePerHour: number;
+};
+
+export type RentalLateFeeAssessment = {
+  enabled: boolean;
+  rate_per_hour: number;
+  billable_hours: number;
+  amount: number;
+  state: string;
+  effective_return_at: string | null;
+  calculated_at: string;
+  tolerance_deadline: string | null;
+};
+
 export type RentalExtension = {
   perpanjangan_sewa_id: string;
   usaha_id: string;
@@ -199,8 +234,11 @@ export type DirectRentalLineInput = {
   barang_id?: string | null;
   varian_barang_id?: string | null;
   paket_sewa_id?: string | null;
+  tarif_sewa_id: string;
+  duration_periods: number;
   jumlah: number;
   unit_price: number;
+  subtotal: number;
   currency_code?: "IDR";
   catatan?: string | null;
 };

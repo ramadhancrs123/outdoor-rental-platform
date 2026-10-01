@@ -6,6 +6,7 @@ import {
   CircleAlert,
   Clock3,
   Loader2,
+  Package,
   RefreshCw,
   ShieldCheck,
   UserPlus,
@@ -26,13 +27,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   createDirectRental,
   getPenyewaanContext,
   previewDirectRentalAvailability,
@@ -43,7 +37,7 @@ import {
   listRenters,
   reconcileRenterCreation,
 } from "@/features/penyewa/service";
-import { DEFAULT_CATALOG_FILTERS, getCatalogProduct, listCatalogProducts } from "@/features/katalog";
+import { DEFAULT_CATALOG_FILTERS, calculateRentalLineSubtotal, calculateTariffPeriods, formatTariffPeriods, getCatalogProduct, listCatalogProductCovers, listCatalogProducts, listCatalogReadyStock } from "@/features/katalog";
 import { isActiveCatalogTariff, formatCatalogMoney, formatTariffDuration } from "@/features/katalog/utils";
 import { paths } from "@/routes/paths";
 
@@ -67,7 +61,7 @@ function isBusinessConflict(error: unknown) {
   return readCommandMessage(error).toLowerCase().includes("business_conflict");
 }
 
-const steps = ["Penyewa", "Periode", "Barang", "Review"];
+const steps = ["Penyewa", "Periode", "Barang", "Tinjau"];
 
 export function RentalWalkIn() {
   const navigate = useNavigate();
@@ -87,6 +81,7 @@ export function RentalWalkIn() {
   const [newPhone, setNewPhone] = useState("");
   const [startAt, setStartAt] = useState("");
   const [endAt, setEndAt] = useState("");
+  const [categoryId, setCategoryId] = useState("all");
   const [productId, setProductId] = useState("");
   const [variantId, setVariantId] = useState("");
   const [quantity, setQuantity] = useState("1");
@@ -121,10 +116,56 @@ export function RentalWalkIn() {
     staleTime: 60_000,
   });
 
+  const categories = useMemo(() => {
+    const byId = new Map<string, { id: string; nama: string }>();
+    for (const product of products.data?.products ?? []) {
+      if (product.status !== "active" || !product.kategori) continue;
+      byId.set(product.kategori.kategori_barang_id, {
+        id: product.kategori.kategori_barang_id,
+        nama: product.kategori.nama,
+      });
+    }
+    return Array.from(byId.values()).sort((a, b) => a.nama.localeCompare(b.nama, "id"));
+  }, [products.data?.products]);
+
+  const activeProducts = useMemo(
+    () =>
+      (products.data?.products ?? []).filter(
+        (product) =>
+          product.status === "active" &&
+          (categoryId === "all" || product.kategori_barang_id === categoryId),
+      ),
+    [categoryId, products.data?.products],
+  );
+
+  const productIds = useMemo(
+    () => activeProducts.map((product) => product.barang_id),
+    [activeProducts],
+  );
+
+  const productCovers = useQuery({
+    queryKey: ["penyewaan", "walk-in", "product-covers", context.data?.usahaId, productIds.join(",")],
+    queryFn: () => listCatalogProductCovers(context.data!.usahaId, productIds),
+    enabled: Boolean(context.data?.usahaId && productIds.length),
+    staleTime: 60_000,
+  });
+
+  const readyStock = useQuery({
+    queryKey: ["penyewaan", "walk-in", "ready-stock", context.data?.usahaId, productIds.join(",")],
+    queryFn: () => listCatalogReadyStock(context.data!.usahaId, productIds),
+    enabled: Boolean(context.data?.usahaId && productIds.length),
+    staleTime: 10_000,
+  });
+
+  const coverByProduct = useMemo(
+    () => new Map((productCovers.data ?? []).map((item) => [item.barang_id, item.url])),
+    [productCovers.data],
+  );
+
   const selectedProduct = useMemo(
     () =>
-      products.data?.products?.find((product) => product.barang_id === productId) ?? null,
-    [productId, products.data?.products],
+      activeProducts.find((product) => product.barang_id === productId) ?? null,
+    [activeProducts, productId],
   );
 
   const productDetail = useQuery({
@@ -158,7 +199,17 @@ export function RentalWalkIn() {
       ?? null;
   }, [productDetail.data?.active_tariff, productDetail.data?.tariffs, productId, selectedProduct?.active_tariff, variantId]);
 
+  const billingPeriods = selectedTariff && startAt && endAt
+    ? calculateTariffPeriods(startAt, endAt, selectedTariff)
+    : 0;
   const requestedQuantity = Number(quantity);
+  const estimatedLineSubtotal = selectedTariff && billingPeriods > 0
+    ? calculateRentalLineSubtotal(requestedQuantity, Number(selectedTariff.nominal), billingPeriods)
+    : 0;
+  const selectedReadyStock =
+    variantId
+      ? readyStock.data?.byVariant[variantId] ?? 0
+      : readyStock.data?.byProduct[productId] ?? 0;
   const availability = useQuery({
     queryKey: [
       "penyewaan",
@@ -223,7 +274,7 @@ export function RentalWalkIn() {
       ) {
         throw new Error("Jadwal rental harus lengkap dan valid.");
       }
-      if (!Number.isFinite(qty) || qty <= 0) throw new Error("Quantity harus lebih dari 0.");
+      if (!Number.isFinite(qty) || qty <= 0) throw new Error("Jumlah harus lebih dari 0.");
 
       setRentalCommandState("processing");
       return createDirectRental(
@@ -240,6 +291,9 @@ export function RentalWalkIn() {
               jumlah: qty,
               unit_price: Number(selectedTariff.nominal),
               currency_code: "IDR",
+              tarif_sewa_id: selectedTariff.tarif_sewa_id,
+              duration_periods: billingPeriods,
+              subtotal: calculateRentalLineSubtotal(qty, Number(selectedTariff.nominal), billingPeriods),
             },
           ],
         },
@@ -291,11 +345,19 @@ export function RentalWalkIn() {
     !Number.isNaN(new Date(startAt).getTime()) &&
     !Number.isNaN(new Date(endAt).getTime()) &&
     new Date(endAt) > new Date(startAt);
+  const quantityIsValid = Number.isInteger(requestedQuantity) && requestedQuantity > 0;
+  const availabilityRefreshing = availability.isPending || availability.isFetching;
+  const quantityFitsStock =
+    Boolean(availability.data) &&
+    requestedQuantity <= (availability.data?.readyPhysicalUnits ?? 0);
   const canMoveFromProduct =
     Boolean(selectedProduct && selectedTariff) &&
     selectedTariff?.currency_code === "IDR" &&
-    Number.isFinite(requestedQuantity) &&
-    requestedQuantity > 0;
+    billingPeriods > 0 &&
+    quantityIsValid &&
+    !availabilityRefreshing &&
+    !availability.isError &&
+    quantityFitsStock;
 
   if (context.isPending) {
     return <div className="p-6 text-sm text-muted-foreground">Memuat konteks Usaha…</div>;
@@ -304,7 +366,7 @@ export function RentalWalkIn() {
   if (context.error || !context.data) {
     return (
       <Alert variant="destructive">
-        <AlertTitle>Walk-in belum dapat dibuka</AlertTitle>
+        <AlertTitle>Penyewaan Langsung belum dapat dibuka</AlertTitle>
         <AlertDescription>
           {context.error?.message ?? "Konteks Usaha tidak tersedia."}
         </AlertDescription>
@@ -328,11 +390,11 @@ export function RentalWalkIn() {
       <header className="space-y-1">
         <p className="text-sm text-muted-foreground">Penyewaan</p>
         <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
-          Buat Transaksi Walk-in
+          Buat Penyewaan Langsung
         </h1>
         <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
-          Buat draft rental tanpa membuat Reservation. Validasi ketersediaan final tetap
-          dilakukan oleh trusted command saat draft disimpan.
+          Buat draf penyewaan langsung tanpa membuat Reservasi. Ketersediaan akhir tetap
+          diperiksa oleh sistem saat draf disimpan.
         </p>
       </header>
 
@@ -466,7 +528,7 @@ export function RentalWalkIn() {
                 <AlertTitle>Pembuatan penyewa belum selesai</AlertTitle>
                 <AlertDescription>
                   {isUnknownOutcome(createRenterMutation.error)
-                    ? "Hasil command belum pasti. Jangan buat penyewa kedua sebelum status diperiksa."
+                    ? "Hasil tindakan belum pasti. Jangan membuat penyewa kedua sebelum status diperiksa."
                     : readCommandMessage(createRenterMutation.error)}
                   {isUnknownOutcome(createRenterMutation.error) ? (
                     <div className="mt-3">
@@ -491,7 +553,7 @@ export function RentalWalkIn() {
       {step === 2 ? (
         <Card className="rounded-2xl">
           <CardHeader>
-            <CardTitle>Periode rental</CardTitle>
+            <CardTitle>Periode Penyewaan</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-2">
@@ -504,16 +566,30 @@ export function RentalWalkIn() {
                 <Input type="datetime-local" value={endAt} onChange={(event) => setEndAt(event.target.value)} />
               </label>
             </div>
-            {startAt && endAt && canMoveFromPeriod ? (
-              <div className="flex items-center gap-2 rounded-2xl border bg-muted/30 p-4 text-sm">
-                <Clock3 className="size-4 text-muted-foreground" />
-                <span>Periode valid dan siap dicek terhadap kapasitas fisik saat review.</span>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <div className="flex items-start gap-2 rounded-2xl border bg-muted/30 p-3 text-sm">
+                <Clock3 className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                <div>
+                  <p className="font-medium">Batas toleransi pengembalian</p>
+                  <p className="mt-0.5 text-muted-foreground">
+                    {context.data.defaultToleranceHours} jam setelah waktu kembali yang dijadwalkan.
+                  </p>
+                </div>
               </div>
-            ) : (
-              <div className="rounded-2xl border border-dashed p-4 text-sm text-muted-foreground">
-                Isi waktu mulai dan kembali. Waktu kembali harus setelah waktu mulai.
-              </div>
-            )}
+              {startAt && endAt && canMoveFromPeriod ? (
+                <div className="flex items-start gap-2 rounded-2xl border bg-muted/30 p-3 text-sm">
+                  <Check className="mt-0.5 size-4 shrink-0 text-primary" />
+                  <div>
+                    <p className="font-medium">Periode valid</p>
+                    <p className="mt-0.5 text-muted-foreground">Sistem menghitung periode tarif dari durasi yang dipilih.</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-dashed p-3 text-sm text-muted-foreground">
+                  Isi waktu mulai dan kembali. Waktu kembali harus setelah waktu mulai.
+                </div>
+              )}
+            </div>
             <div className="flex justify-between gap-2">
               <Button variant="outline" className="rounded-xl" onClick={() => setStep(1)}>Kembali</Button>
               <Button disabled={!canMoveFromPeriod} onClick={() => setStep(3)}>
@@ -542,27 +618,80 @@ export function RentalWalkIn() {
             ) : null}
 
             <div className="grid gap-3">
-              <label className="space-y-1.5 text-sm">
-                <span className="font-medium">Barang</span>
-                <Select
-                  value={productId}
-                  onValueChange={(value) => {
-                    setProductId(value);
-                    setVariantId("");
-                  }}
-                >
-                  <SelectTrigger aria-label="Pilih barang"><SelectValue placeholder="Pilih barang…" /></SelectTrigger>
-                  <SelectContent>
-                    {(products.data?.products ?? [])
-                      .filter((product) => product.status === "active")
-                      .map((product) => (
-                        <SelectItem key={product.barang_id} value={product.barang_id}>
-                          {product.nama}
-                        </SelectItem>
+              <div className="space-y-2">
+                <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_220px] sm:items-end">
+                  <div>
+                    <p className="text-sm font-medium">Pilih barang</p>
+                    <p className="text-xs text-muted-foreground">Pilih barang yang tersedia untuk periode ini.</p>
+                  </div>
+                  <label className="grid gap-1.5 text-sm font-medium" htmlFor="walkin-category">
+                    <span>Kategori</span>
+                    <select
+                      id="walkin-category"
+                      value={categoryId}
+                      onChange={(event) => {
+                        setCategoryId(event.target.value);
+                        setProductId("");
+                        setVariantId("");
+                      }}
+                      className="h-11 w-full rounded-xl border bg-background px-3 text-sm font-normal outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      <option value="all">Semua kategori</option>
+                      {categories.map((category) => (
+                        <option key={category.id} value={category.id}>{category.nama}</option>
                       ))}
-                  </SelectContent>
-                </Select>
-              </label>
+                    </select>
+                  </label>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {activeProducts.map((product) => {
+                    const selected = product.barang_id === productId;
+                    const cover = coverByProduct.get(product.barang_id);
+                    const stock = readyStock.data?.byProduct[product.barang_id] ?? 0;
+                    return (
+                      <button
+                        key={product.barang_id}
+                        type="button"
+                        aria-pressed={selected}
+                        onClick={() => {
+                          setProductId(product.barang_id);
+                          setVariantId("");
+                        }}
+                        className={[
+                          "flex min-h-20 items-center gap-3 rounded-2xl border p-3 text-left transition",
+                          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                          selected ? "border-primary bg-primary/[0.03] ring-1 ring-primary/20" : "hover:bg-accent/20",
+                        ].join(" ")}
+                      >
+                        <div className="size-16 shrink-0 overflow-hidden rounded-xl bg-muted sm:size-20">
+                          {cover ? (
+                            <img src={cover} alt="" className="h-full w-full object-cover" />
+                          ) : (
+                            <div className="grid h-full place-items-center text-muted-foreground"><Package className="size-6 sm:size-7" /></div>
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="truncate font-semibold">{product.nama}</p>
+                              <p className="mt-0.5 truncate text-xs text-muted-foreground">{product.kategori?.nama ?? "Tanpa kategori"}</p>
+                            </div>
+                            <Badge variant={selected ? "default" : "secondary"} className="shrink-0 rounded-full">
+                              {readyStock.isPending ? "…" : `${stock} siap`}
+                            </Badge>
+                          </div>
+                          <p className="mt-1 line-clamp-1 text-xs leading-5 text-muted-foreground">
+                            {product.ringkasan_publik ?? product.deskripsi ?? "Pilih barang ini."}
+                          </p>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+                {!products.isPending && activeProducts.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed p-5 text-sm text-muted-foreground">Belum ada barang aktif yang dapat disewakan.</div>
+                ) : null}
+              </div>
 
               {products.isError ? (
                 <Alert variant="destructive">
@@ -596,24 +725,59 @@ export function RentalWalkIn() {
               ) : null}
 
               {productDetail.data?.variants.some((variant) => variant.status === "active") ? (
-                <label className="space-y-1.5 text-sm">
-                  <span className="font-medium">Varian</span>
-                  <Select value={variantId || "__base__"} onValueChange={(value) => setVariantId(value === "__base__" ? "" : value)}>
-                    <SelectTrigger aria-label="Pilih varian">
-                      <SelectValue placeholder="Gunakan barang utama / pilih varian…" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__base__">Gunakan barang utama</SelectItem>
-                      {productDetail.data?.variants
-                        .filter((variant) => variant.status === "active")
-                        .map((variant) => (
-                          <SelectItem key={variant.varian_barang_id} value={variant.varian_barang_id}>
-                            {variant.nama}
-                          </SelectItem>
-                        ))}
-                    </SelectContent>
-                  </Select>
-                </label>
+                <div className="space-y-2">
+                  <div>
+                    <p className="text-sm font-medium">Pilih varian</p>
+                    <p className="text-xs text-muted-foreground">Pilih kartu varian bila barang memiliki pilihan berbeda.</p>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <button
+                      type="button"
+                      aria-pressed={variantId === ""}
+                      onClick={() => setVariantId("")}
+                      className={[
+                        "flex items-center gap-3 rounded-2xl border p-3 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                        variantId === "" ? "border-primary bg-primary/[0.04] ring-1 ring-primary/20" : "hover:bg-accent/20"
+                      ].join(" ")}
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="size-14 shrink-0 overflow-hidden rounded-xl bg-muted sm:size-16">
+                          {coverByProduct.get(productId) ? <img src={coverByProduct.get(productId) ?? ""} alt="" className="h-full w-full object-cover" /> : <div className="grid h-full place-items-center text-muted-foreground"><Package className="size-5" /></div>}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-start justify-between gap-2"><p className="font-semibold">Barang utama</p><Badge variant={variantId === "" ? "default" : "secondary"} className="rounded-full">{readyStock.data?.byProduct[productId] ?? 0} unit siap</Badge></div>
+                          <p className="mt-1 text-xs leading-5 text-muted-foreground">Gunakan stok barang utama.</p>
+                        </div>
+                      </div>
+                    </button>
+                    {(productDetail.data?.variants ?? []).filter((variant) => variant.status === "active").map((variant) => {
+                      const selected = variant.varian_barang_id === variantId;
+                      const stock = readyStock.data?.byVariant[variant.varian_barang_id] ?? 0;
+                      return (
+                        <button
+                          key={variant.varian_barang_id}
+                          type="button"
+                          aria-pressed={selected}
+                          onClick={() => setVariantId(variant.varian_barang_id)}
+                          className={[
+                            "flex items-center gap-3 rounded-2xl border p-3 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                            selected ? "border-primary bg-primary/[0.04] ring-1 ring-primary/20" : "hover:bg-accent/20"
+                          ].join(" ")}
+                        >
+                          <div className="flex items-start gap-3">
+                            <div className="size-14 shrink-0 overflow-hidden rounded-xl bg-muted sm:size-16">
+                              {coverByProduct.get(productId) ? <img src={coverByProduct.get(productId) ?? ""} alt="" className="h-full w-full object-cover" /> : <div className="grid h-full place-items-center text-muted-foreground"><Package className="size-5" /></div>}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-start justify-between gap-2"><p className="font-semibold">{variant.nama}</p><Badge variant={selected ? "default" : "secondary"} className="rounded-full">{readyStock.isPending ? "…" : `${stock} unit siap`}</Badge></div>
+                              <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{variant.deskripsi ?? variant.kode_internal ?? "Pilihan varian barang."}</p>
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
               ) : null}
 
               <div className="grid gap-3 sm:grid-cols-[1fr_180px]">
@@ -625,11 +789,12 @@ export function RentalWalkIn() {
                   <p className="mt-1 text-xs text-muted-foreground">
                     {selectedTariff ? formatTariffDuration(selectedTariff) : "Pilih barang dan varian yang memiliki tarif aktif."}
                   </p>
+                  {productId ? <p className="mt-2 text-xs font-medium text-muted-foreground">Stok siap saat ini · {readyStock.isPending ? "Memuat…" : `${selectedReadyStock} unit`}</p> : null}
                 </div>
                 <label className="space-y-1.5 text-sm">
                   <span className="font-medium">Jumlah unit</span>
                   <Input
-                    inputMode="decimal"
+                    inputMode="numeric"
                     min={1}
                     step={1}
                     type="number"
@@ -639,14 +804,20 @@ export function RentalWalkIn() {
                   />
                 </label>
               </div>
+              {quantity && !quantityIsValid ? (
+                <Alert variant="destructive">
+                  <AlertTitle>Jumlah unit tidak valid</AlertTitle>
+                  <AlertDescription>Masukkan jumlah unit berupa bilangan bulat, minimal 1.</AlertDescription>
+                </Alert>
+              ) : null}
 
-              {productId && availability.isPending ? (
+              {productId && availabilityRefreshing ? (
                 <div
                   className="rounded-2xl border border-dashed p-4 text-sm text-muted-foreground"
                   aria-live="polite"
                   aria-busy="true"
                 >
-                  Memeriksa kesiapan fisik unit…
+                  Memeriksa stok siap terbaru…
                 </div>
               ) : null}
 
@@ -662,28 +833,28 @@ export function RentalWalkIn() {
                 </Alert>
               ) : null}
 
-              {productId && availability.data ? (
+              {productId && availability.data && requestedQuantity > availability.data.readyPhysicalUnits ? (
+                <Alert variant="destructive" aria-live="assertive">
+                  <CircleAlert className="size-4" />
+                  <AlertTitle>Jumlah melebihi unit siap disewakan</AlertTitle>
+                  <AlertDescription>
+                    Tersedia {availability.data.readyPhysicalUnits} unit Siap Disewakan, tetapi Anda meminta {availability.data.requestedUnits} unit. Kurangi jumlah sebelum melanjutkan.
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+
+              {productId && availability.data && requestedQuantity <= availability.data.readyPhysicalUnits ? (
                 <div
                   aria-live="polite"
-                  className={[
-                    "flex items-start gap-3 rounded-2xl border p-4",
-                    availability.data.physicalCheck === "pass"
-                      ? "bg-emerald-50/50"
-                      : "bg-amber-50/60",
-                  ].join(" ")}
+                  className="flex items-start gap-3 rounded-2xl border bg-emerald-50/50 p-4"
                 >
-                  {availability.data.physicalCheck === "pass" ? (
-                    <ShieldCheck className="mt-0.5 size-5 shrink-0 text-emerald-700" />
-                  ) : (
-                    <CircleAlert className="mt-0.5 size-5 shrink-0 text-amber-700" />
-                  )}
+                  <ShieldCheck className="mt-0.5 size-5 shrink-0 text-emerald-700" />
                   <div>
                     <p className="font-semibold">
-                      {availability.data.readyPhysicalUnits} unit READY secara fisik
+                      {availability.data.readyPhysicalUnits} unit siap disewakan
                     </p>
                     <p className="mt-1 text-sm text-muted-foreground">
-                      Permintaan saat ini {availability.data.requestedUnits} unit. Commitments
-                      pada periode rental tetap diperiksa ulang oleh server saat membuat draft.
+                      Permintaan {availability.data.requestedUnits} unit masih dalam batas stok siap. Ketersediaan pada periode rental tetap diperiksa ulang oleh server saat draft disimpan.
                     </p>
                   </div>
                 </div>
@@ -703,7 +874,7 @@ export function RentalWalkIn() {
       {step === 4 ? (
         <Card className="rounded-2xl">
           <CardHeader>
-            <CardTitle>Review transaksi</CardTitle>
+            <CardTitle>Tinjauan Transaksi</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-2">
@@ -728,29 +899,41 @@ export function RentalWalkIn() {
                 <Badge variant="secondary" className="rounded-full">{quantity} unit</Badge>
               </div>
               <div className="mt-4 grid gap-2 border-t pt-4 text-sm sm:grid-cols-2">
-                <div className="text-muted-foreground">Tarif / unit</div>
+                <div className="text-muted-foreground">Tarif / periode</div>
                 <div className="text-right font-medium">
                   {selectedTariff ? formatCatalogMoney(selectedTariff.nominal, selectedTariff.currency_code) : "—"}
                 </div>
-                <div className="text-muted-foreground">Subtotal</div>
+                <div className="text-muted-foreground">Durasi ditagihkan</div>
+                <div className="text-right font-medium">
+                  {selectedTariff && billingPeriods > 0 ? formatTariffPeriods(billingPeriods, selectedTariff) : "—"}
+                </div>
+                <div className="text-muted-foreground">Jumlah unit</div>
+                <div className="text-right font-medium">{requestedQuantity || "—"} unit</div>
+                <div className="text-muted-foreground">Total sewa</div>
                 <div className="text-right text-lg font-bold">
-                  {selectedTariff
-                    ? formatCatalogMoney(Number(selectedTariff.nominal) * requestedQuantity, selectedTariff.currency_code)
+                  {selectedTariff && billingPeriods > 0
+                    ? formatCatalogMoney(estimatedLineSubtotal, selectedTariff.currency_code)
                     : "—"}
                 </div>
+              </div>
+              <div className="rounded-2xl border bg-muted/25 p-3 text-sm">
+                <p className="font-medium">Batas toleransi pengembalian</p>
+                <p className="mt-1 text-muted-foreground">
+                  {context.data.defaultToleranceHours} jam setelah waktu kembali yang dijadwalkan.
+                </p>
               </div>
             </div>
 
             <label className="space-y-1.5 text-sm">
-              <span className="font-medium">Catatan rental</span>
+              <span className="font-medium">Catatan Penyewaan</span>
               <Input value={note} onChange={(event) => setNote(event.target.value)} placeholder="Opsional" />
             </label>
 
             {rentalCommandState === "conflict" ? (
               <Alert variant="destructive">
-                <AlertTitle>Kapasitas atau state rental berubah</AlertTitle>
+                <AlertTitle>Kapasitas atau status penyewaan berubah</AlertTitle>
                 <AlertDescription>
-                  Server menolak command karena kondisi terbaru tidak lagi memenuhi kontrak rental.
+                  Sistem menolak tindakan karena kondisi terbaru tidak lagi memenuhi aturan penyewaan.
                   Perbarui pilihan barang / quantity lalu coba lagi.
                 </AlertDescription>
               </Alert>
@@ -758,14 +941,14 @@ export function RentalWalkIn() {
 
             {rentalCommandState === "error" && createRentalMutation.error ? (
               <Alert variant="destructive">
-                <AlertTitle>Draft rental belum dibuat</AlertTitle>
+                <AlertTitle>Draf penyewaan belum dibuat</AlertTitle>
                 <AlertDescription>{readCommandMessage(createRentalMutation.error)}</AlertDescription>
               </Alert>
             ) : null}
 
             {rentalCommandState === "unknown" ? (
               <Alert>
-                <AlertTitle>Hasil command belum pasti</AlertTitle>
+                <AlertTitle>Hasil tindakan belum pasti</AlertTitle>
                 <AlertDescription>
                   Jangan tekan tombol buat ulang. Periksa dulu apakah draft rental sudah terbentuk.
                   <div className="mt-3">
@@ -775,7 +958,7 @@ export function RentalWalkIn() {
                       size="sm"
                       onClick={() => void reconcileRental()}
                     >
-                      <RefreshCw /> Periksa status command
+                      <RefreshCw /> Periksa status tindakan
                     </Button>
                   </div>
                 </AlertDescription>
@@ -803,7 +986,7 @@ export function RentalWalkIn() {
                   {createRentalMutation.isPending || rentalCommandState === "processing" ? (
                     <><Loader2 className="animate-spin" /> Membuat draft…</>
                   ) : (
-                    <>Buat Draft Rental <ArrowRight /></>
+                    <>Buat Draf Penyewaan <ArrowRight /></>
                   )}
                 </Button>
               </div>
@@ -845,7 +1028,7 @@ export function RentalWalkIn() {
                 <AlertTitle>Penyewa belum dibuat</AlertTitle>
                 <AlertDescription>
                   {isUnknownOutcome(createRenterMutation.error)
-                    ? "Hasil command belum pasti. Periksa status terlebih dahulu."
+                    ? "Hasil tindakan belum pasti. Periksa status terlebih dahulu."
                     : readCommandMessage(createRenterMutation.error)}
                   {isUnknownOutcome(createRenterMutation.error) ? (
                     <div className="mt-3">

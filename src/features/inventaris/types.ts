@@ -10,6 +10,17 @@ export type InventoryLocation = {
   updated_at: string;
 };
 
+export type CreateInventoryLocationInput = {
+  nama: string;
+  tipe: string;
+  alamat?: string | null;
+  keterangan?: string | null;
+};
+
+export type UpdateInventoryLocationInput = CreateInventoryLocationInput & {
+  status: "active" | "inactive";
+};
+
 export type InventoryUnit = {
   unit_barang_id: string;
   usaha_id: string;
@@ -126,6 +137,24 @@ export type InventoryCommandResult = {
 export type InventoryReconciliationResult = {
   state: "committed" | "not_found" | "unknown";
   response: InventoryCommandResult | null;
+};
+
+export type InventoryConditionCorrectionInput = {
+  newCondition: string;
+  correctionReason: string;
+  correctionNote?: string | null;
+  sourcePemeriksaanId?: string | null;
+  expectedUpdatedAt: string;
+};
+
+export type InventoryConditionCorrectionResult = {
+  unit_barang_id: string;
+  status: string;
+  kondisi_ringkas: string | null;
+  old_kondisi_ringkas: string | null;
+  new_kondisi_ringkas: string | null;
+  state: "corrected" | "unchanged";
+  source_pemeriksaan_id: string | null;
 };
 
 export type InventoryCandidate = {

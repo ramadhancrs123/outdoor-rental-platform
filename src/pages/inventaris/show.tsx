@@ -27,6 +27,7 @@ import {
   getInventoryUnit,
   listInventoryLocations,
   markInventoryUnitReady,
+  correctInventoryConditionSummary,
   moveInventoryUnit,
   reconcileInventoryCommand,
 } from "@/features/inventaris";
@@ -48,6 +49,10 @@ export function InventoryShow() {
   const [moveOpen, setMoveOpen] = useState(false);
   const [moveStep, setMoveStep] = useState<MoveStep>(1);
   const [moveTarget, setMoveTarget] = useState("");
+  const [conditionCorrectionOpen, setConditionCorrectionOpen] = useState(false);
+  const [conditionDraft, setConditionDraft] = useState("");
+  const [conditionReason, setConditionReason] = useState("");
+  const [conditionNote, setConditionNote] = useState("");
   const [actionFeedback, setActionFeedback] = useState("");
   const [unknownCommand, setUnknownCommand] = useState<"move" | "ready" | null>(null);
   const [unknownFeedback, setUnknownFeedback] = useState("");
@@ -113,7 +118,7 @@ export function InventoryShow() {
       const message = errorText(error, "Pemindahan unit gagal.");
       if (message.startsWith("UNKNOWN_OUTCOME:")) {
         setUnknownCommand("move");
-        setUnknownFeedback(message);
+        setUnknownFeedback(message.replace(/^UNKNOWN_OUTCOME:\s*/, ""));
       } else {
         moveCommandRef.current = isConflictMessage(message) ? moveCommandRef.current : null;
         setConflictReason(isConflictMessage(message) ? message : "");
@@ -144,12 +149,12 @@ export function InventoryShow() {
     onSuccess: async () => {
       readyCommandRef.current = null;
       setUnknownCommand(null);
-      setActionFeedback("Unit berhasil ditetapkan READY. Konteks ketersediaan periode sewa tetap divalidasi di workflow Reservasi/Penyewaan.");
+      setActionFeedback("Unit berhasil ditetapkan Siap Disewakan. Ketersediaan untuk periode sewa tetap diperiksa melalui Reservasi/Penyewaan.");
       await queryClient.invalidateQueries({ queryKey: ["inventaris", "unit", context.data?.usahaId, id] });
       await queryClient.invalidateQueries({ queryKey: ["inventaris", "units"] });
     },
     onError: (error) => {
-      const message = errorText(error, "Penetapan READY gagal.");
+      const message = errorText(error, "Penetapan Siap Disewakan gagal.");
       if (message.startsWith("UNKNOWN_OUTCOME:")) {
         setUnknownCommand("ready");
         setUnknownFeedback(message);
@@ -158,6 +163,41 @@ export function InventoryShow() {
         setConflictReason(isConflictMessage(message) ? message : "");
         setActionFeedback(isConflictMessage(message) ? "" : message);
       }
+    },
+  });
+
+  const conditionCorrectionMutation = useMutation({
+    mutationFn: async () => {
+      if (!context.data || !id || !detail.data?.unit.updated_at) throw new Error("Status unit terbaru belum tersedia.");
+      return correctInventoryConditionSummary(
+        context.data.usahaId,
+        id,
+        {
+          newCondition: conditionDraft,
+          correctionReason: conditionReason,
+          correctionNote: conditionNote,
+          sourcePemeriksaanId: operational.data?.latestInspection?.pemeriksaan_id ?? null,
+          expectedUpdatedAt: detail.data.unit.updated_at,
+        },
+        { requestId: crypto.randomUUID() },
+      );
+    },
+    onMutate: () => {
+      setActionFeedback("");
+      setConflictReason("");
+    },
+    onSuccess: async (result) => {
+      setConditionCorrectionOpen(false);
+      setConditionDraft(result.kondisi_ringkas ?? "");
+      setConditionReason("");
+      setConditionNote("");
+      setActionFeedback(result.state === "unchanged" ? "Kondisi sudah sama; tidak ada perubahan yang disimpan." : "Koreksi kondisi berhasil dicatat pada audit dan riwayat unit.");
+      await queryClient.invalidateQueries({ queryKey: ["inventaris", "unit", context.data?.usahaId, id] });
+      await queryClient.invalidateQueries({ queryKey: ["inventaris", "units"] });
+    },
+    onError: (error) => {
+      const message = errorText(error, "Koreksi Kondisi gagal.");
+      setActionFeedback(message);
     },
   });
 
@@ -175,7 +215,7 @@ export function InventoryShow() {
         else readyCommandRef.current = null;
         setUnknownCommand(null);
         setUnknownFeedback("");
-        setActionFeedback("Command sudah committed. Detail unit sedang disegarkan.");
+        setActionFeedback("Perubahan sudah disimpan. Detail unit sedang diperbarui.");
         await queryClient.invalidateQueries({ queryKey: ["inventaris", "unit", context.data.usahaId, id] });
         await queryClient.invalidateQueries({ queryKey: ["inventaris", "units"] });
       } else if (result.state === "not_found") {
@@ -183,12 +223,12 @@ export function InventoryShow() {
         else readyCommandRef.current = null;
         setUnknownCommand(null);
         setUnknownFeedback("");
-        setActionFeedback("Tidak ditemukan commitment untuk command. Command baru boleh dibuat setelah state unit diverifikasi kembali.");
+        setActionFeedback("Perubahan sebelumnya belum ditemukan. Tindakan baru boleh dilakukan setelah status unit diperiksa kembali.");
       } else {
-        setUnknownFeedback("Command masih UNKNOWN_OUTCOME. Jangan kirim command kedua.");
+        setUnknownFeedback("Hasil tindakan belum dapat dipastikan. Jangan kirim tindakan yang sama lagi.");
       }
     } catch (error) {
-      setUnknownFeedback(errorText(error, "Rekonsiliasi command gagal."));
+      setUnknownFeedback(errorText(error, "Pemeriksaan status tindakan gagal."));
     } finally {
       setUnknownReconciling(false);
     }
@@ -373,9 +413,9 @@ export function InventoryShow() {
 
       <section className="space-y-3">
         <div>
-          <h2 className="text-base font-semibold">Current Assignment & Rental</h2>
+          <h2 className="text-base font-semibold">Penetapan Unit & Penyewaan Saat Ini</h2>
           <p className="text-sm text-muted-foreground">
-            Fakta assignment dan rental tetap berasal dari source domain Penyewaan.
+            Penetapan Unit dan penyewaan tetap dikelola oleh menu Penyewaan.
           </p>
         </div>
         {operational.isPending ? (
@@ -394,7 +434,7 @@ export function InventoryShow() {
           <CircleAlert className="size-4" />
           <AlertTitle>Konteks lintas modul belum tersedia</AlertTitle>
           <AlertDescription>
-            State utama unit tetap berasal dari source of truth Inventaris. Data rental, return, inspection, dan maintenance dapat dicoba dimuat ulang tanpa mengubah state unit.
+            Status utama unit tetap berasal dari Inventaris. Data penyewaan, pengembalian, pemeriksaan, dan perawatan dapat dimuat ulang tanpa mengubah status unit.
           </AlertDescription>
         </Alert>
       ) : null}
@@ -402,13 +442,13 @@ export function InventoryShow() {
       {capabilities.mutation ? (
         <Card className="shadow-sm">
           <CardHeader>
-            <CardTitle className="text-base">Next Action</CardTitle>
+            <CardTitle className="text-base">Aksi Berikutnya</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-2">
-              {unit.status === "inspection_pending" || unit.status === "damaged" ? (
+              {unit.status === "damaged" ? (
                 <Button asChild className="h-11 rounded-xl">
-                  <Link to={paths.pemeriksaan + "?unit_id=" + unit.unit_barang_id}>Buka Pemeriksaan<PackageCheck /></Link>
+                  <Link to={paths.perawatan + "?unit_id=" + unit.unit_barang_id}>Buka Perawatan<Wrench /></Link>
                 </Button>
               ) : null}
               {unit.status === "maintenance" ? (
@@ -419,7 +459,7 @@ export function InventoryShow() {
               {unit.status === "rented" ? (
                 <Button asChild className="h-11 rounded-xl">
                   <Link to={operational.data?.activeRental ? paths.penyewaan + "/" + operational.data.activeRental.penyewaan_id : paths.penyewaan}>
-                    {operational.data?.activeRental ? "Buka Rental" : "Tinjau Rental"}
+                    {operational.data?.activeRental ? "Buka Penyewaan" : "Tinjau Penyewaan"}
                   </Link>
                 </Button>
               ) : null}
@@ -430,17 +470,28 @@ export function InventoryShow() {
                   disabled={readyMutation.isPending}
                 >
                   <PackageCheck />
-                  {readyMutation.isPending ? "Memverifikasi…" : "Verifikasi & Tetapkan READY"}
+                  {readyMutation.isPending ? "Memverifikasi…" : "Verifikasi & Tetapkan Siap Disewakan"}
                 </Button>
               ) : null}
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11 rounded-xl"
+                onClick={() => {
+                  setConditionDraft(unit.kondisi_ringkas ?? "");
+                  setConditionCorrectionOpen(true);
+                }}
+              >
+                Koreksi Kondisi
+              </Button>
               {!["inspection_pending", "maintenance", "rented", "damaged"].includes(unit.status) && !canMarkReady ? (
                 <div className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">
-                  Tidak ada mutation action yang aman untuk state ini. Gunakan detail dan source domain terkait untuk langkah berikutnya.
+                  Tidak ada tindakan yang aman untuk status ini. Tinjau detail unit dan menu terkait untuk langkah berikutnya.
                 </div>
               ) : null}
             </div>
             <p className="text-xs leading-5 text-muted-foreground">
-              Setiap mutation melewati validasi server, current-state revalidation, idempotency dan concurrency protection. UI tidak menggunakan generic Set Status.
+              Setiap perubahan diperiksa oleh sistem sebelum disimpan. Sistem juga melindungi perubahan yang dilakukan bersamaan. Status unit tidak diubah melalui tindakan umum.
             </p>
           </CardContent>
         </Card>
@@ -448,20 +499,20 @@ export function InventoryShow() {
 
       <section className="space-y-3">
         <div>
-          <h2 className="text-base font-semibold">Return / Inspection / Maintenance</h2>
+          <h2 className="text-base font-semibold">Pengembalian / Pemeriksaan / Perawatan</h2>
           <p className="text-sm text-muted-foreground">
-            Completion pada satu domain tidak otomatis mengubah state fisik unit menjadi READY.
+            Penyelesaian pada satu menu tidak otomatis mengubah status fisik unit menjadi Siap Disewakan.
           </p>
         </div>
         <div className="grid gap-3 md:grid-cols-3">
           <Card className="shadow-none">
             <CardContent className="space-y-2 p-4">
               <p className="text-xs text-muted-foreground">Pengembalian terakhir</p>
-              <p className="font-semibold">{operational.data?.latestReturn ? "Unit diterima" : "Belum ada return"}</p>
+              <p className="font-semibold">{operational.data?.latestReturn ? "Unit diterima" : "Belum ada pengembalian"}</p>
               <p className="text-xs text-muted-foreground">
                 {operational.data?.latestReturn
                   ? formatInventoryDateTime(operational.data.latestReturn.diterima_at)
-                  : "Tidak ada fakta return yang tersedia."}
+                  : "Tidak ada data pengembalian yang tersedia."}
               </p>
             </CardContent>
           </Card>
@@ -472,7 +523,7 @@ export function InventoryShow() {
               <p className="text-xs text-muted-foreground">
                 {operational.data?.latestInspection
                   ? `${operational.data.latestInspection.kelengkapan_status} · ${operational.data.latestInspection.keputusan_operasional}`
-                  : "Belum ada evidence pemeriksaan."}
+                  : "Belum ada bukti pemeriksaan."}
               </p>
             </CardContent>
           </Card>
@@ -484,7 +535,7 @@ export function InventoryShow() {
                   ? `${operational.data.openMaintenance.length} pekerjaan terbuka`
                   : "Tidak ada perawatan aktif"}
               </p>
-              <p className="text-xs text-muted-foreground">Source truth tetap modul Perawatan.</p>
+              <p className="text-xs text-muted-foreground">Data utama tetap dikelola oleh modul Perawatan.</p>
             </CardContent>
           </Card>
         </div>
@@ -493,17 +544,17 @@ export function InventoryShow() {
       <section id="unit-riwayat" className="space-y-3">
         <div className="flex items-end justify-between gap-3">
           <div>
-            <h2 className="text-base font-semibold">Operational History</h2>
-            <p className="text-sm text-muted-foreground">Business history physical unit, bukan audit log platform.</p>
+            <h2 className="text-base font-semibold">Riwayat Unit</h2>
+            <p className="text-sm text-muted-foreground">Riwayat peristiwa unit, bukan Audit Log platform.</p>
           </div>
         </div>
         <UnitHistoryTimeline history={history} />
       </section>
 
       <Alert>
-        <AlertTitle>Perintah Inventaris</AlertTitle>
+        <AlertTitle>Aksi Inventaris</AlertTitle>
         <AlertDescription>
-          {capabilities.reason} QR hanya shortcut lookup; perubahan tetap melewati command server/database yang berwenang.
+          {capabilities.reason} QR hanya cara cepat menemukan unit; perubahan tetap diproses oleh sistem.
         </AlertDescription>
       </Alert>
 
@@ -517,13 +568,13 @@ export function InventoryShow() {
                 onClick={() => void reconcileUnknownCommand()}
                 disabled={unknownReconciling}
               >
-                {unknownReconciling ? "Memeriksa status…" : "Periksa Status Command"}
+                {unknownReconciling ? "Memeriksa status…" : "Periksa Status Tindakan"}
               </Button>
-            ) : unit.status === "inspection_pending" || unit.status === "damaged" ? (
+            ) : unit.status === "damaged" ? (
               <Button asChild className="h-12 w-full rounded-xl">
-                <Link to={paths.pemeriksaan + "?unit_id=" + unit.unit_barang_id}>
-                  Buka Pemeriksaan
-                  <PackageCheck />
+                <Link to={paths.perawatan + "?unit_id=" + unit.unit_barang_id}>
+                  Buka Perawatan
+                  <Wrench />
                 </Link>
               </Button>
             ) : unit.status === "maintenance" ? (
@@ -536,7 +587,7 @@ export function InventoryShow() {
             ) : unit.status === "rented" ? (
               <Button asChild className="h-12 w-full rounded-xl">
                 <Link to={operational.data?.activeRental ? paths.penyewaan + "/" + operational.data.activeRental.penyewaan_id : paths.penyewaan}>
-                  {operational.data?.activeRental ? "Buka Rental" : "Tinjau Rental"}
+                  {operational.data?.activeRental ? "Buka Penyewaan" : "Tinjau Penyewaan"}
                   <ArrowRight />
                 </Link>
               </Button>
@@ -548,7 +599,7 @@ export function InventoryShow() {
                 disabled={readyMutation.isPending}
               >
                 <PackageCheck />
-                {readyMutation.isPending ? "Memverifikasi…" : "Verifikasi & Tetapkan READY"}
+                {readyMutation.isPending ? "Memverifikasi…" : "Verifikasi & Tetapkan Siap Disewakan"}
               </Button>
             ) : null}
           </div>
@@ -679,6 +730,80 @@ export function InventoryShow() {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={conditionCorrectionOpen}
+        onOpenChange={(open) => {
+          setConditionCorrectionOpen(open);
+          if (!open) {
+            setConditionReason("");
+            setConditionNote("");
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Koreksi Kondisi</DialogTitle>
+            <DialogDescription>
+              Gunakan hanya saat ringkasan kondisi Inventaris tidak sinkron. Ini adalah recovery operasional, bukan pengganti Pemeriksaan dan tidak mengubah status unit menjadi siap.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="rounded-2xl border bg-muted/20 p-4 text-sm">
+              <p className="text-xs text-muted-foreground">Kondisi saat ini</p>
+              <p className="mt-1 font-semibold">{unit.kondisi_ringkas ?? "Belum diisi"}</p>
+            </div>
+
+            <label className="grid gap-2 text-sm font-medium">
+              Kondisi Ringkas Baru
+              <input
+                className="h-11 rounded-xl border bg-background px-3 font-normal outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                value={conditionDraft}
+                onChange={(event) => setConditionDraft(event.target.value)}
+                placeholder="Contoh: Baik, lengkap"
+              />
+            </label>
+
+            <label className="grid gap-2 text-sm font-medium">
+              Alasan Koreksi
+              <input
+                className="h-11 rounded-xl border bg-background px-3 font-normal outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                value={conditionReason}
+                onChange={(event) => setConditionReason(event.target.value)}
+                placeholder="Mengapa summary perlu diperbaiki?"
+              />
+            </label>
+
+            <label className="grid gap-2 text-sm font-medium">
+              Catatan
+              <textarea
+                className="min-h-24 rounded-xl border bg-background p-3 text-sm font-normal outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                value={conditionNote}
+                onChange={(event) => setConditionNote(event.target.value)}
+                placeholder="Catatan audit tambahan (opsional)"
+              />
+            </label>
+
+            <p className="text-xs leading-5 text-muted-foreground">
+              Perubahan akan dicatat ke audit log dan riwayat unit, memakai expected_updated_at agar koreksi stale tidak menimpa perubahan terbaru.
+            </p>
+
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <Button variant="outline" className="rounded-xl" onClick={() => setConditionCorrectionOpen(false)}>
+                Batal
+              </Button>
+              <Button
+                className="rounded-xl"
+                disabled={conditionCorrectionMutation.isPending || !conditionDraft.trim() || !conditionReason.trim()}
+                onClick={() => conditionCorrectionMutation.mutate()}
+              >
+                {conditionCorrectionMutation.isPending ? "Menyimpan…" : "Simpan Koreksi"}
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

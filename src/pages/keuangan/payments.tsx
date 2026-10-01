@@ -79,7 +79,7 @@ export function PaymentList() {
   return (
     <FinanceShell
       title="Pembayaran"
-      subtitle="Payment facts berasal dari server. Payment tidak mengubah status Reservation atau Rental secara otomatis."
+      subtitle="Data pembayaran berasal dari sistem. Pembayaran tidak mengubah status Reservasi atau Penyewaan secara otomatis."
       action={<Button asChild className="rounded-xl"><Link to={paths.keuangan + "/pembayaran/create"}><Plus />Catat Pembayaran</Link></Button>}
     >
       <FinancePeriodBar
@@ -239,7 +239,7 @@ export function PaymentShow() {
   return (
     <FinanceShell
       title="Detail Pembayaran"
-      subtitle={item.nomor_transaksi ? "Financial transaction " + item.nomor_transaksi : "Payment detail"}
+      subtitle={item.nomor_transaksi ? "Transaksi Keuangan " + item.nomor_transaksi : "Detail Pembayaran"}
       action={<div className="flex items-center gap-2"><Button asChild variant="ghost" className="rounded-xl"><Link to={paths.keuangan + "/pembayaran"}><ArrowLeft />Kembali</Link></Button>{!alreadyCorrected ? <Button variant="outline" className="rounded-xl" onClick={() => { setCorrectionResult(null); setCorrectionError(null); setCorrectionOpen(true); }}>Koreksi</Button> : null}</div>}
     >
       <section className="relative overflow-hidden rounded-[28px] border bg-card p-5 shadow-sm sm:p-7">
@@ -268,9 +268,9 @@ export function PaymentShow() {
         </div>
         <Card><CardHeader><CardTitle className="text-base">Transaksi Keuangan</CardTitle></CardHeader><CardContent className="space-y-4">
           <div className="rounded-2xl border bg-emerald-50/50 p-4 dark:bg-emerald-950/15"><p className="text-xs text-muted-foreground">{item.nomor_transaksi ?? "TRX"}</p><p className="mt-1 text-lg font-bold">Pemasukan</p><p className="mt-1 text-sm">{semanticFinanceLabel(item.status)}</p></div>
-          <Info label="Financial Transaction" value={item.nomor_transaksi ?? "-"} />
-          <Info label="Payment" value={item.nomor_pembayaran} />
-          <p className="text-xs leading-5 text-muted-foreground">Payment adalah konteks pembayaran. Financial Transaction adalah fakta finansial sumber. Keduanya sengaja ditampilkan terpisah.</p>
+          <Info label="Transaksi Keuangan" value={item.nomor_transaksi ?? "-"} />
+          <Info label="Pembayaran" value={item.nomor_pembayaran} />
+          <p className="text-xs leading-5 text-muted-foreground">Pembayaran dan Transaksi Keuangan ditampilkan terpisah agar pencatatan tetap jelas.</p>
         </CardContent></Card>
       </div>
 

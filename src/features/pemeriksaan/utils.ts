@@ -1,6 +1,32 @@
 import type { InspectionFindingInput } from "./types";
 export function semanticInspectionLabel(value: string | null | undefined) {
   if (!value) return "-";
+  const labels: Record<string, string> = {
+    waiting: "Menunggu",
+    in_progress: "Sedang Diperiksa",
+    completed: "Selesai",
+    pending: "Menunggu",
+    normal: "Kondisi Normal",
+    issue_found: "Ada Temuan",
+    complete: "Lengkap",
+    incomplete: "Tidak Lengkap",
+    unknown: "Belum Diketahui",
+    damage: "Kerusakan",
+    loss: "Kehilangan",
+    missing_component: "Kekurangan Kelengkapan",
+    dirty: "Kotor",
+    other: "Lainnya",
+    maintenance_required: "Perlu Perawatan",
+    cleaning_required: "Perlu Pembersihan",
+    unavailable: "Belum Siap Digunakan",
+    follow_up_required: "Perlu Tindak Lanjut",
+    ready_review: "Perlu Verifikasi Kesiapan",
+    readiness_review: "Perlu Verifikasi Kesiapan",
+    no_action: "Tidak Ada Tindakan",
+    before: "Sebelum",
+    after: "Sesudah",
+  };
+  if (labels[value]) return labels[value];
   return value
     .toLowerCase()
     .split("_")

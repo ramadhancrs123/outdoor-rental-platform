@@ -162,7 +162,7 @@ describe("Pengembalian trusted command service", () => {
     }, {
       idempotencyKey: "return-stale-key",
       requestId: "request-stale",
-    })).rejects.toThrow(/State rental terbaru wajib diverifikasi/i);
+    })).rejects.toThrow(/Status penyewaan terbaru wajib diverifikasi/i);
     expect(rpcMock).not.toHaveBeenCalled();
   });
 

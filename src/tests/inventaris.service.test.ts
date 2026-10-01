@@ -2,16 +2,21 @@ import { describe, expect, test, vi, beforeEach } from "vitest";
 
 const rpcMock = vi.hoisted(() => vi.fn());
 const fromMock = vi.hoisted(() => vi.fn());
+const refreshSessionMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/app/providers/supabase/client", () => ({
   supabase: {
     rpc: rpcMock,
     from: fromMock,
+    auth: {
+      refreshSession: refreshSessionMock,
+    },
   },
 }));
 
 import {
   findInventoryUnitCandidates,
+  listInventoryLocations,
   getInventoryStateCapabilities,
   markInventoryUnitInspectionPending,
   markInventoryUnitReady,
@@ -22,6 +27,9 @@ import {
 describe("Inventaris trusted command service", () => {
   beforeEach(() => {
     rpcMock.mockReset();
+    fromMock.mockReset();
+    refreshSessionMock.mockReset();
+    refreshSessionMock.mockResolvedValue({ data: { session: null }, error: null });
   });
 
   test("capabilities expose trusted mutation commands", () => {
@@ -42,13 +50,54 @@ describe("Inventaris trusted command service", () => {
     ]));
   });
 
+  test("location read refreshes an invalid auth session once after permission failure", async () => {
+    const orderMock = vi.fn()
+      .mockResolvedValueOnce({
+        data: null,
+        error: { code: "42501", message: "permission denied for table lokasi" },
+      })
+      .mockResolvedValueOnce({
+        data: [{
+          lokasi_id: "loc-1",
+          usaha_id: "usaha-1",
+          nama: "Gudang Utama",
+          tipe: "gudang",
+          alamat: null,
+          keterangan: null,
+          status: "active",
+          created_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-01-01T00:00:00Z",
+        }],
+        error: null,
+      });
+    fromMock.mockReturnValue({
+      select: () => ({
+        eq: () => ({
+          order: orderMock,
+        }),
+      }),
+    });
+    refreshSessionMock.mockResolvedValueOnce({
+      data: { session: { access_token: "fresh-token" } },
+      error: null,
+    });
+
+    await expect(listInventoryLocations("usaha-1")).resolves.toMatchObject([{
+      lokasi_id: "loc-1",
+      nama: "Gudang Utama",
+    }]);
+
+    expect(refreshSessionMock).toHaveBeenCalledTimes(1);
+    expect(orderMock).toHaveBeenCalledTimes(2);
+  });
+
   test("register command preserves tenant, source and idempotency contract", async () => {
     rpcMock.mockResolvedValue({
       data: {
         unit_barang_id: "unit-1",
         usaha_id: "usaha-1",
         kode_unit: "TD4P-001",
-        status: "inspection_pending",
+        status: "ready",
         lokasi_id: "loc-1",
       },
       error: null,
@@ -68,7 +117,7 @@ describe("Inventaris trusted command service", () => {
       requestId: "request-1",
     })).resolves.toMatchObject({
       unit_barang_id: "unit-1",
-      status: "inspection_pending",
+      status: "ready",
     });
 
     expect(rpcMock).toHaveBeenCalledWith("command_register_inventory_unit", {
@@ -94,7 +143,7 @@ describe("Inventaris trusted command service", () => {
           state: "committed",
           response: {
             unit_barang_id: "unit-1",
-            status: "inspection_pending",
+            status: "ready",
           },
         },
         error: null,
@@ -112,7 +161,7 @@ describe("Inventaris trusted command service", () => {
       },
     )).resolves.toMatchObject({
       unit_barang_id: "unit-1",
-      status: "inspection_pending",
+      status: "ready",
     });
 
     expect(rpcMock).toHaveBeenNthCalledWith(1, "command_move_inventory_unit", expect.objectContaining({
@@ -145,7 +194,7 @@ describe("Inventaris trusted command service", () => {
         requestId: "request-3",
         expectedUpdatedAt: "2026-09-28T02:00:00.000Z",
       },
-    )).rejects.toThrow(/UNKNOWN_OUTCOME: command Inventaris/i);
+    )).rejects.toThrow(/Penetapan Siap Disewakan unit: network timeout/i);
 
     expect(rpcMock).toHaveBeenCalledTimes(2);
     expect(rpcMock.mock.calls.map(([name]) => name)).toEqual([
@@ -180,7 +229,7 @@ describe("Inventaris trusted command service", () => {
         idempotencyKey: "missing-stale-key",
         requestId: "request-stale",
       }),
-    ).rejects.toThrow(/State unit terbaru wajib diverifikasi/i);
+    ).rejects.toThrow(/Status unit terbaru wajib diverifikasi/i);
 
     expect(rpcMock).not.toHaveBeenCalled();
   });

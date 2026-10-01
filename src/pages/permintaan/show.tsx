@@ -117,14 +117,14 @@ export function RequestShow() {
           </CardContent>
         </Card>
         <Card>
-          <CardHeader><CardTitle className="text-base">Reservation</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="text-base">Reservasi</CardTitle></CardHeader>
           <CardContent>
             {request.reservasi_id ? (
               <Link className="font-medium hover:underline" to={paths.reservasi + "/" + request.reservasi_id}>
                 {request.nomor_reservasi}
               </Link>
             ) : (
-              <p className="text-sm text-muted-foreground">Belum menjadi reservation.</p>
+              <p className="text-sm text-muted-foreground">Belum menjadi Reservasi.</p>
             )}
           </CardContent>
         </Card>
@@ -133,7 +133,7 @@ export function RequestShow() {
       {canCreateReservation && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Konversi menjadi reservation</CardTitle>
+            <CardTitle className="text-base">Jadikan Reservasi</CardTitle>
             <p className="text-sm text-muted-foreground">
               Tetapkan snapshot harga yang benar-benar disepakati. Server memvalidasi subtotal dan menyimpan snapshot transaksi.
             </p>
@@ -271,7 +271,7 @@ export function RequestShow() {
       </Card>
 
       <Alert>
-        <AlertTitle>{capabilities.mutation ? "Command aktif" : "Mode baca"}</AlertTitle>
+        <AlertTitle>{capabilities.mutation ? "Aksi tersedia" : "Mode baca"}</AlertTitle>
         <AlertDescription>{capabilities.reason}</AlertDescription>
       </Alert>
     </div>

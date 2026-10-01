@@ -228,7 +228,7 @@ describe("Penyewa Phase 1 read-side contract", () => {
 
     await user.click(screen.getByRole("tab", { name: "Operasional" }));
     expect(screen.getByRole("tab", { name: "Operasional" })).toHaveAttribute("aria-selected", "true");
-    expect(await screen.findByText("Tidak ada rental aktif")).toBeInTheDocument();
+    expect(await screen.findByText("Tidak ada penyewaan aktif")).toBeInTheDocument();
     expect(screen.queryByText("Reservasi Aktif")).not.toBeInTheDocument();
     expect(screen.queryByText("Pengembalian Terkait")).not.toBeInTheDocument();
   });

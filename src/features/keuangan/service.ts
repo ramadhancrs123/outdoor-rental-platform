@@ -258,7 +258,7 @@ export function getFinanceCapabilities(): FinanceCapabilities {
     read: true,
     mutation: true,
     reason:
-      "Finance mutation berjalan melalui trusted RPC dengan tenant authorization, server-side validation, atomic payment/expense + transaction recording, idempotency, audit, outbox, dan reconciliation.",
+      "Pencatatan Keuangan diproses oleh sistem dengan validasi Usaha aktif, pemeriksaan data, pencatatan pembayaran/pengeluaran dan transaksi keuangan, audit, serta pemeriksaan ulang hasil tindakan.",
   };
 }
 
@@ -328,7 +328,7 @@ export async function recordExpense(
   const sourceType = input.sourceType;
   const sourceId = input.sourceId?.trim() || null;
   if ((sourceType === "purchase" || sourceType === "maintenance") && !sourceId) {
-    throw new Error("Source ID wajib diisi untuk pengeluaran berbasis purchase atau maintenance.");
+    throw new Error("Pilih sumber Pembelian atau Perawatan sebelum mencatat pengeluaran.");
   }
   if (sourceType === "operational" || sourceType === "other" || sourceType === "manual") {
     if (sourceId) throw new Error("Source ID tidak digunakan untuk pengeluaran manual/operasional.");

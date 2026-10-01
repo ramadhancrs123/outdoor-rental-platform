@@ -556,7 +556,7 @@ export async function processUnitReturn(
   const unitIds = Array.from(new Set(input.unitBarangIds.map((id) => id.trim()).filter(Boolean)));
   if (!unitIds.length) throw new Error("Minimal satu unit harus dipilih.");
   if (!options.expectedRentalUpdatedAt) {
-    throw new Error("State rental terbaru wajib diverifikasi sebelum menerima pengembalian.");
+    throw new Error("Status penyewaan terbaru wajib diverifikasi sebelum menerima pengembalian.");
   }
 
   const idempotencyKey = options.idempotencyKey ?? "process-return-" + crypto.randomUUID();
@@ -607,6 +607,6 @@ export function getReturnCapabilities(): ReturnCapabilities {
     commands: ["process_unit_return", "command_reconcile_return_mutation"],
     queries: ["listReturnQueue", "getReturnWorkspace", "lookupReturnRentalByQr"],
     reason:
-      "Pengembalian memakai trusted command: tenant authorization, per-unit validation, rental stale guard, atomic return + Inventory inspection handoff, idempotency, concurrency lock, audit, outbox, dan reconciliation unknown outcome.",
+      "Pengembalian diproses dengan validasi Usaha dan setiap unit, pemeriksaan data penyewaan terbaru, serah-terima ke Pemeriksaan, audit, serta pemeriksaan ulang hasil tindakan.",
   };
 }

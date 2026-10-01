@@ -39,8 +39,7 @@ const sections = [
       ["Reservasi", paths.reservasi, ClipboardCheck],
       ["Penyewaan", paths.penyewaan, TentTree],
       ["Pengembalian", paths.pengembalian, RotateCcw],
-      ["Pemeriksaan", paths.pemeriksaan, ClipboardCheck],
-      ["Perawatan", paths.perawatan, Wrench],
+      ["Perawatan/Pemeriksaan", paths.perawatan, Wrench],
     ],
   },
   {

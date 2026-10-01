@@ -3,9 +3,13 @@ import type {
   InventoryCandidate,
   InventoryCandidateQuery,
   InventoryCapabilities,
+  CreateInventoryLocationInput,
   InventoryCatalogItem,
   InventoryCommandOptions,
   InventoryCommandResult,
+  InventoryConditionCorrectionInput,
+  InventoryConditionCorrectionResult,
+  UpdateInventoryLocationInput,
   InventoryContext,
   InventoryListFilters,
   InventoryLocation,
@@ -22,7 +26,7 @@ import { sanitizeInventorySearch } from "./utils";
 type MembershipRow = { usaha_id: string; status: string; revoked_at: string | null };
 
 const UNIT_SELECT =
-  "unit_barang_id,usaha_id,barang_id,varian_barang_id,kode_unit,serial_number,lokasi_id,tanggal_diperoleh,sumber_pembelian_detail_id,status,kondisi_ringkas,catatan_internal,created_at,updated_at,barang:barang(barang_id,nama,slug,status),varian:varian_barang(varian_barang_id,nama,kode_internal,status),lokasi:lokasi(lokasi_id,nama,tipe,status)";
+  "unit_barang_id,usaha_id,barang_id,varian_barang_id,kode_unit,serial_number,lokasi_id,tanggal_diperoleh,sumber_pembelian_detail_id,status,kondisi_ringkas,catatan_internal,created_at,updated_at,barang:barang!unit_barang_tenant_fk(barang_id,nama,slug,status),varian:varian_barang!unit_variant_product_tenant_fk(varian_barang_id,nama,kode_internal,status),lokasi:lokasi!unit_lokasi_tenant_fk(lokasi_id,nama,tipe,status)";
 
 export async function getInventarisContext(): Promise<InventoryContext> {
   const { data: userData, error: userError } = await supabase.auth.getUser();
@@ -46,10 +50,155 @@ export async function getInventarisContext(): Promise<InventoryContext> {
   return { akunAdminId: admin.akun_admin_id as string, usahaId: usaha.usaha_id as string, usahaNama: usaha.nama as string };
 }
 
+async function shouldRefreshAuthForReadError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { code?: unknown; message?: unknown; status?: unknown };
+  const message = typeof candidate.message === "string" ? candidate.message.toLowerCase() : "";
+  return (
+    candidate.status === 401 ||
+    candidate.status === 403 ||
+    candidate.code === "42501" ||
+    message.includes("permission denied") ||
+    message.includes("jwt") ||
+    message.includes("unauthorized")
+  );
+}
+
 export async function listInventoryLocations(usahaId: string): Promise<InventoryLocation[]> {
-  const { data, error } = await supabase.from("lokasi").select("lokasi_id,usaha_id,nama,tipe,alamat,keterangan,status,created_at,updated_at").eq("usaha_id", usahaId).order("nama", { ascending: true });
+  const select =
+    "lokasi_id,usaha_id,nama,tipe,alamat,keterangan,status,created_at,updated_at";
+
+  let result = await supabase
+    .from("lokasi")
+    .select(select)
+    .eq("usaha_id", usahaId)
+    .order("nama", { ascending: true });
+
+  if (result.error && await shouldRefreshAuthForReadError(result.error)) {
+    const { error: refreshError } = await supabase.auth.refreshSession();
+    if (!refreshError) {
+      result = await supabase
+        .from("lokasi")
+        .select(select)
+        .eq("usaha_id", usahaId)
+        .order("nama", { ascending: true });
+    }
+  }
+
+  if (result.error) throw result.error;
+  return (result.data ?? []) as InventoryLocation[];
+}
+
+async function reconcileInventoryLocationAfterUncertainResult(
+  usahaId: string,
+  commandName: "create_lokasi" | "update_lokasi",
+  idempotencyKey: string,
+): Promise<InventoryLocation | null> {
+  const { data, error } = await supabase.rpc("command_reconcile_lokasi_mutation", {
+    p_usaha_id: usahaId,
+    p_command_name: commandName,
+    p_idempotency_key: idempotencyKey,
+  });
+
   if (error) throw error;
-  return (data ?? []) as InventoryLocation[];
+
+  const result = data as InventoryReconciliationResult | null;
+  if (!result) return null;
+  if (result.state === "committed" && result.response) return result.response as unknown as InventoryLocation;
+  if (result.state === "unknown") {
+    throw new Error(
+      "Hasil perubahan master lokasi belum dapat dipastikan. Jangan mengulang tindakan sebelum status diperiksa.",
+    );
+  }
+  return null;
+}
+
+async function executeInventoryLocationCommand(
+  usahaId: string,
+  commandName: "create_lokasi" | "update_lokasi",
+  rpcName: "command_create_lokasi" | "command_update_lokasi",
+  args: Record<string, unknown>,
+  label: string,
+  idempotencyKey: string,
+): Promise<InventoryLocation> {
+  const { data, error } = await supabase.rpc(rpcName, args);
+  if (!error && data) return data as InventoryLocation;
+
+  try {
+    const reconciled = await reconcileInventoryLocationAfterUncertainResult(
+      usahaId,
+      commandName,
+      idempotencyKey,
+    );
+    if (reconciled) return reconciled;
+  } catch (reconcileError) {
+    if (reconcileError instanceof Error && reconcileError.message.startsWith("UNKNOWN_OUTCOME:")) {
+      throw reconcileError;
+    }
+  }
+
+  if (error) throw normalizeRpcError(error, label);
+  throw new Error(`${label}: server tidak mengembalikan hasil command.`);
+}
+
+export async function createInventoryLocation(
+  usahaId: string,
+  input: CreateInventoryLocationInput,
+  options: InventoryCommandOptions = {},
+): Promise<InventoryLocation> {
+  const nama = input.nama.trim();
+  if (!nama) throw new Error("Nama lokasi wajib diisi.");
+  const idempotencyKey = options.idempotencyKey ?? `create-lokasi-${crypto.randomUUID()}`;
+
+  return executeInventoryLocationCommand(
+    usahaId,
+    "create_lokasi",
+    "command_create_lokasi",
+    {
+      p_usaha_id: usahaId,
+      p_nama: nama,
+      p_tipe: input.tipe.trim() || "gudang",
+      p_alamat: input.alamat?.trim() || null,
+      p_keterangan: input.keterangan?.trim() || null,
+      p_idempotency_key: idempotencyKey,
+      p_request_id: options.requestId ?? newInventoryCommandRequestId(),
+    },
+    "Pembuatan lokasi",
+    idempotencyKey,
+  );
+}
+
+export async function updateInventoryLocation(
+  usahaId: string,
+  lokasiId: string,
+  input: UpdateInventoryLocationInput,
+  options: InventoryCommandOptions = {},
+): Promise<InventoryLocation> {
+  const nama = input.nama.trim();
+  if (!lokasiId.trim()) throw new Error("Lokasi wajib dipilih.");
+  if (!nama) throw new Error("Nama lokasi wajib diisi.");
+  if (!options.expectedUpdatedAt) throw new Error("Data lokasi terbaru wajib diverifikasi sebelum diperbarui.");
+  const idempotencyKey = options.idempotencyKey ?? `update-lokasi-${crypto.randomUUID()}`;
+
+  return executeInventoryLocationCommand(
+    usahaId,
+    "update_lokasi",
+    "command_update_lokasi",
+    {
+      p_usaha_id: usahaId,
+      p_lokasi_id: lokasiId,
+      p_nama: nama,
+      p_tipe: input.tipe.trim() || "gudang",
+      p_alamat: input.alamat?.trim() || null,
+      p_keterangan: input.keterangan?.trim() || null,
+      p_status: input.status,
+      p_expected_updated_at: options.expectedUpdatedAt,
+      p_idempotency_key: idempotencyKey,
+      p_request_id: options.requestId ?? newInventoryCommandRequestId(),
+    },
+    "Pembaruan lokasi",
+    idempotencyKey,
+  );
 }
 
 async function findRelatedIds(usahaId: string, search: string) {
@@ -145,7 +294,7 @@ export function getInventoryStateCapabilities(): InventoryCapabilities {
       "getInventoryOperationalContext",
     ],
     reason:
-      "Inventaris menggunakan trusted command/query boundary: tenant authorization, current-state revalidation, atomic mutation, idempotency, concurrency lock, audit, outbox, candidate conflict evaluation, dan reconciliation unknown outcome.",
+      "Data Inventaris diproses dengan pemeriksaan Usaha aktif, validasi status terbaru, pencatatan aman, perlindungan perubahan bersamaan, audit, dan pemeriksaan ulang hasil tindakan.",
   };
 }
 
@@ -199,7 +348,7 @@ async function reconcileInventoryAfterUncertainResult(
   if (result.state === "committed" && result.response) return result.response;
   if (result.state === "unknown") {
     throw new Error(
-      "UNKNOWN_OUTCOME: command Inventaris memiliki idempotency record tanpa response. Jangan retry; lakukan reconciliation lebih lanjut.",
+      "Hasil tindakan Inventaris belum dapat dipastikan. Jangan mengulang tindakan; periksa status terbaru terlebih dahulu.",
     );
   }
   return null;
@@ -278,7 +427,7 @@ export async function moveInventoryUnit(
 ): Promise<InventoryCommandResult> {
   if (!unitBarangId.trim()) throw new Error("Unit wajib dipilih.");
   if (!lokasiId.trim()) throw new Error("Lokasi tujuan wajib dipilih.");
-  if (!options.expectedUpdatedAt) throw new Error("State unit terbaru wajib diverifikasi sebelum memindahkan unit.");
+  if (!options.expectedUpdatedAt) throw new Error("Status unit terbaru wajib diverifikasi sebelum memindahkan unit.");
 
   const idempotencyKey = options.idempotencyKey ?? `move-inventory-unit-${crypto.randomUUID()}`;
 
@@ -300,6 +449,47 @@ export async function moveInventoryUnit(
   );
 }
 
+export async function correctInventoryConditionSummary(
+  usahaId: string,
+  unitBarangId: string,
+  input: InventoryConditionCorrectionInput,
+  options: { idempotencyKey?: string; requestId?: string } = {},
+): Promise<InventoryConditionCorrectionResult> {
+  const newCondition = input.newCondition.trim();
+  const correctionReason = input.correctionReason.trim();
+  if (!newCondition) throw new Error("Kondisi ringkas baru wajib diisi.");
+  if (!correctionReason) throw new Error("Alasan koreksi wajib diisi.");
+  if (!input.expectedUpdatedAt) throw new Error("Status unit terbaru wajib diverifikasi sebelum koreksi.");
+
+  const idempotencyKey = options.idempotencyKey ?? ("correct-inventory-condition-" + crypto.randomUUID());
+  const { data, error } = await supabase.rpc("command_correct_inventory_condition_summary", {
+    p_usaha_id: usahaId,
+    p_unit_barang_id: unitBarangId,
+    p_new_condition: newCondition,
+    p_correction_reason: correctionReason,
+    p_correction_note: input.correctionNote?.trim() || null,
+    p_source_pemeriksaan_id: input.sourcePemeriksaanId ?? null,
+    p_expected_updated_at: input.expectedUpdatedAt,
+    p_idempotency_key: idempotencyKey,
+    p_request_id: options.requestId ?? newInventoryCommandRequestId(),
+  });
+
+  if (!error && data) return data as InventoryConditionCorrectionResult;
+
+  const { data: reconciliation, error: reconcileError } = await supabase.rpc("command_reconcile_inventory_condition_mutation", {
+    p_usaha_id: usahaId,
+    p_idempotency_key: idempotencyKey,
+  });
+  if (reconcileError) throw normalizeRpcError(reconcileError, "Rekonsiliasi Koreksi Kondisi");
+  if (reconciliation?.state === "committed" && reconciliation.response) {
+    return reconciliation.response as InventoryConditionCorrectionResult;
+  }
+  if (reconciliation?.state === "unknown") {
+    throw new Error("UNKNOWN_OUTCOME: hasil koreksi kondisi belum dapat dipastikan. Jangan mengulang tindakan.");
+  }
+  if (error) throw normalizeRpcError(error, "Koreksi Kondisi");
+  throw new Error("Koreksi Kondisi: server tidak mengembalikan hasil.");
+}
 export async function markInventoryUnitReady(
   usahaId: string,
   unitBarangId: string,
@@ -307,7 +497,7 @@ export async function markInventoryUnitReady(
   options: InventoryCommandOptions = {},
 ): Promise<InventoryCommandResult> {
   if (!unitBarangId.trim()) throw new Error("Unit wajib dipilih.");
-  if (!options.expectedUpdatedAt) throw new Error("State unit terbaru wajib diverifikasi sebelum menetapkan READY.");
+  if (!options.expectedUpdatedAt) throw new Error("Status unit terbaru wajib diverifikasi sebelum menetapkan Siap Disewakan.");
 
   const idempotencyKey = options.idempotencyKey ?? `mark-inventory-unit-ready-${crypto.randomUUID()}`;
 
@@ -323,7 +513,7 @@ export async function markInventoryUnitReady(
       p_request_id: options.requestId ?? newInventoryCommandRequestId(),
       p_expected_updated_at: options.expectedUpdatedAt,
     },
-    "Penetapan READY unit",
+    "Penetapan Siap Disewakan unit",
     idempotencyKey,
   );
 }
@@ -476,7 +666,7 @@ export async function markInventoryUnitInspectionPending(
   if (!unitBarangId.trim()) throw new Error("Unit wajib dipilih.");
   if (!input.detailPengembalianId.trim()) throw new Error("Detail pengembalian wajib ditentukan.");
   if (!options.expectedUpdatedAt) {
-    throw new Error("State unit terbaru wajib diverifikasi sebelum meneruskan return ke pemeriksaan.");
+    throw new Error("Status unit terbaru wajib diverifikasi sebelum meneruskan pengembalian ke pemeriksaan.");
   }
 
   const idempotencyKey =

@@ -360,7 +360,7 @@ export async function getInspectionWorkspace(
 
   if (returnResult.error) throw returnResult.error;
   if (unitResult.error) throw unitResult.error;
-  if (!returnResult.data || !unitResult.data) throw new Error("Return atau unit pemeriksaan tidak ditemukan.");
+  if (!returnResult.data || !unitResult.data) throw new Error("Pengembalian atau unit pemeriksaan tidak ditemukan.");
 
   const returnHeader = returnResult.data as ReturnHeaderRow;
   const unit = unitResult.data as UnitRow;
@@ -570,6 +570,6 @@ export function getInspectionCapabilities(): InspectionCapabilities {
     ],
     queries: ["listInspectionQueue", "getInspectionWorkspace"],
     reason:
-      "Inspection memakai trusted command: return prerequisite, tenant authorization, server timestamps, stale guards, atomic findings finalization, private evidence metadata, idempotency, advisory locking, audit, outbox, dan reconciliation. Inspection tidak mengubah unit menjadi READY.",
+      "Pemeriksaan memastikan pengembalian sebagai syarat awal, Usaha dan akses yang benar, waktu pencatatan otomatis, perlindungan data lama, penyimpanan temuan dan bukti foto, audit, serta pemeriksaan ulang hasil tindakan. Pemeriksaan tidak otomatis membuat unit Siap Disewakan.",
   };
 }

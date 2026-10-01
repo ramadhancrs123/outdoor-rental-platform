@@ -12,12 +12,12 @@ export function semanticMaintenanceLabel(value: string | null | undefined) {
     in_progress: "Berjalan",
     completed: "Selesai",
     cancelled: "Dibatalkan",
-    cleaning: "Cleaning",
-    repair: "Repair",
-    replacement: "Replacement",
+    cleaning: "Pembersihan",
+    repair: "Perbaikan",
+    replacement: "Penggantian",
     inspection_follow_up: "Tindak lanjut pemeriksaan",
     other: "Lainnya",
-    maintenance_required: "Perlu maintenance",
+    maintenance_required: "Perlu Perawatan",
   };
   return labels[value] ?? value.replaceAll("_", " ");
 }
@@ -26,7 +26,7 @@ export function nextMaintenanceAction(status: string) {
   if (status === "planned") return "Mulai Perawatan";
   if (status === "in_progress") return "Selesaikan Perawatan";
   if (status === "completed") return "Buka Verifikasi";
-  return "Tinjau state";
+  return "Tinjau status";
 }
 
 export function normalizeMaintenanceText(value: string | null | undefined) {

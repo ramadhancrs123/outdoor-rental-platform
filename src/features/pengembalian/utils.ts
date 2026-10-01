@@ -1,5 +1,19 @@
 export function semanticReturnLabel(value: string | null | undefined) {
   if (!value) return "-";
+  const labels: Record<string, string> = {
+    not_due: "Belum Jatuh Tempo",
+    due: "Sudah Jatuh Tempo",
+    late_within_tolerance: "Masih Dalam Toleransi",
+    tolerance_expired: "Toleransi Terlewati",
+    returned: "Sudah Dikembalikan",
+    active: "Aktif",
+    return_in_progress: "Pengembalian Sedang Diproses",
+    completed: "Selesai",
+    cancelled: "Dibatalkan",
+    pending: "Menunggu",
+    inspection_pending: "Menunggu Pemeriksaan",
+  };
+  if (labels[value]) return labels[value];
   return value
     .toLowerCase()
     .split("_")

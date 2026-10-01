@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ReturnDueBadge, ReturnQrDialog, ReturnQueueCard, ReturnProgress } from "@/components/pengembalian/return-ui";
+import { RentalTimingSummary } from "@/components/penyewaan/rental-timing";
 import {
   DEFAULT_RETURN_LIST_FILTERS,
   formatReturnDateTime,
@@ -143,13 +144,13 @@ export function ReturnList() {
             <div className="relative min-w-0 flex-1">
               <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
               <label className="sr-only" htmlFor="return-search">
-                Nomor rental, nama penyewa, nomor telepon, kode unit, atau serial
+                Nomor penyewaan, nama penyewa, nomor telepon, kode unit, atau serial
               </label>
               <Input
                 id="return-search"
                 value={filters.search}
                 onChange={(event) => setFilter("search", event.target.value)}
-                placeholder="Cari nomor rental, nama penyewa, nomor telepon, atau kode unit…"
+                placeholder="Cari nomor penyewaan, nama penyewa, nomor telepon, atau kode unit…"
                 className="h-11 rounded-xl pl-9"
                 autoComplete="off"
               />
@@ -162,21 +163,21 @@ export function ReturnList() {
 
           <div className="mt-3 hidden flex-wrap gap-2 lg:flex">
             <Select value={filters.rentalStatus ?? "all"} onValueChange={(value) => setFilter("rentalStatus", value as ReturnListFilters["rentalStatus"])}>
-              <SelectTrigger className="h-10 w-auto min-w-40 rounded-xl" aria-label="Filter status rental">
+              <SelectTrigger className="h-10 w-auto min-w-40 rounded-xl" aria-label="Saring status penyewaan">
                 <SelectValue placeholder="Semua status" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Semua Status</SelectItem>
                 <SelectItem value="active">Aktif</SelectItem>
-                <SelectItem value="return_in_progress">Return berjalan</SelectItem>
+                <SelectItem value="return_in_progress">Pengembalian sedang diproses</SelectItem>
               </SelectContent>
             </Select>
             <Select value={filters.dueState ?? "all"} onValueChange={(value) => setFilter("dueState", value as ReturnListFilters["dueState"])}>
               <SelectTrigger className="h-10 w-auto min-w-44 rounded-xl" aria-label="Filter due state">
-                <SelectValue placeholder="Semua Due State" />
+                <SelectValue placeholder="Semua Batas Pengembalian" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">Semua Due State</SelectItem>
+                <SelectItem value="all">Semua Batas Pengembalian</SelectItem>
                 <SelectItem value="not_due">Belum Jatuh Tempo</SelectItem>
                 <SelectItem value="due">Sudah Jatuh Tempo</SelectItem>
                 <SelectItem value="late_within_tolerance">Masih Dalam Toleransi</SelectItem>
@@ -218,7 +219,7 @@ export function ReturnList() {
       {!query.isPending && !query.error && returns.length > 0 ? (
         <div className="flex items-center justify-between gap-3 px-1">
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <span>{query.data?.total ?? 0} rental</span>
+            <span>{query.data?.total ?? 0} penyewaan</span>
             <span aria-hidden="true">·</span>
             <span>Halaman {filters.page} dari {totalPages}</span>
           </div>
@@ -251,16 +252,16 @@ export function ReturnList() {
             </div>
             <div>
               <h2 className="font-semibold">
-                {filters.search || filters.dueState !== "all" || filters.rentalStatus !== "all" ? "Tidak ada hasil yang sesuai" : "Tidak ada rental dalam antrian return"}
+                {filters.search || filters.dueState !== "all" || filters.rentalStatus !== "all" ? "Tidak ada hasil yang sesuai" : "Tidak ada penyewaan dalam antrian pengembalian"}
               </h2>
               <p className="mt-1 max-w-md text-sm leading-6 text-muted-foreground">
                 {filters.search || filters.dueState !== "all" || filters.rentalStatus !== "all"
                   ? "Coba ubah pencarian atau reset filter untuk melihat rental yang tersedia."
-                  : "Rental aktif atau return sebagian akan muncul di sini."}
+                  : "Penyewaan aktif atau pengembalian sebagian akan muncul di sini."}
               </p>
             </div>
             {filters.search || filters.dueState !== "all" || filters.rentalStatus !== "all" ? (
-              <Button variant="outline" className="rounded-xl" onClick={() => setFilters(DEFAULT_RETURN_LIST_FILTERS)}>Reset Filter</Button>
+              <Button variant="outline" className="rounded-xl" onClick={() => setFilters(DEFAULT_RETURN_LIST_FILTERS)}>Atur Ulang Saringan</Button>
             ) : null}
           </CardContent>
         </Card>
@@ -282,14 +283,14 @@ export function ReturnList() {
                 <table className="w-full min-w-[1040px] text-sm">
                   <thead className="border-b bg-muted/40 text-left">
                     <tr>
-                      <th className="px-5 py-3 font-medium">No. Rental</th>
+                      <th className="px-5 py-3 font-medium">No. Penyewaan</th>
                       <th className="px-5 py-3 font-medium">Penyewa</th>
                       <th className="px-5 py-3 font-medium">Kontak</th>
                       <th className="px-5 py-3 font-medium">Jadwal Kembali</th>
                       <th className="px-5 py-3 font-medium">Batas Toleransi</th>
                       <th className="px-5 py-3 font-medium">Progress</th>
-                      <th className="px-5 py-3 font-medium">Status Rental</th>
-                      <th className="px-5 py-3 font-medium">Due State</th>
+                      <th className="px-5 py-3 font-medium">Status Penyewaan</th>
+                      <th className="px-5 py-3 font-medium">Batas Pengembalian</th>
                       <th className="px-5 py-3 text-right font-medium">Aksi</th>
                     </tr>
                   </thead>
@@ -306,7 +307,7 @@ export function ReturnList() {
                         <td className="min-w-44 px-5 py-4">
                           <ReturnProgress returned={item.returned_unit_count} total={item.total_unit_count} outstanding={item.outstanding_unit_count} compact />
                         </td>
-                        <td className="px-5 py-4"><Badge variant="secondary" className="rounded-full">{item.rental_status === "return_in_progress" ? "Return berjalan" : "Aktif"}</Badge></td>
+                        <td className="px-5 py-4"><Badge variant="secondary" className="rounded-full">{item.rental_status === "return_in_progress" ? "Pengembalian sedang diproses" : "Aktif"}</Badge></td>
                         <td className="px-5 py-4"><ReturnDueBadge state={item.due_state} /></td>
                         <td className="px-5 py-4 text-right">
                           <Button asChild size="sm" className="rounded-xl">
@@ -322,7 +323,7 @@ export function ReturnList() {
           </Card>
 
           <div className="flex flex-col gap-2 border-t pt-3 text-sm sm:flex-row sm:items-center sm:justify-between">
-            <span className="text-muted-foreground">{query.data?.total ?? 0} rental</span>
+            <span className="text-muted-foreground">{query.data?.total ?? 0} penyewaan</span>
             <div className="flex gap-2">
               <Button variant="outline" className="h-10 rounded-xl" disabled={filters.page <= 1} onClick={() => setFilters((current) => ({ ...current, page: current.page - 1 }))}>Sebelumnya</Button>
               <Button variant="outline" className="h-10 rounded-xl" disabled={filters.page >= totalPages} onClick={() => setFilters((current) => ({ ...current, page: current.page + 1 }))}>Berikutnya</Button>
@@ -351,22 +352,22 @@ export function ReturnList() {
           </SheetHeader>
           <div className="space-y-4 overflow-y-auto px-5 pb-4">
             <div className="space-y-2">
-              <label className="text-sm font-medium">Status Rental</label>
+              <label className="text-sm font-medium">Status Penyewaan</label>
               <Select value={filters.rentalStatus ?? "all"} onValueChange={(value) => setFilter("rentalStatus", value as ReturnListFilters["rentalStatus"])}>
                 <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Semua status</SelectItem>
                   <SelectItem value="active">Aktif</SelectItem>
-                  <SelectItem value="return_in_progress">Return berjalan</SelectItem>
+                  <SelectItem value="return_in_progress">Pengembalian sedang diproses</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">Due State</label>
+              <label className="text-sm font-medium">Batas Pengembalian</label>
               <Select value={filters.dueState ?? "all"} onValueChange={(value) => setFilter("dueState", value as ReturnListFilters["dueState"])}>
                 <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">Semua due state</SelectItem>
+                  <SelectItem value="all">Semua batas waktu</SelectItem>
                   <SelectItem value="not_due">Belum jatuh tempo</SelectItem>
                   <SelectItem value="due">Sudah jatuh tempo</SelectItem>
                   <SelectItem value="late_within_tolerance">Masih dalam toleransi</SelectItem>
@@ -376,7 +377,7 @@ export function ReturnList() {
             </div>
           </div>
           <SheetFooter className="border-t bg-background/95 px-5 py-4 backdrop-blur">
-            <Button type="button" variant="outline" className="h-11 rounded-xl" onClick={() => { setFilters(DEFAULT_RETURN_LIST_FILTERS); setFilterOpen(false); }}>Reset</Button>
+            <Button type="button" variant="outline" className="h-11 rounded-xl" onClick={() => { setFilters(DEFAULT_RETURN_LIST_FILTERS); setFilterOpen(false); }}>Atur Ulang</Button>
             <Button type="button" className="h-11 rounded-xl" onClick={() => setFilterOpen(false)}>Terapkan</Button>
           </SheetFooter>
         </SheetContent>

@@ -33,12 +33,18 @@ export default async function pengembalianScenario({ page, capture }) {
     });
     await capture("queue-search-no-result");
     await search.fill("");
-    await page.waitForTimeout(500);
+    const restoredProcessLink = page.getByRole("link", { name: /Proses Pengembalian/i }).first();
+    const restoredEmptyState = page.getByText(/Tidak ada penyewaan dalam antrian pengembalian|Tidak ada rental dalam antrian return|Tidak ada hasil yang sesuai/i);
+    await Promise.race([
+      restoredProcessLink.waitFor({ state: "visible", timeout: 10000 }),
+      restoredEmptyState.waitFor({ state: "visible", timeout: 10000 }),
+    ]).catch(() => {});
+    await page.waitForTimeout(300);
   }
 
   const processLink = page.getByRole("link", { name: /Proses Pengembalian/i }).first();
   if (!(await processLink.count())) {
-    const emptyState = page.getByText(/Tidak ada rental dalam antrian return|Tidak ada hasil yang sesuai/i);
+    const emptyState = page.getByText(/Tidak ada penyewaan dalam antrian pengembalian|Tidak ada rental dalam antrian return|Tidak ada hasil yang sesuai/i);
     if (await emptyState.count()) {
       await capture("queue-empty");
       return {

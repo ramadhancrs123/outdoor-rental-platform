@@ -55,12 +55,13 @@ function getReadinessCopy(unit: InventoryUnit, operational?: InventoryOperationa
   switch (unit.status) {
     case "inspection_pending":
       return {
-        title: "Perlu pemeriksaan",
-        description: "Unit belum dapat dianggap siap hanya karena sudah diterima atau didaftarkan.",
-        action: "Buka Pemeriksaan",
-        href: paths.pemeriksaan + "?unit_id=" + unit.unit_barang_id,
+        title: "Menunggu pemeriksaan return",
+        description: "Pemeriksaan terstruktur dimulai dari Pengembalian setelah unit diterima.",
+        action: null,
+        href: null,
         icon: CheckCircle2,
       };
+
     case "maintenance":
       return {
         title: "Dalam perawatan",
@@ -75,11 +76,11 @@ function getReadinessCopy(unit: InventoryUnit, operational?: InventoryOperationa
       return {
         title: "Sedang disewa",
         description: operational?.activeRental?.nomor_penyewaan
-          ? `Rental aktif ${operational.activeRental.nomor_penyewaan} menggunakan unit ini.`
-          : "Unit memiliki state sedang disewa.",
+          ? `Penyewaan aktif ${operational.activeRental.nomor_penyewaan} menggunakan unit ini.`
+          : "Unit sedang disewa.",
         action: operational?.activeRental
-          ? "Buka Rental"
-          : "Tinjau Rental",
+          ? "Buka Penyewaan"
+          : "Tinjau Penyewaan",
         href: operational?.activeRental
           ? paths.penyewaan + "/" + operational.activeRental.penyewaan_id
           : paths.penyewaan,
@@ -96,15 +97,15 @@ function getReadinessCopy(unit: InventoryUnit, operational?: InventoryOperationa
     case "damaged":
       return {
         title: "Rusak",
-        description: "Kondisi fisik perlu ditangani sesuai workflow pemeriksaan/perawatan.",
-        action: "Buka Pemeriksaan",
-        href: paths.pemeriksaan + "?unit_id=" + unit.unit_barang_id,
-        icon: AlertTriangle,
+        description: "Kondisi fisik perlu ditangani melalui workflow Perawatan.",
+        action: "Buka Perawatan",
+        href: paths.perawatan + "?unit_id=" + unit.unit_barang_id,
+        icon: Wrench,
       };
     case "ready":
       return {
         title: "Siap secara fisik",
-        description: "READY adalah state fisik. Ketersediaan terhadap periode sewa tetap perlu divalidasi oleh workflow Reservasi/Penyewaan.",
+        description: "Siap Disewakan menunjukkan kondisi fisik unit. Ketersediaan untuk periode sewa tetap perlu diperiksa melalui Reservasi/Penyewaan.",
         action: null,
         href: null,
         icon: CheckCircle2,
@@ -112,7 +113,7 @@ function getReadinessCopy(unit: InventoryUnit, operational?: InventoryOperationa
     default:
       return {
         title: inventoryStatusLabel(unit.status),
-        description: "Tinjau state unit dan lanjutkan melalui workflow domain yang sesuai.",
+        description: "Tinjau status unit dan lanjutkan melalui menu yang sesuai.",
         action: null,
         href: null,
         icon: Clock3,
@@ -165,8 +166,8 @@ export function InventoryContextFacts({ operational }: { operational: InventoryO
     <div className="grid gap-3 md:grid-cols-3">
       <Card className="shadow-none">
         <CardContent className="space-y-1 p-4">
-          <p className="text-xs text-muted-foreground">Current assignment</p>
-          <p className="font-semibold">{operational?.currentAssignment ? "Ada assignment aktif" : "Tidak ada assignment aktif"}</p>
+          <p className="text-xs text-muted-foreground">Penetapan Unit Saat Ini</p>
+          <p className="font-semibold">{operational?.currentAssignment ? "Ada penetapan unit aktif" : "Tidak ada penetapan unit aktif"}</p>
           <p className="text-xs text-muted-foreground">
             {operational?.currentAssignment
               ? "Pemakaian unit ditetapkan oleh workflow Penyewaan."
@@ -176,16 +177,16 @@ export function InventoryContextFacts({ operational }: { operational: InventoryO
       </Card>
       <Card className="shadow-none">
         <CardContent className="space-y-1 p-4">
-          <p className="text-xs text-muted-foreground">Current rental</p>
-          <p className="font-semibold">{operational?.activeRental?.nomor_penyewaan ?? "Tidak ada rental aktif"}</p>
+          <p className="text-xs text-muted-foreground">Penyewaan Saat Ini</p>
+          <p className="font-semibold">{operational?.activeRental?.nomor_penyewaan ?? "Tidak ada penyewaan aktif"}</p>
           <p className="text-xs text-muted-foreground">
-            {operational?.activeRental ? "Source truth rental berada pada modul Penyewaan." : "Tidak ada fakta rental aktif yang terbaca."}
+            {operational?.activeRental ? "Data utama penyewaan dikelola pada menu Penyewaan." : "Tidak ada penyewaan aktif yang terbaca."}
           </p>
         </CardContent>
       </Card>
       <Card className="shadow-none">
         <CardContent className="space-y-1 p-4">
-          <p className="text-xs text-muted-foreground">Return / inspection / maintenance</p>
+          <p className="text-xs text-muted-foreground">Pengembalian / Pemeriksaan / Perawatan</p>
           <p className="font-semibold">
             {operational?.latestReturn
               ? "Unit sudah diterima kembali"
@@ -195,7 +196,7 @@ export function InventoryContextFacts({ operational }: { operational: InventoryO
                   ? `${operational.openMaintenance.length} perawatan terbuka`
                   : "Belum ada fakta tambahan"}
           </p>
-          <p className="text-xs text-muted-foreground">Status final tetap dimiliki masing-masing source domain.</p>
+          <p className="text-xs text-muted-foreground">Status akhir tetap dikelola pada menu masing-masing.</p>
         </CardContent>
       </Card>
     </div>
@@ -258,12 +259,12 @@ export function UnknownOutcomeNotice({
   return (
     <Alert className="border-amber-400/50 bg-amber-500/[0.06]">
       <AlertTriangle className="size-4" />
-      <AlertTitle>Hasil command belum dapat dipastikan</AlertTitle>
+      <AlertTitle>Hasil tindakan belum dapat dipastikan</AlertTitle>
       <AlertDescription className="space-y-3">
         <p>{message}</p>
-        <p className="font-medium">Perubahan telah dikirim, tetapi hasil akhirnya belum dapat dipastikan. Jangan kirim command kedua.</p>
+        <p className="font-medium">Perubahan sudah dikirim, tetapi hasil akhirnya belum dapat dipastikan. Jangan kirim tindakan yang sama lagi.</p>
         <Button variant="outline" className="rounded-xl" onClick={onReconcile} disabled={busy}>
-          {busy ? "Memeriksa…" : "Periksa Status Command"}
+          {busy ? "Memeriksa…" : "Periksa Status Tindakan"}
         </Button>
       </AlertDescription>
     </Alert>
@@ -282,9 +283,9 @@ export function UnitConflictNotice({
       <AlertTriangle className="size-4" />
       <AlertTitle>Perubahan tidak dapat diterapkan</AlertTitle>
       <AlertDescription className="space-y-2">
-        <p><strong>Current state:</strong> {inventoryStatusLabel(unit.status)}</p>
-        <p><strong>Reason:</strong> {reason}</p>
-        <p><strong>Alternative:</strong> muat ulang konteks unit dan gunakan action yang sesuai dengan state terbaru.</p>
+        <p><strong>Status saat ini:</strong> {inventoryStatusLabel(unit.status)}</p>
+        <p><strong>Alasan:</strong> {reason}</p>
+        <p><strong>Tindakan:</strong> muat ulang data unit dan lanjutkan sesuai status terbaru.</p>
       </AlertDescription>
     </Alert>
   );
@@ -313,7 +314,7 @@ export function QrLookupDialog({
 
   const resolve = async () => {
     if (!identifier.trim()) {
-      setError("Identifier QR wajib diisi.");
+      setError("Kode QR unit wajib diisi.");
       return;
     }
     setLoading(true);
@@ -333,35 +334,35 @@ export function QrLookupDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2"><QrCode className="size-5" />Scan / Resolve Unit</DialogTitle>
+          <DialogTitle className="flex items-center gap-2"><QrCode className="size-5" />Pindai / Temukan Unit</DialogTitle>
           <DialogDescription>
-            QR hanya shortcut lookup. Setelah resolve, server tetap memvalidasi tenant dan akses sebelum detail unit dibuka.
+            QR hanya cara cepat menemukan unit. Setelah ditemukan, sistem tetap memvalidasi Usaha dan akses sebelum detail unit dibuka.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <div className="grid min-h-28 place-items-center rounded-2xl border border-dashed bg-muted/30">
             <div className="text-center">
               <QrCode className="mx-auto size-9 text-muted-foreground" />
-              <p className="mt-2 text-xs text-muted-foreground">Gunakan scanner perangkat/kamera bila tersedia, atau masukkan identifier QR secara manual.</p>
+              <p className="mt-2 text-xs text-muted-foreground">Pindai QR dengan kamera bila tersedia. Sebagai alternatif, masukkan kode yang tercetak pada QR unit.</p>
             </div>
           </div>
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
             <Input
               autoFocus
-              aria-label="Identifier QR unit"
+              aria-label="Kode QR unit"
               value={identifier}
               onChange={(event) => setIdentifier(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter") void resolve();
               }}
-              placeholder="Identifier unit dari QR"
+              placeholder="Masukkan kode dari QR unit"
               className="h-11 rounded-xl pl-9"
             />
           </div>
           {error ? <p className="text-sm text-destructive">{error}</p> : null}
           <Button className="h-11 w-full rounded-xl" onClick={() => void resolve()} disabled={loading}>
-            {loading ? "Mencari Unit…" : "Resolve Unit"}
+            {loading ? "Mencari Unit…" : "Temukan Unit"}
           </Button>
         </div>
       </DialogContent>
@@ -417,7 +418,7 @@ export function UnitCard({
       {unit.status === "rented" ? (
         <div className="mt-3 flex items-center gap-2 rounded-xl bg-primary/5 px-3 py-2 text-xs font-medium text-primary">
           <Clock3 className="size-3.5" aria-hidden="true" />
-          Rental aktif
+          Penyewaan aktif
         </div>
       ) : null}
 

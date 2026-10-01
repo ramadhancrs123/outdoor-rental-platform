@@ -85,7 +85,7 @@ export function SourcePreview({
   period,
   meta,
 }: {
-  type: "Reservasi" | "Penyewaan" | "Purchase" | "Maintenance";
+  type: "Reservasi" | "Penyewaan" | "Pembelian" | "Perawatan";
   number: string;
   renter?: string | null;
   period?: string | null;
@@ -284,10 +284,10 @@ export function FinanceHealthCard({
             <Icon className="size-5" aria-hidden="true" />
           </div>
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-semibold">Finance health</p>
+            <p className="text-sm font-semibold">Status Keuangan</p>
             <div className="mt-1 flex flex-wrap items-center gap-2">
               <FinanceStatus status={status} tone={tone} />
-              <span className="text-xs text-muted-foreground">Server-generated, tenant-scoped</span>
+              <span className="text-xs text-muted-foreground">Dibuat otomatis untuk Usaha aktif</span>
             </div>
           </div>
         </div>
@@ -401,7 +401,7 @@ export function FinanceCorrectionDialog({
               <div><p className="text-xs text-muted-foreground">Correction ID</p><p className="mt-1 break-all font-mono text-xs">{result.correction_id}</p></div>
               <div><p className="text-xs text-muted-foreground">Nomor Koreksi</p><p className="mt-1 font-semibold">{result.nomor_koreksi}</p></div>
             </div>
-            {result.replacement_transaksi_keuangan_id ? <div><p className="text-xs text-muted-foreground">Replacement financial transaction</p><p className="mt-1 break-all font-mono text-xs">{result.replacement_transaksi_keuangan_id}</p></div> : null}
+            {result.replacement_transaksi_keuangan_id ? <div><p className="text-xs text-muted-foreground">Transaksi keuangan pengganti</p><p className="mt-1 break-all font-mono text-xs">{result.replacement_transaksi_keuangan_id}</p></div> : null}
             <Button className="h-11 w-full rounded-xl" onClick={() => onOpenChange(false)}>Selesai</Button>
           </div>
         ) : (
@@ -410,13 +410,13 @@ export function FinanceCorrectionDialog({
               {(["void", "reversal"] as const).map((value) => (
                 <button key={value} type="button" onClick={() => setAction(value)} className={cn("rounded-2xl border p-4 text-left", action === value ? "border-primary bg-primary/[0.035] ring-1 ring-primary/20" : "hover:bg-muted/40")}>
                   <p className="font-semibold">{value === "void" ? "Void" : "Reversal"}</p>
-                  <p className="mt-1 text-xs leading-5 text-muted-foreground">{value === "void" ? "Tandai fakta sebagai void tanpa mengedit amount/source/date." : "Buat koreksi reversal yang dapat menghasilkan replacement transaction."}</p>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">{value === "void" ? "Tandai pencatatan sebagai dibatalkan tanpa mengubah nominal, sumber, atau tanggal." : "Buat koreksi pembalikan yang dapat menghasilkan transaksi pengganti."}</p>
                 </button>
               ))}
             </div>
-            <label className="mt-4 grid gap-1.5 text-xs font-semibold" htmlFor="finance-correction-reason">Alasan koreksi <span className="font-normal text-muted-foreground">(min. 5 karakter)</span><textarea id="finance-correction-reason" value={reason} onChange={(event) => setReason(event.target.value)} rows={4} className="rounded-2xl border bg-background p-3 text-sm font-normal" placeholder="Contoh: pencatatan ganda pada payment ini." /></label>
+            <label className="mt-4 grid gap-1.5 text-xs font-semibold" htmlFor="finance-correction-reason">Alasan koreksi <span className="font-normal text-muted-foreground">(min. 5 karakter)</span><textarea id="finance-correction-reason" value={reason} onChange={(event) => setReason(event.target.value)} rows={4} className="rounded-2xl border bg-background p-3 text-sm font-normal" placeholder="Contoh: pembayaran tercatat dua kali." /></label>
             {businessConflict ? <Alert variant="destructive" className="mt-4"><CircleAlert /><AlertTitle>Business conflict</AlertTitle><AlertDescription>Koreksi tidak diizinkan pada state bisnis saat ini. Data finansial tidak diubah.</AlertDescription></Alert> : null}
-            {unknownOutcome ? <Alert className="mt-4 border-amber-300 bg-amber-50/60"><AlertTriangle /><AlertTitle>Unknown outcome</AlertTitle><AlertDescription>Hasil command belum dapat dipastikan. Periksa reconciliation sebelum mengirim command lain.</AlertDescription></Alert> : null}
+            {unknownOutcome ? <Alert className="mt-4 border-amber-300 bg-amber-50/60"><AlertTriangle /><AlertTitle>Hasil tindakan belum dapat dipastikan</AlertTitle><AlertDescription>Hasil tindakan belum dapat dipastikan. Periksa status sebelum mencoba tindakan lain.</AlertDescription></Alert> : null}
             {error && !businessConflict && !unknownOutcome ? <Alert variant="destructive" className="mt-4"><AlertTitle>Koreksi belum berhasil</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
             <div className="mt-5 flex gap-2">
               <Button variant="outline" className="h-11 flex-1 rounded-xl" onClick={() => onOpenChange(false)}>Batal</Button>

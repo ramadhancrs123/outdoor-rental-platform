@@ -37,7 +37,7 @@ import {
 } from "@/features/katalog";
 import { CATALOG_PRODUCT_MEDIA_BUCKET } from "@/features/katalog/types";
 import type { CatalogMedia, CatalogTariff, CatalogVariant } from "@/features/katalog/types";
-import { catalogStatusLabel, formatCatalogMoney, formatTariffDuration } from "@/features/katalog/utils";
+import { catalogErrorMessage, catalogStatusLabel, catalogVariantCapacity, catalogVariantColor, formatCatalogMoney, formatTariffDuration } from "@/features/katalog/utils";
 import { paths } from "@/routes/paths";
 
 type UncertainCommand = {
@@ -51,8 +51,54 @@ type TransitionRequest = {
   value: string;
 };
 
+type VariantDraft = {
+  name: string;
+  code: string;
+  description: string;
+  color: string;
+  capacityLiters: string;
+};
+
+function variantDraftFrom(source: CatalogVariant): VariantDraft {
+  const attrs = source.atribut_pembeda ?? {};
+  return {
+    name: source.nama,
+    code: source.kode_internal ?? "",
+    description: source.deskripsi ?? "",
+    color: catalogVariantColor(attrs),
+    capacityLiters: catalogVariantCapacity(attrs),
+  };
+}
+
+function buildVariantAttributes(base: Record<string, unknown> | null, draft: Pick<VariantDraft, "color" | "capacityLiters">) {
+  const next = { ...(base ?? {}) };
+  const color = draft.color.trim();
+  const capacity = draft.capacityLiters.trim();
+
+  if (color) next.warna = color;
+  else delete next.warna;
+
+  if (capacity) {
+    const literMatch = /^([0-9]+(?:[.,][0-9]+)?)\s*(?:l|liter)$/i.exec(capacity);
+    if (literMatch) {
+      const numericCapacity = Number(literMatch[1].replace(",", "."));
+      if (!Number.isFinite(numericCapacity) || numericCapacity < 0) throw new Error("Kapasitas harus berupa angka 0 atau lebih.");
+      next.kapasitas_liter = numericCapacity;
+      delete next.kapasitas;
+    } else {
+      next.kapasitas = capacity;
+      delete next.kapasitas_liter;
+    }
+  } else {
+    delete next.kapasitas;
+    delete next.kapasitas_liter;
+  }
+
+  return Object.keys(next).length ? next : null;
+}
+
 function messageOf(error: unknown, fallback = "Perubahan Katalog gagal.") {
-  return error instanceof Error ? error.message : fallback;
+  return catalogErrorMessage(error, fallback);
 }
 
 function commandKey(prefix: string) {
@@ -78,9 +124,9 @@ export function CatalogEdit() {
   const [uncertainCommand, setUncertainCommand] = useState<UncertainCommand | null>(null);
   const [transition, setTransition] = useState<TransitionRequest | null>(null);
   const [productDraft, setProductDraft] = useState({ categoryId: "", name: "", slug: "", description: "", publicSummary: "" });
-  const [variantDrafts, setVariantDrafts] = useState<Record<string, { name: string; code: string; description: string }>>({});
+  const [variantDrafts, setVariantDrafts] = useState<Record<string, VariantDraft>>({});
   const [tariffDrafts, setTariffDrafts] = useState<Record<string, { name: string; durationValue: string; durationUnit: string; nominal: string }>>({});
-  const [newVariant, setNewVariant] = useState({ name: "", code: "", description: "" });
+  const [newVariant, setNewVariant] = useState({ name: "", code: "", description: "", color: "", capacityLiters: "" });
   const [mediaFile, setMediaFile] = useState<File | null>(null);
   const [mediaPreview, setMediaPreview] = useState("");
   const [mediaCover, setMediaCover] = useState(false);
@@ -119,12 +165,7 @@ export function CatalogEdit() {
       publicSummary: product.data.ringkasan_publik ?? "",
     });
     setVariantDrafts(
-      Object.fromEntries(
-        product.data.variants.map((variant) => [
-          variant.varian_barang_id,
-          { name: variant.nama, code: variant.kode_internal ?? "", description: variant.deskripsi ?? "" },
-        ]),
-      ),
+      Object.fromEntries(product.data.variants.map((variant) => [variant.varian_barang_id, variantDraftFrom(variant)])),
     );
     setTariffDrafts(
       Object.fromEntries(
@@ -265,9 +306,9 @@ export function CatalogEdit() {
             nama: draft.name,
             kodeInternal: draft.code || null,
             deskripsi: draft.description || null,
-            atributPembeda: variant.atribut_pembeda,
+            atributPembeda: buildVariantAttributes(variant.atribut_pembeda, draft),
             status: variant.status === "active" ? "active" : "inactive",
-            expectedUpdatedAt: current?.updated_at,
+            expectedUpdatedAt: variant.updated_at,
           },
           { idempotencyKey: key },
         ),
@@ -293,7 +334,7 @@ export function CatalogEdit() {
       const key = commandKey("set-katalog-variant-status");
       rememberCommand(commandRef, "set_varian_barang_status", key);
       setBusyKey("variant-status-" + variant.varian_barang_id);
-      return setCatalogVariantStatus(context.data.usahaId, variant.varian_barang_id, status, current?.updated_at, { idempotencyKey: key });
+      return setCatalogVariantStatus(context.data.usahaId, variant.varian_barang_id, status, variant.updated_at, { idempotencyKey: key });
     },
     onSuccess: async () => {
       setBusyKey("");
@@ -331,7 +372,7 @@ export function CatalogEdit() {
           nominal: amount,
           berlakuMulai: tariff.berlaku_mulai,
           berlakuSampai: tariff.berlaku_sampai,
-          expectedUpdatedAt: current?.updated_at,
+          expectedUpdatedAt: tariff.updated_at,
         },
         { idempotencyKey: key },
       );
@@ -356,7 +397,7 @@ export function CatalogEdit() {
       const key = commandKey("set-katalog-tariff-status");
       rememberCommand(commandRef, "set_tarif_sewa_status", key);
       setBusyKey("tariff-status-" + tariff.tarif_sewa_id);
-      return setCatalogTariffStatus(context.data.usahaId, tariff.tarif_sewa_id, status, current?.updated_at, { idempotencyKey: key });
+      return setCatalogTariffStatus(context.data.usahaId, tariff.tarif_sewa_id, status, tariff.updated_at, { idempotencyKey: key });
     },
     onSuccess: async () => {
       setBusyKey("");
@@ -386,6 +427,7 @@ export function CatalogEdit() {
           nama: newVariant.name,
           kodeInternal: newVariant.code || null,
           deskripsi: newVariant.description || null,
+          atributPembeda: buildVariantAttributes(null, newVariant),
           status: "active",
         },
         { idempotencyKey: key },
@@ -393,7 +435,7 @@ export function CatalogEdit() {
     },
     onSuccess: async () => {
       setBusyKey("");
-      setNewVariant({ name: "", code: "", description: "" });
+      setNewVariant({ name: "", code: "", description: "", color: "", capacityLiters: "" });
       toast.success("Varian berhasil ditambahkan.");
       await refreshAll();
     },
@@ -526,7 +568,7 @@ export function CatalogEdit() {
     );
   }
 
-  const updateVariantDraft = (variantId: string, patch: Partial<{ name: string; code: string; description: string }>) => {
+  const updateVariantDraft = (variantId: string, patch: Partial<VariantDraft>) => {
     setVariantDrafts((drafts) => ({ ...drafts, [variantId]: { ...drafts[variantId], ...patch } }));
   };
 
@@ -547,7 +589,7 @@ export function CatalogEdit() {
     try {
       const result = await reconcileCatalogMutation(context.data.usahaId, uncertainCommand.commandName, uncertainCommand.idempotencyKey);
       if (result.state === "committed") {
-        toast.success("State command sudah committed. Data terbaru dimuat.");
+        toast.success("Perubahan sudah disimpan. Data terbaru dimuat.");
         setUncertainCommand(null);
         await refreshAll();
       } else if (result.state === "not_found") {
@@ -555,7 +597,7 @@ export function CatalogEdit() {
         setUncertainCommand(null);
         await refreshAll();
       } else {
-        toast.error("Command masih UNKNOWN_OUTCOME. Jangan mengirim mutation kedua.");
+        toast.error("Hasil perubahan belum dapat dipastikan. Jangan mengulang perubahan sebelum status diperiksa.");
       }
     } catch (error) {
       toast.error(messageOf(error, "Rekonsiliasi gagal."));
@@ -568,13 +610,13 @@ export function CatalogEdit() {
         <div className="flex min-w-0 items-start gap-2">
           <Button asChild variant="ghost" size="icon" className="-ml-2 rounded-xl" aria-label="Kembali ke detail katalog"><Link to={paths.katalog + "/show/" + current.barang_id}><ArrowLeft /></Link></Button>
           <div className="min-w-0">
-            <p className="text-xs text-muted-foreground">Katalog · Edit Produk</p>
+            <p className="text-xs text-muted-foreground">Katalog · Ubah Barang</p>
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-2xl font-bold tracking-tight">{current.nama}</h1>
               <Badge variant={current.status === "active" ? "default" : "secondary"} className="rounded-full">{catalogStatusLabel(current.status)}</Badge>
               <Badge variant="outline" className="rounded-full">{current.is_public ? "Publik" : "Internal"}</Badge>
             </div>
-            <p className="mt-1 text-sm text-muted-foreground">Product truth · bukan data unit fisik atau availability aktual.</p>
+            <p className="mt-1 text-sm text-muted-foreground">Informasi barang. Data unit fisik dan ketersediaan aktual dikelola pada proses terkait.</p>
           </div>
         </div>
         <Button variant="ghost" size="icon" className="rounded-xl" aria-label="Menu produk"><MoreVertical /></Button>
@@ -586,7 +628,7 @@ export function CatalogEdit() {
           <AlertTitle>Permintaan belum dapat dipastikan</AlertTitle>
           <AlertDescription className="space-y-3">
             <p>{uncertainCommand.message}</p>
-            <Button variant="outline" size="sm" onClick={() => void reconcile()}><RefreshCw />Periksa Status Command</Button>
+            <Button variant="outline" size="sm" onClick={() => void reconcile()}><RefreshCw />Periksa Status Tindakan</Button>
           </AlertDescription>
         </Alert>
       ) : null}
@@ -613,8 +655,8 @@ export function CatalogEdit() {
               <label className="grid gap-2 text-sm font-medium">Nama barang<Input className="h-11 rounded-xl" value={productDraft.name} onChange={(e) => setProductDraft((d) => ({ ...d, name: e.target.value }))} /></label>
               <label className="grid gap-2 text-sm font-medium">Slug<input className="h-11 rounded-xl" value={productDraft.slug} onChange={(e) => setProductDraft((d) => ({ ...d, slug: e.target.value }))} /></label>
               <div className="rounded-2xl border bg-muted/20 p-4 text-sm">
-                <p className="font-semibold">Public visibility</p>
-                <p className="mt-1 text-muted-foreground">{current.is_public ? "Produk saat ini dipresentasikan pada public catalog." : "Produk tetap aktif secara internal tetapi belum ditawarkan melalui public catalog."}</p>
+                <p className="font-semibold">Tampilan Publik</p>
+                <p className="mt-1 text-muted-foreground">{current.is_public ? "Barang saat ini ditampilkan pada katalog publik." : "Barang tetap aktif secara internal tetapi belum ditawarkan di katalog publik."}</p>
               </div>
               <label className="lg:col-span-2 grid gap-2 text-sm font-medium">Deskripsi
                 <Textarea rows={6} className="rounded-xl" value={productDraft.description} onChange={(e) => setProductDraft((d) => ({ ...d, description: e.target.value }))} placeholder="Jelaskan produk dengan bahasa yang dipahami admin dan calon penyewa." />
@@ -626,7 +668,7 @@ export function CatalogEdit() {
           </Card>
 
           <Card className="rounded-2xl shadow-sm">
-            <CardHeader><CardTitle className="text-base">Status & Visibility</CardTitle></CardHeader>
+            <CardHeader><CardTitle className="text-base">Status & Tampilan Publik</CardTitle></CardHeader>
             <CardContent className="grid gap-4 lg:grid-cols-2">
               <div className="rounded-2xl border p-4">
                 <p className="font-semibold">Status produk</p>
@@ -637,8 +679,8 @@ export function CatalogEdit() {
                 </div>
               </div>
               <div className="rounded-2xl border p-4">
-                <p className="font-semibold">Visibility publik</p>
-                <p className="mt-1 text-sm leading-6 text-muted-foreground">{current.is_public ? "Pelanggan dapat menemukan produk ini pada public catalog." : "Produk tidak ditawarkan pada public catalog."}</p>
+                <p className="font-semibold">Tampilan di Website Publik</p>
+                <p className="mt-1 text-sm leading-6 text-muted-foreground">{current.is_public ? "Penyewa dapat menemukan barang ini di katalog publik." : "Barang tidak ditawarkan di katalog publik."}</p>
                 <div className="mt-4 flex flex-wrap gap-2">
                   <Button variant={current.is_public ? "default" : "outline"} disabled={busyKey === "product-visibility"} onClick={() => current.is_public || setTransition({ kind: "visibility", value: "true" })}>Publik</Button>
                   <Button variant={!current.is_public ? "default" : "outline"} disabled={busyKey === "product-visibility"} onClick={() => current.is_public && setTransition({ kind: "visibility", value: "false" })}>Internal</Button>
@@ -657,10 +699,12 @@ export function CatalogEdit() {
         <TabsContent value="variants" className="space-y-4">
           <Card className="rounded-2xl shadow-sm">
             <CardHeader><CardTitle className="text-base">Tambah Varian</CardTitle><p className="text-sm text-muted-foreground">Varian tetap berada di bawah produk ini; bukan unit fisik.</p></CardHeader>
-            <CardContent className="grid gap-4 lg:grid-cols-[1fr_180px_1.5fr_auto]">
+            <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               <label className="grid gap-2 text-sm font-medium">Nama varian<Input className="h-11 rounded-xl" value={newVariant.name} onChange={(e) => setNewVariant((d) => ({ ...d, name: e.target.value }))} placeholder="Contoh: Hitam" /></label>
               <label className="grid gap-2 text-sm font-medium">Kode internal<Input className="h-11 rounded-xl" value={newVariant.code} onChange={(e) => setNewVariant((d) => ({ ...d, code: e.target.value }))} placeholder="Opsional" /></label>
-              <label className="grid gap-2 text-sm font-medium">Deskripsi<Input className="h-11 rounded-xl" value={newVariant.description} onChange={(e) => setNewVariant((d) => ({ ...d, description: e.target.value }))} placeholder="Pembeda yang bermakna bagi produk" /></label>
+              <label className="grid gap-2 text-sm font-medium">Warna<Input className="h-11 rounded-xl" value={newVariant.color} onChange={(e) => setNewVariant((d) => ({ ...d, color: e.target.value }))} placeholder="Contoh: hitam" /></label>
+              <label className="grid gap-2 text-sm font-medium">Kapasitas<Input className="h-11 rounded-xl" value={newVariant.capacityLiters} onChange={(e) => setNewVariant((d) => ({ ...d, capacityLiters: e.target.value }))} placeholder="Contoh: 60 liter atau 4 orang" /></label>
+              <label className="grid gap-2 text-sm font-medium sm:col-span-2">Deskripsi<Input className="h-11 rounded-xl" value={newVariant.description} onChange={(e) => setNewVariant((d) => ({ ...d, description: e.target.value }))} placeholder="Pembeda yang bermakna bagi produk" /></label>
               <Button className="self-end h-11 rounded-xl" disabled={!newVariant.name.trim() || busyKey === "variant-create"} onClick={() => createVariantMutation.mutate()}>{busyKey === "variant-create" ? <Loader2 className="animate-spin" /> : <Plus />}Tambah Varian</Button>
             </CardContent>
           </Card>
@@ -668,14 +712,16 @@ export function CatalogEdit() {
           {current.variants.length === 0 ? (
             <Card className="rounded-2xl"><CardContent className="flex min-h-48 items-center justify-center p-6 text-center"><div><p className="font-semibold">Belum ada varian</p><p className="mt-1 text-sm text-muted-foreground">Varian hanya perlu dibuat bila ada perbedaan bermakna pada identitas, spesifikasi, atau harga.</p></div></CardContent></Card>
           ) : current.variants.map((variant) => {
-            const draft = variantDrafts[variant.varian_barang_id] ?? { name: variant.nama, code: variant.kode_internal ?? "", description: variant.deskripsi ?? "" };
+            const draft = variantDrafts[variant.varian_barang_id] ?? variantDraftFrom(variant);
             return (
               <Card key={variant.varian_barang_id} className="rounded-2xl shadow-sm">
                 <CardHeader className="flex flex-row items-start justify-between gap-3"><div><CardTitle className="text-base">{variant.nama}</CardTitle><p className="text-sm text-muted-foreground">Bagian dari {current.nama}</p></div><Badge variant={variant.status === "active" ? "default" : "secondary"} className="rounded-full">{catalogStatusLabel(variant.status)}</Badge></CardHeader>
-                <CardContent className="grid gap-4 lg:grid-cols-3">
+                <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   <label className="grid gap-2 text-sm font-medium">Nama<Input className="h-11 rounded-xl" value={draft.name} onChange={(e) => updateVariantDraft(variant.varian_barang_id, { name: e.target.value })} /></label>
                   <label className="grid gap-2 text-sm font-medium">Kode internal<Input className="h-11 rounded-xl" value={draft.code} onChange={(e) => updateVariantDraft(variant.varian_barang_id, { code: e.target.value })} /></label>
                   <label className="grid gap-2 text-sm font-medium">Deskripsi<Input className="h-11 rounded-xl" value={draft.description} onChange={(e) => updateVariantDraft(variant.varian_barang_id, { description: e.target.value })} /></label>
+                  <label className="grid gap-2 text-sm font-medium">Warna<Input className="h-11 rounded-xl" value={draft.color} onChange={(e) => updateVariantDraft(variant.varian_barang_id, { color: e.target.value })} placeholder="Contoh: hitam" /></label>
+                  <label className="grid gap-2 text-sm font-medium">Kapasitas<Input className="h-11 rounded-xl" value={draft.capacityLiters} onChange={(e) => updateVariantDraft(variant.varian_barang_id, { capacityLiters: e.target.value })} placeholder="Contoh: 60 liter atau 4 orang" /></label>
                   <div className="lg:col-span-3 flex flex-wrap gap-2 border-t pt-4">
                     <Button size="sm" className="rounded-xl" disabled={busyKey === "variant-" + variant.varian_barang_id} onClick={() => variantSaveMutation.mutate(variant)}>{busyKey === "variant-" + variant.varian_barang_id ? <Loader2 className="animate-spin" /> : <Save />}Simpan Varian</Button>
                     <Button size="sm" variant="outline" className="rounded-xl" disabled={busyKey === "variant-status-" + variant.varian_barang_id} onClick={() => variantStatusMutation.mutate({ variant, status: variant.status === "active" ? "inactive" : "active" })}>{variant.status === "active" ? "Nonaktifkan" : "Aktifkan"}</Button>
@@ -687,7 +733,7 @@ export function CatalogEdit() {
 
           <Alert>
             <AlertTitle>Catatan authority</AlertTitle>
-            <AlertDescription>Perubahan varian di sini tidak memindahkan unit fisik atau menentukan availability.</AlertDescription>
+            <AlertDescription>Perubahan varian di sini tidak memindahkan unit fisik atau menentukan ketersediaan.</AlertDescription>
           </Alert>
         </TabsContent>
 
@@ -784,8 +830,8 @@ export function CatalogEdit() {
           </Card>
 
           <Alert>
-            <AlertTitle>Media adalah product truth</AlertTitle>
-            <AlertDescription>Storage path hanya detail teknis. Admin melihat preview; public catalog hanya menerima media yang memang diproyeksikan aman.</AlertDescription>
+            <AlertTitle>Media merupakan bagian dari informasi barang</AlertTitle>
+            <AlertDescription>Lokasi penyimpanan hanya detail teknis. Admin melihat pratinjau; katalog publik hanya menerima media yang memang ditampilkan.</AlertDescription>
           </Alert>
         </TabsContent>
 
@@ -795,27 +841,27 @@ export function CatalogEdit() {
           ) : current.package_references.map((reference) => (
             <Card key={reference.komponen_paket_id} className="rounded-2xl shadow-sm">
               <CardContent className="flex flex-col gap-2 p-4 sm:flex-row sm:items-center sm:justify-between">
-                <div><p className="font-semibold">{reference.paket?.nama ?? "Paket tidak ditemukan"}</p><p className="text-sm text-muted-foreground">Quantity {reference.jumlah} · {reference.paket?.is_public ? "Publik" : "Internal"} · {reference.paket?.status ?? "unknown"}</p></div>
+                <div><p className="font-semibold">{reference.paket?.nama ?? "Paket tidak ditemukan"}</p><p className="text-sm text-muted-foreground">Jumlah {reference.jumlah} · {reference.paket?.is_public ? "Publik" : "Internal"} · {reference.paket?.status === "active" ? "Aktif" : reference.paket?.status === "inactive" ? "Tidak Aktif" : "Draf"}</p></div>
                 <Badge variant="outline" className="rounded-full">Referensi produk</Badge>
               </CardContent>
             </Card>
           ))}
-          <Alert><AlertTitle>Boundary paket</AlertTitle><AlertDescription>Paket mengandung barang/varian, bukan unit fisik. Assignment unit baru terjadi pada workflow operasional lain.</AlertDescription></Alert>
+          <Alert><AlertTitle>Boundary paket</AlertTitle><AlertDescription>Paket berisi barang/varian, bukan unit fisik. Penetapan Unit dilakukan pada alur operasional terkait.</AlertDescription></Alert>
         </TabsContent>
       </Tabs>
 
       <Dialog open={Boolean(transition)} onOpenChange={(open) => !open && setTransition(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{transition ? (transition.kind === "visibility" ? titleForVisibility(transition.value === "true") : transition.value === "active" ? "Aktifkan produk?" : "Nonaktifkan produk?") : "Konfirmasi perubahan"}</DialogTitle>
+            <DialogTitle>{transition ? (transition.kind === "visibility" ? titleForVisibility(transition.value === "true") : transition.value === "active" ? "Aktifkan barang?" : "Nonaktifkan barang?") : "Konfirmasi perubahan"}</DialogTitle>
             <DialogDescription>
               {transition?.kind === "visibility"
                 ? transition.value === "true"
-                  ? "Produk akan diproyeksikan sebagai informasi publik setelah state benar-benar committed."
-                  : "Produk akan tetap tersimpan secara internal tetapi tidak lagi ditawarkan melalui public catalog."
+                  ? "Barang akan ditampilkan sebagai informasi publik setelah perubahan berhasil disimpan."
+                  : "Barang akan tetap tersimpan secara internal dan tidak lagi ditawarkan di katalog publik."
                 : transition?.value === "inactive"
                   ? "Nonaktif tidak menghapus histori produk. Data tetap dapat dilihat dan ditelusuri."
-                  : "Produk menjadi aktif secara internal; visibility publik tetap merupakan keputusan terpisah."}
+                  : "Barang menjadi aktif secara internal; tampilan di katalog publik tetap merupakan keputusan terpisah."}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

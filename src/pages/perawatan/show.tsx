@@ -83,7 +83,7 @@ export function PerawatanShow() {
 
   const startMutation = useMutation({
     mutationFn: async () => {
-      if (!context.data || !workspace.data) throw new Error("Maintenance belum siap.");
+      if (!context.data || !workspace.data) throw new Error("Perawatan belum siap.");
       const key = "start-maintenance-" + crypto.randomUUID();
       setCommandRef({ command: "start_maintenance", key });
       return startMaintenance(
@@ -98,14 +98,14 @@ export function PerawatanShow() {
     onSuccess: async () => { setCommandRef(null); setFeedback("Perawatan dimulai."); await invalidate(); },
     onError: (error) => {
       const message = errorMessage(error, "Perawatan gagal dimulai.");
-      if (message.startsWith("UNKNOWN_OUTCOME:")) setUnknownFeedback("Hasil start belum dapat dipastikan. Jangan memulai maintenance kedua.");
+      if (message.startsWith("UNKNOWN_OUTCOME:")) setUnknownFeedback("Hasil mulai perawatan belum dapat dipastikan. Jangan memulai perawatan kedua.");
       else setErrorFeedback(message);
     },
   });
 
   const completeMutation = useMutation({
     mutationFn: async () => {
-      if (!context.data || !workspace.data) throw new Error("Maintenance belum siap.");
+      if (!context.data || !workspace.data) throw new Error("Perawatan belum siap.");
       const parsedCost = cost.trim() === "" ? null : Number(cost);
       if (parsedCost !== null && (!Number.isFinite(parsedCost) || parsedCost < 0)) throw new Error("Biaya harus berupa angka nol atau lebih.");
       const key = "complete-maintenance-" + crypto.randomUUID();
@@ -136,14 +136,14 @@ export function PerawatanShow() {
     },
     onError: (error) => {
       const message = errorMessage(error, "Perawatan gagal diselesaikan.");
-      if (message.startsWith("UNKNOWN_OUTCOME:")) setUnknownFeedback("Hasil penyelesaian belum dapat dipastikan. Jangan menyimpan penyelesaian kedua.");
+      if (message.startsWith("UNKNOWN_OUTCOME:")) setUnknownFeedback("Hasil penyelesaian perawatan belum dapat dipastikan. Jangan mengulang penyelesaian.");
       else setErrorFeedback(message);
     },
   });
 
   const verificationMutation = useMutation({
     mutationFn: async (verificationResult: "passed" | "failed") => {
-      if (!context.data || !workspace.data) throw new Error("Maintenance belum siap.");
+      if (!context.data || !workspace.data) throw new Error("Perawatan belum siap.");
       const key = "verify-maintenance-" + crypto.randomUUID();
       setCommandRef({ command: "verify_maintenance_readiness", key });
       return verifyMaintenanceReadiness(
@@ -157,13 +157,13 @@ export function PerawatanShow() {
     onMutate: () => { setFeedback(""); setErrorFeedback(""); setUnknownFeedback(""); },
     onSuccess: async (result) => {
       setCommandRef(null);
-      setFeedback(result.verification_result === "passed" ? "Verification LULUS. Inventaris menetapkan unit READY." : "Verification GAGAL. Unit tetap tidak READY.");
+      setFeedback(result.verification_result === "passed" ? "Verifikasi LULUS. Inventaris menetapkan unit Siap Disewakan." : "Verifikasi GAGAL. Unit tetap belum Siap Disewakan.");
       setVerificationNote("");
       await invalidate();
     },
     onError: (error) => {
-      const message = errorMessage(error, "Verification gagal diproses.");
-      if (message.startsWith("UNKNOWN_OUTCOME:")) setUnknownFeedback("Hasil verification belum dapat dipastikan. Periksa status command.");
+      const message = errorMessage(error, "Verifikasi gagal diproses.");
+      if (message.startsWith("UNKNOWN_OUTCOME:")) setUnknownFeedback("Hasil verifikasi belum dapat dipastikan. Periksa status tindakan.");
       else setErrorFeedback(message);
     },
   });
@@ -176,7 +176,7 @@ export function PerawatanShow() {
       if (result.state === "committed") {
         setCommandRef(null);
         setUnknownFeedback("");
-        setFeedback("Command sudah committed. State terbaru sedang disegarkan.");
+        setFeedback("Perubahan sudah disimpan. Status terbaru sedang diperbarui.");
         await workspace.refetch();
       } else if (result.state === "not_found") {
         setCommandRef(null);
@@ -184,7 +184,7 @@ export function PerawatanShow() {
         setFeedback("Command tidak ditemukan. Muat data terbaru sebelum mencoba lagi.");
         await workspace.refetch();
       } else {
-        setUnknownFeedback("Command masih UNKNOWN_OUTCOME. Jangan mengirim command kedua.");
+        setUnknownFeedback("Hasil tindakan belum dapat dipastikan. Jangan mengulang tindakan.");
       }
     } catch (error) {
       setUnknownFeedback(errorMessage(error, "Rekonsiliasi gagal."));
@@ -230,8 +230,8 @@ export function PerawatanShow() {
             </div>
             <Alert className="relative w-full max-w-md text-left">
               <Info className="size-4" />
-              <AlertTitle>Unit belum dianggap READY</AlertTitle>
-              <AlertDescription>Verifikasi kesiapan masih diperlukan melalui workflow yang sah. Perawatan selesai tidak otomatis membuat unit READY.</AlertDescription>
+              <AlertTitle>Unit belum dianggap Siap Disewakan</AlertTitle>
+              <AlertDescription>Verifikasi kesiapan masih diperlukan melalui workflow yang sah. Perawatan selesai tidak otomatis membuat unit menjadi Siap Disewakan.</AlertDescription>
             </Alert>
             <div className="relative flex w-full max-w-md flex-col gap-2 sm:flex-row">
               <Button className="flex-1 rounded-xl" onClick={() => setCompletionSuccess(null)}><Wrench />Lihat Detail Perawatan</Button>
@@ -260,17 +260,17 @@ export function PerawatanShow() {
 
       {feedback ? <Alert><CheckCircle2 className="size-4" /><AlertTitle>Status diperbarui</AlertTitle><AlertDescription>{feedback}</AlertDescription></Alert> : null}
       {errorFeedback ? <Alert variant="destructive"><ShieldAlert className="size-4" /><AlertTitle>Perawatan belum diperbarui</AlertTitle><AlertDescription className="space-y-3"><p>{errorFeedback}</p><Button variant="outline" size="sm" onClick={() => void workspace.refetch()}><RefreshCw />Muat Data Terbaru</Button></AlertDescription></Alert> : null}
-      {unknownFeedback ? <Alert variant="destructive"><ShieldAlert className="size-4" /><AlertTitle>Permintaan belum dapat dipastikan</AlertTitle><AlertDescription className="space-y-3"><p>Perubahan mungkin sudah diproses, tetapi hasil belum diterima perangkat. Jangan membuat record kedua.</p><Button variant="outline" size="sm" disabled={reconciling} onClick={() => void reconcile()}>{reconciling ? "Memeriksa..." : "Periksa Status Command"}</Button></AlertDescription></Alert> : null}
+      {unknownFeedback ? <Alert variant="destructive"><ShieldAlert className="size-4" /><AlertTitle>Permintaan belum dapat dipastikan</AlertTitle><AlertDescription className="space-y-3"><p>Perubahan mungkin sudah diproses, tetapi hasil belum diterima perangkat. Jangan mengulang tindakan.</p><Button variant="outline" size="sm" disabled={reconciling} onClick={() => void reconcile()}>{reconciling ? "Memeriksa..." : "Periksa Status Tindakan"}</Button></AlertDescription></Alert> : null}
 
       <div className="grid gap-3 sm:grid-cols-3">
         <Card className="rounded-2xl"><CardContent className="p-4"><p className="text-xs text-muted-foreground">Unit</p><p className="mt-1 font-semibold">{unit.kode_unit}</p><p className="text-sm text-muted-foreground">{unit.barang_nama ?? "-"}{unit.varian_nama ? " · " + unit.varian_nama : ""}</p><Badge variant="secondary" className="mt-3 rounded-full">{semanticMaintenanceLabel(unit.status)}</Badge></CardContent></Card>
-        <Card className="rounded-2xl"><CardContent className="p-4"><p className="text-xs text-muted-foreground">Sumber</p><p className="mt-1 font-semibold">{sourceInspection ? "Pemeriksaan" : "Manual"}</p>{sourceInspection ? <p className="text-sm text-muted-foreground">{sourceInspection.pemeriksaan_id.slice(0, 8).toUpperCase()}</p> : <p className="text-sm text-muted-foreground">Alasan tercatat di catatan maintenance</p>}</CardContent></Card>
+        <Card className="rounded-2xl"><CardContent className="p-4"><p className="text-xs text-muted-foreground">Sumber</p><p className="mt-1 font-semibold">{sourceInspection ? "Pemeriksaan" : "Manual"}</p>{sourceInspection ? <p className="text-sm text-muted-foreground">{sourceInspection.pemeriksaan_id.slice(0, 8).toUpperCase()}</p> : <p className="text-sm text-muted-foreground">Alasan tercatat pada data perawatan</p>}</CardContent></Card>
         <Card className="rounded-2xl"><CardContent className="p-4"><p className="text-xs text-muted-foreground">Jenis Perawatan</p><p className="mt-1 font-semibold">{semanticMaintenanceLabel(maintenance.jenis_perawatan)}</p><Badge variant="outline" className="mt-3 rounded-full">{semanticMaintenanceLabel(maintenance.status)}</Badge></CardContent></Card>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[1.05fr_.95fr]">
         <Card className="rounded-2xl shadow-sm">
-          <CardHeader><CardTitle className="text-base">Source & Condition</CardTitle><p className="text-sm text-muted-foreground">Mengapa unit perlu dirawat.</p></CardHeader>
+          <CardHeader><CardTitle className="text-base">Asal & Kondisi Unit</CardTitle><p className="text-sm text-muted-foreground">Mengapa unit perlu dirawat.</p></CardHeader>
           <CardContent className="space-y-4">
             {sourceInspection ? (
               <>
@@ -278,10 +278,10 @@ export function PerawatanShow() {
                   <div className="flex items-center justify-between gap-3"><div><p className="text-xs text-muted-foreground">Pemeriksaan Sumber</p><p className="mt-1 font-semibold">{sourceInspection.pemeriksaan_id}</p></div><Badge variant="secondary" className="rounded-full">{semanticMaintenanceLabel(sourceInspection.keputusan_operasional)}</Badge></div>
                   <p className="mt-3 text-sm text-muted-foreground">{formatMaintenanceDateTime(sourceInspection.diperiksa_at)} · {semanticMaintenanceLabel(sourceInspection.hasil)} · {semanticMaintenanceLabel(sourceInspection.kelengkapan_status)}</p>
                 </div>
-                <div><p className="mb-2 text-sm font-semibold">Temuan</p>{findings.length === 0 ? <div className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">Tidak ada finding terkait.</div> : findings.map((finding) => <div key={finding.temuan_pemeriksaan_id} className="rounded-xl border p-3"><div className="flex items-center justify-between gap-3"><Badge variant="outline" className="rounded-full">{semanticMaintenanceLabel(finding.jenis_temuan)}</Badge><span className="text-xs text-muted-foreground">{finding.status_tindak_lanjut}</span></div><p className="mt-2 text-sm leading-6">{finding.deskripsi}</p>{finding.nominal_potensi_biaya !== null ? <p className="mt-2 text-xs text-muted-foreground">Potensi biaya · Rp {new Intl.NumberFormat("id-ID").format(Number(finding.nominal_potensi_biaya))}</p> : null}</div>)}</div>
+                <div><p className="mb-2 text-sm font-semibold">Temuan</p>{findings.length === 0 ? <div className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">Tidak ada temuan terkait.</div> : findings.map((finding) => <div key={finding.temuan_pemeriksaan_id} className="rounded-xl border p-3"><div className="flex items-center justify-between gap-3"><Badge variant="outline" className="rounded-full">{semanticMaintenanceLabel(finding.jenis_temuan)}</Badge><span className="text-xs text-muted-foreground">{finding.status_tindak_lanjut}</span></div><p className="mt-2 text-sm leading-6">{finding.deskripsi}</p>{finding.nominal_potensi_biaya !== null ? <p className="mt-2 text-xs text-muted-foreground">Potensi biaya · Rp {new Intl.NumberFormat("id-ID").format(Number(finding.nominal_potensi_biaya))}</p> : null}</div>)}</div>
               </>
             ) : (
-              <div className="rounded-2xl border bg-amber-50/60 p-4"><p className="font-semibold">Manual Maintenance</p><p className="mt-1 text-sm leading-6 text-muted-foreground">{maintenance.catatan || "Alasan maintenance manual tercatat pada record."}</p></div>
+              <div className="rounded-2xl border bg-amber-50/60 p-4"><p className="font-semibold">Perawatan Manual</p><p className="mt-1 text-sm leading-6 text-muted-foreground">{maintenance.catatan || "Alasan perawatan manual tercatat pada data ini."}</p></div>
             )}
           </CardContent>
         </Card>
@@ -299,7 +299,7 @@ export function PerawatanShow() {
       {isStartable ? (
         <Card className="rounded-2xl border-primary/15 bg-primary/[0.025] shadow-sm lg:sticky lg:bottom-4">
           <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
-            <div><p className="font-semibold">Perawatan Direncanakan</p><p className="mt-1 text-sm leading-6 text-muted-foreground">Mulai pekerjaan untuk mengubah state menjadi Berjalan. Waktu mulai ditentukan server.</p></div>
+            <div><p className="font-semibold">Perawatan Direncanakan</p><p className="mt-1 text-sm leading-6 text-muted-foreground">Mulai pekerjaan untuk mengubah status menjadi Berjalan. Waktu mulai dicatat otomatis oleh sistem.</p></div>
             <Button className="h-12 rounded-xl sm:min-w-52" disabled={startMutation.isPending} onClick={() => startMutation.mutate()}>{startMutation.isPending ? "Memulai..." : "Mulai Perawatan"}<ArrowRight /></Button>
           </CardContent>
         </Card>
@@ -321,11 +321,11 @@ export function PerawatanShow() {
 
       {maintenance.status === "completed" ? (
         <Card className="rounded-2xl shadow-sm">
-          <CardHeader><CardTitle className="text-base">Verification</CardTitle><p className="text-sm text-muted-foreground">Completion bukan READY. Konfirmasi hasil pekerjaan melalui verification yang sah.</p></CardHeader>
+          <CardHeader><CardTitle className="text-base">Verifikasi</CardTitle><p className="text-sm text-muted-foreground">Penyelesaian pekerjaan belum membuat unit Siap Disewakan. Konfirmasi hasil pekerjaan melalui verifikasi yang sah.</p></CardHeader>
           <CardContent className="space-y-4">
-            <div className="rounded-2xl border bg-blue-50/50 p-4"><p className="font-semibold">Menunggu verifikasi kesiapan</p><p className="mt-1 text-sm leading-6 text-muted-foreground">Unit belum boleh dipresentasikan sebagai READY hanya karena maintenance completed.</p></div>
-            <Textarea value={verificationNote} onChange={(e) => setVerificationNote(e.target.value)} placeholder="Catatan hasil uji setelah maintenance" aria-label="Catatan verification" />
-            <div className="flex flex-col gap-2 sm:flex-row"><Button disabled={verificationMutation.isPending || unit.status !== "maintenance"} onClick={() => verificationMutation.mutate("passed")}>{verificationMutation.isPending ? "Memproses..." : "Verification Lulus"}</Button><Button variant="outline" disabled={verificationMutation.isPending || unit.status !== "maintenance"} onClick={() => verificationMutation.mutate("failed")}>Verification Gagal</Button><Button asChild variant="ghost"><Link to={paths.pemeriksaan + "?unit_id=" + encodeURIComponent(unit.unit_barang_id)}><ExternalLink />Buka Pemeriksaan</Link></Button></div>
+            <div className="rounded-2xl border bg-blue-50/50 p-4"><p className="font-semibold">Menunggu verifikasi kesiapan</p><p className="mt-1 text-sm leading-6 text-muted-foreground">Unit belum boleh ditampilkan sebagai Siap Disewakan hanya karena perawatan selesai.</p></div>
+            <Textarea value={verificationNote} onChange={(e) => setVerificationNote(e.target.value)} placeholder="Catatan hasil uji setelah perawatan" aria-label="Catatan verifikasi" />
+            <div className="flex flex-col gap-2 sm:flex-row"><Button disabled={verificationMutation.isPending || unit.status !== "maintenance"} onClick={() => verificationMutation.mutate("passed")}>{verificationMutation.isPending ? "Memproses..." : "Verifikasi Lulus"}</Button><Button variant="outline" disabled={verificationMutation.isPending || unit.status !== "maintenance"} onClick={() => verificationMutation.mutate("failed")}>Verifikasi Gagal</Button><Button asChild variant="ghost"><Link to={paths.pemeriksaan + "?unit_id=" + encodeURIComponent(unit.unit_barang_id)}><ExternalLink />Buka Pemeriksaan</Link></Button></div>
           </CardContent>
         </Card>
       ) : null}

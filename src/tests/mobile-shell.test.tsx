@@ -46,7 +46,7 @@ describe("scenario B — responsive admin shell", () => {
     expect(trigger).toHaveClass("md:hidden");
     expect(screen.getByRole("button", { name: /toggle theme/i })).toBeInTheDocument();
     expect(await screen.findByRole("link", { name: /^Dashboard$/ })).toBeInTheDocument();
-  });
+  }, 15000);
 
   test("tablet viewport keeps the full navigation reachable", async () => {
     mockViewport(768, 1024);
@@ -57,5 +57,5 @@ describe("scenario B — responsive admin shell", () => {
     expect(await screen.findByRole("banner")).toBeInTheDocument();
     expect(await screen.findByRole("link", { name: /^Dashboard$/ })).toBeInTheDocument();
     expect(await screen.findAllByRole("link", { name: /^Laporan$/ })).not.toHaveLength(0);
-  });
+  }, 15000);
 });

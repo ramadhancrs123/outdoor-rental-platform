@@ -85,7 +85,7 @@ describe("Perawatan trusted command service", () => {
       jenisPerawatan: "cleaning",
       deskripsiPekerjaan: "Pembersihan rutin",
       catatan: "   ",
-    })).rejects.toThrow(/Inspection Source wajib memiliki alasan/);
+    })).rejects.toThrow(/Perawatan tanpa mengacu pada Pemeriksaan wajib memiliki alasan/);
 
     expect(rpcMock).not.toHaveBeenCalled();
   });

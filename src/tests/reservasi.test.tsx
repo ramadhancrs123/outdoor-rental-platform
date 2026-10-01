@@ -110,7 +110,7 @@ describe("Reservasi read-side", () => {
     renderWithQuery(<RequestList />, "/permintaan");
     expect((await screen.findAllByText("REQ-001")).length).toBeGreaterThan(0);
     expect((screen.getAllByText("Ahmad Outdoor")).length).toBeGreaterThan(0);
-    expect(screen.getByText(/command aktif/i)).toBeInTheDocument();
+    expect(screen.getByText(/Aksi tersedia/i)).toBeInTheDocument();
   });
 
   test("request detail distinguishes unit preference from assignment", async () => {
@@ -278,8 +278,8 @@ describe("Reservasi read-side", () => {
     );
     expect(await screen.findByRole("heading", { level: 1, name: "RSV-001" })).toBeInTheDocument();
     expect(screen.getByText("Tenda Dome 4P")).toBeInTheDocument();
-    expect(screen.getByText("Payment", { exact: true })).toBeInTheDocument();
-    expect(screen.getByText(/Ownership tetap berada di Keuangan/i)).toBeInTheDocument();
+    expect(screen.getByText("Pembayaran", { exact: true })).toBeInTheDocument();
+    expect(screen.getByText(/Pembayaran tetap dikelola oleh Keuangan/i)).toBeInTheDocument();
 
   });
 });
@@ -343,7 +343,7 @@ describe("Reservasi reconciliation", () => {
 
     await waitFor(() => expect(serviceMock.confirmReservation).toHaveBeenCalledTimes(1));
     expect(await screen.findByText("Status transaksi sudah diperiksa", { exact: true })).toBeInTheDocument();
-    expect(await screen.findByText("Confirmed")).toBeInTheDocument();
+    expect(await screen.findByText("Dikonfirmasi")).toBeInTheDocument();
     expect(serviceMock.getReservation).toHaveBeenCalledTimes(2);
   });
 
@@ -380,7 +380,7 @@ describe("Reservasi reconciliation", () => {
 
     await waitFor(() => expect(serviceMock.cancelReservation).toHaveBeenCalledTimes(1));
     expect(await screen.findByText("Status transaksi sudah diperiksa", { exact: true })).toBeInTheDocument();
-    expect(await screen.findByText("Cancelled")).toBeInTheDocument();
+    expect(await screen.findByText("Dibatalkan")).toBeInTheDocument();
     expect(serviceMock.getReservation).toHaveBeenCalledTimes(2);
   });
   test("unknown confirm outcome never becomes a generic server error and exposes reconciliation", async () => {

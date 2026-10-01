@@ -5,7 +5,7 @@ import { ErrorComponent } from "@/components/refine-ui/layout/error-component";
 import { Layout } from "@/components/refine-ui/layout/layout";
 import { Login } from "@/pages/login";
 import { Dashboard } from "@/pages/dashboard";
-import { InventoryCreate, InventoryList, InventoryShow } from "@/pages/inventaris";
+import { InventoryCreate, InventoryList, InventoryLocations, InventoryShow } from "@/pages/inventaris";
 import { CatalogEdit, CatalogList, CatalogManage, CatalogShow } from "@/pages/katalog";
 import { RenterCreate, RenterList, RenterShow } from "@/pages/penyewa";
 import { PemasokList, PemasokShow } from "@/pages/pemasok";
@@ -46,6 +46,7 @@ export function AppRoutes() {
         <Route path={paths.inventaris}>
           <Route index element={<InventoryList />} />
           <Route path="create" element={<InventoryCreate />} />
+          <Route path="lokasi" element={<InventoryLocations />} />
           <Route path=":id" element={<InventoryShow />} />
         </Route>
 

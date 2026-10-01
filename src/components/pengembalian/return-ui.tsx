@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import type { ReturnQueueItem, ReturnUnitRow, ReturnWorkspace } from "@/features/pengembalian";
+import { RentalTimingSummary } from "@/components/penyewaan/rental-timing";
 import { formatReturnDateTime, semanticReturnLabel } from "@/features/pengembalian";
 
 export type ReturnDueState = ReturnQueueItem["due_state"];
@@ -143,6 +144,13 @@ export function ReturnQueueCard({
           </div>
         </div>
 
+        <RentalTimingSummary
+          scheduleAt={item.jadwal_kembali}
+          toleranceDeadline={item.tolerance_deadline}
+          compact
+          refreshMs={30_000}
+        />
+
         <div className="flex items-center justify-between gap-2">
           <ReturnDueBadge state={item.due_state} />
           <Button asChild className="min-h-10 rounded-xl px-4">
@@ -219,7 +227,7 @@ export function ReturnHistoryTimeline({ workspace }: { workspace: ReturnWorkspac
     return (
       <div className="flex min-h-36 flex-col items-center justify-center rounded-2xl border border-dashed text-center">
         <History className="size-6 text-muted-foreground" aria-hidden="true" />
-        <p className="mt-2 font-medium">Belum ada return tercatat</p>
+        <p className="mt-2 font-medium">Belum ada pengembalian tercatat</p>
         <p className="mt-1 text-sm text-muted-foreground">Riwayat akan muncul setelah pengembalian dicatat.</p>
       </div>
     );
@@ -246,7 +254,7 @@ export function ReturnHistoryTimeline({ workspace }: { workspace: ReturnWorkspac
             <Separator className="my-3" />
             <div className="grid gap-2 text-sm sm:grid-cols-3">
               <div><p className="text-[11px] text-muted-foreground">Unit diterima</p><p className="mt-1 font-medium">{record.detailIds.length} unit</p></div>
-              <div><p className="text-[11px] text-muted-foreground">Operator</p><p className="mt-1 font-medium">{record.diproses_by_admin_id}</p></div>
+              <div><p className="text-[11px] text-muted-foreground">Admin</p><p className="mt-1 font-medium">{record.diproses_by_admin_id}</p></div>
               <div><p className="text-[11px] text-muted-foreground">Catatan</p><p className="mt-1 font-medium">{record.catatan ?? "—"}</p></div>
             </div>
           </div>
@@ -322,7 +330,7 @@ export function ReturnConfirmationDialog({
         <div className="space-y-4">
           <div className="rounded-2xl border bg-muted/20 p-4">
             <div className="grid gap-3 sm:grid-cols-2">
-              <div><p className="text-[11px] text-muted-foreground">Rental</p><p className="mt-1 font-semibold">{workspace.rental.nomor_penyewaan}</p></div>
+              <div><p className="text-[11px] text-muted-foreground">Penyewaan</p><p className="mt-1 font-semibold">{workspace.rental.nomor_penyewaan}</p></div>
               <div><p className="text-[11px] text-muted-foreground">Penyewa</p><p className="mt-1 font-semibold">{workspace.renter?.nama_lengkap ?? "—"}</p></div>
             </div>
           </div>
@@ -350,7 +358,7 @@ export function ReturnConfirmationDialog({
           </div>
 
           <ReturnStateNotice tone="info" title="Setelah pengembalian dicatat">
-            Unit yang diterima masuk ke tahap pemeriksaan. Pengembalian tidak otomatis membuat unit READY dan tidak mengubah jadwal rental.
+            Unit yang diterima masuk ke tahap pemeriksaan. Pengembalian tidak otomatis membuat unit menjadi Siap Disewakan dan tidak mengubah jadwal penyewaan.
           </ReturnStateNotice>
 
           <div className="grid gap-2 sm:grid-cols-2">
@@ -417,7 +425,7 @@ export function ReturnQrDialog({
         }).BarcodeDetector;
         if (!Detector) {
           setCameraState("unsupported");
-          setScanMessage("Kamera aktif. Browser ini belum menyediakan QR decoding otomatis. Gunakan identifier manual.");
+          setScanMessage("Kamera aktif. Browser ini belum menyediakan QR decoding otomatis. Gunakan kode QR secara manual.");
           return;
         }
         setCameraState("active");
@@ -440,7 +448,7 @@ export function ReturnQrDialog({
         rafRef.current = requestAnimationFrame(scan);
       } catch {
         setCameraState("denied");
-        setScanMessage("Kamera tidak dapat diakses. Izinkan kamera atau gunakan identifier manual.");
+        setScanMessage("Kamera tidak dapat diakses. Izinkan kamera atau gunakan kode QR manual.");
       }
     };
     void start();
@@ -452,7 +460,7 @@ export function ReturnQrDialog({
       <DialogContent className="overflow-hidden rounded-3xl p-0 sm:max-w-lg">
         <div className="border-b px-5 py-4">
           <DialogTitle>Pindai QR Unit</DialogTitle>
-          <DialogDescription>QR hanya shortcut untuk menemukan unit. Validasi rental tetap dilakukan oleh server.</DialogDescription>
+          <DialogDescription>QR hanya cara cepat menemukan unit. Validasi penyewaan tetap dilakukan oleh sistem.</DialogDescription>
         </div>
 
         <div className="p-5">
@@ -471,12 +479,12 @@ export function ReturnQrDialog({
 
           {cameraState === "denied" ? (
             <ReturnStateNotice tone="warning" title="Kamera tidak tersedia">
-              Izinkan akses kamera untuk memindai QR. Anda tetap dapat menggunakan identifier manual tanpa mengubah konteks rental.
+              Izinkan akses kamera untuk memindai QR. Anda tetap dapat memasukkan kode QR secara manual tanpa mengubah penyewaan.
             </ReturnStateNotice>
           ) : null}
           {cameraState === "unsupported" ? (
-            <ReturnStateNotice tone="info" title="Gunakan identifier manual">
-              Browser ini belum mendukung QR decoding otomatis pada halaman ini. Scanner tetap dapat digunakan sebagai shortcut melalui input manual.
+            <ReturnStateNotice tone="info" title="Masukkan kode QR manual">
+              Browser ini belum mendukung QR decoding otomatis pada halaman ini. Anda tetap dapat memasukkan kode QR unit secara manual.
             </ReturnStateNotice>
           ) : null}
 
@@ -490,8 +498,8 @@ export function ReturnQrDialog({
             <Input
               value={manual}
               onChange={(event) => setManual(event.target.value)}
-              placeholder="Kode / identifier QR unit"
-              aria-label="Identifier QR unit"
+              placeholder="Kode QR unit"
+              aria-label="Kode QR unit"
               onKeyDown={(event) => {
                 if (event.key === "Enter" && manual.trim()) {
                   onResolved(manual.trim());
@@ -580,17 +588,17 @@ export function SuccessReturnPanel({
           </div>
           <div className="w-full max-w-md rounded-2xl border bg-muted/20 p-4 text-left">
             <div className="grid gap-3 sm:grid-cols-2">
-              <div><p className="text-[11px] text-muted-foreground">No. Return</p><p className="mt-1 font-semibold">{returnNumber}</p></div>
-              <div><p className="text-[11px] text-muted-foreground">No. Rental</p><p className="mt-1 font-semibold">{workspace.rental.nomor_penyewaan}</p></div>
+              <div><p className="text-[11px] text-muted-foreground">No. Pengembalian</p><p className="mt-1 font-semibold">{returnNumber}</p></div>
+              <div><p className="text-[11px] text-muted-foreground">No. Penyewaan</p><p className="mt-1 font-semibold">{workspace.rental.nomor_penyewaan}</p></div>
               <div><p className="text-[11px] text-muted-foreground">Unit diterima</p><p className="mt-1 font-semibold">{returnedCount} unit</p></div>
               <div><p className="text-[11px] text-muted-foreground">Waktu penerimaan</p><p className="mt-1 font-semibold">{formatReturnDateTime(receivedAt)}</p></div>
             </div>
           </div>
           <ReturnStateNotice tone="info" title="Langkah berikutnya">
-            Mulai Pemeriksaan menjadi workflow berikutnya. Pengembalian tidak otomatis membuat unit READY.
+            Mulai Pemeriksaan menjadi proses berikutnya. Pengembalian tidak otomatis membuat unit menjadi Siap Disewakan.
           </ReturnStateNotice>
           <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
-            <Button className="h-11 min-w-44 rounded-xl" onClick={onOpenDetail}>Lihat Detail Return</Button>
+            <Button className="h-11 min-w-44 rounded-xl" onClick={onOpenDetail}>Lihat Detail Pengembalian</Button>
             <Button variant="outline" className="h-11 rounded-xl" onClick={onBack}>Kembali ke Daftar</Button>
           </div>
         </CardContent>

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { ReturnList } from "@/pages/pengembalian/list";
@@ -92,6 +92,7 @@ describe("Pengembalian read/mutation UI", () => {
     });
 
     renderWithQuery(<ReturnList />);
+    await waitFor(() => expect(serviceMock.listReturnQueue).toHaveBeenCalled(), { timeout: 10_000 });
     expect((await screen.findAllByText("RNT-2026-001")).length).toBeGreaterThan(0);
     expect(screen.getAllByText("1 / 3").length).toBeGreaterThan(0);
     expect(screen.getAllByRole("link", { name: /Proses/i }).length).toBeGreaterThan(0);
@@ -133,7 +134,7 @@ describe("Pengembalian read/mutation UI", () => {
     expect(screen.getByText("08123456789")).toBeInTheDocument();
     expect(screen.getAllByText("TD4P-002").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Sudah diterima").length).toBeGreaterThan(0);
-    expect(screen.getByText(/Scheduled return dan actual return adalah fakta yang berbeda/i)).toBeInTheDocument();
+    expect(screen.getByText(/Jadwal pengembalian dan pengembalian aktual adalah fakta yang berbeda/i)).toBeInTheDocument();
   });
 
   test("explicit selection calls one trusted return mutation and clears selected units", async () => {
@@ -184,8 +185,8 @@ describe("Pengembalian read/mutation UI", () => {
     fireEvent.click(screen.getAllByRole("checkbox", { name: "Pilih unit TD4P-001" })[0]);
     fireEvent.click(screen.getByRole("button", { name: "Lanjut ke Konfirmasi" }));
     fireEvent.click(screen.getByRole("button", { name: "Terima Pengembalian" }));
-    expect(await screen.findByRole("button", { name: "Periksa Status Command" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Periksa Status Command" }));
+    expect(await screen.findByRole("button", { name: "Periksa Status Tindakan" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Periksa Status Tindakan" }));
     expect(await screen.findByText("Pengembalian Berhasil Dicatat")).toBeInTheDocument();
     expect(serviceMock.processUnitReturn).toHaveBeenCalledTimes(1);
     expect(serviceMock.reconcileReturnCommand).toHaveBeenCalledTimes(1);

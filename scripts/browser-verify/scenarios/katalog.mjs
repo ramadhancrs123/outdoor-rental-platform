@@ -17,7 +17,7 @@ export default async function katalogScenario({ page, baseURL, capture }) {
   await page.getByText("Tidak ada produk yang cocok", { exact: true }).waitFor({ state: "visible", timeout: 15000 });
   await capture("catalog-list-empty-filter");
 
-  await page.getByRole("button", { name: "Reset", exact: true }).click();
+  await page.getByRole("button", { name: "Atur Ulang", exact: true }).click();
   await page.getByRole("heading", { name: "Katalog", exact: true }).waitFor({ state: "visible", timeout: 15000 });
   await capture("catalog-list");
 
@@ -52,7 +52,7 @@ export default async function katalogScenario({ page, baseURL, capture }) {
   await page.getByText("Informasi produk", { exact: true }).waitFor({ state: "visible", timeout: 15000 });
   await capture("catalog-detail");
 
-  await page.getByRole("link", { name: /Edit Produk/i }).click();
+  await page.getByRole("link", { name: /Ubah Barang/i }).click();
   await page.waitForURL(/\/katalog\/edit\/[^/]+$/, { timeout: 10000 });
   await waitApp();
   await page.getByText("Katalog · Edit Produk", { exact: true }).waitFor({ state: "visible", timeout: 15000 });

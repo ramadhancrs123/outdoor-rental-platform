@@ -68,7 +68,7 @@ function classifyCommandError(error: unknown): Exclude<CommandFeedback, null> {
   if (message.includes("permission") || message.includes("forbidden") || message.includes("not authorized") || message.includes("otorisasi")) {
     return { kind: "authorization", message: "Perintah tidak dapat dilakukan pada konteks Usaha atau akun admin saat ini." };
   }
-  return { kind: "unknown", message: "Status transaksi belum dapat dipastikan. Sistem sudah membaca ulang source of truth. Jangan kirim command kedua sebelum statusnya jelas." };
+  return { kind: "unknown", message: "Status transaksi belum dapat dipastikan. Sistem sudah membaca ulang data sumber. Jangan mengulang tindakan sebelum statusnya jelas." };
 }
 
 function statusCopy(status: string) {
@@ -125,7 +125,7 @@ export function ReservationShow() {
 
   const createRentalMutation = useMutation({
     mutationFn: async () => {
-      if (!rentalContext.data || !id) throw new Error("Konteks Rental belum siap.");
+      if (!rentalContext.data || !id) throw new Error("Konteks Penyewaan belum siap.");
       if (!rentalStart || !rentalEnd) throw new Error("Jadwal mulai dan jadwal kembali wajib diisi.");
       if (!rentalCommandContext.current) {
         rentalCommandContext.current = {
@@ -167,7 +167,7 @@ export function ReservationShow() {
           setRentalFeedback({ kind: "error", message: error instanceof Error ? error.message : "Pembuatan rental belum berhasil. Anda dapat mencoba lagi." });
           return;
         }
-        setRentalFeedback({ kind: "unknown", message: "Status pembuatan rental belum dapat dipastikan. Jangan kirim command kedua sebelum status direkonsiliasi." });
+        setRentalFeedback({ kind: "unknown", message: "Status pembuatan penyewaan belum dapat dipastikan. Jangan mengulang tindakan sebelum statusnya diperiksa." });
       } catch (reconciliationError) {
         setRentalFeedback({ kind: "unknown", message: reconciliationError instanceof Error ? reconciliationError.message : "Rekonsiliasi pembuatan rental gagal." });
       }
@@ -321,7 +321,7 @@ export function ReservationShow() {
         <div className="relative z-10 p-5 sm:p-6 lg:p-7">
           <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
             <div className="min-w-0">
-              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-primary/75">Reservasi · Commitment</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-primary/75">Reservasi</p>
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">{reservation.nomor_reservasi}</h1>
                 <ReservationStatusBadge status={reservation.status} />
@@ -348,11 +348,11 @@ export function ReservationShow() {
             <div className="grid gap-4 sm:grid-cols-3">
               <div className="flex items-start gap-3">
                 <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary"><CalendarDays className="size-4" /></div>
-                <div><p className="text-xs text-muted-foreground">Periode rental</p><p className="mt-1 text-sm font-semibold">{formatReservationDate(reservation.mulai_reservasi)} – {formatReservationDate(reservation.selesai_reservasi)}</p></div>
+                <div><p className="text-xs text-muted-foreground">Periode Penyewaan</p><p className="mt-1 text-sm font-semibold">{formatReservationDate(reservation.mulai_reservasi)} – {formatReservationDate(reservation.selesai_reservasi)}</p></div>
               </div>
               <div className="flex items-start gap-3">
                 <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-amber-100 text-amber-700 dark:bg-amber-950/35 dark:text-amber-300"><Package className="size-4" /></div>
-                <div><p className="text-xs text-muted-foreground">Item commitment</p><p className="mt-1 text-sm font-semibold">{reservation.detail_count} line barang</p></div>
+                <div><p className="text-xs text-muted-foreground">Rincian Reservasi</p><p className="mt-1 text-sm font-semibold">{reservation.detail_count} rincian barang</p></div>
               </div>
               <div className="flex items-start gap-3">
                 <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200"><Clock3 className="size-4" /></div>
@@ -389,7 +389,7 @@ export function ReservationShow() {
               <div className="grid size-9 place-items-center rounded-xl bg-primary/10 text-primary"><ShieldCheck className="size-4" /></div>
               <div>
                 <CardTitle className="text-base">Aksi Reservasi</CardTitle>
-                <p className="mt-1 text-xs text-muted-foreground">Command diproses oleh trusted transaction backend.</p>
+                <p className="mt-1 text-xs text-muted-foreground">Tindakan diproses oleh sistem transaksi yang aman.</p>
               </div>
             </div>
           </CardHeader>
@@ -398,18 +398,18 @@ export function ReservationShow() {
               <Drawer open={rentalOpen} onOpenChange={setRentalOpen}>
                 <div className="mb-3 flex flex-col gap-4 rounded-2xl border bg-primary/[0.03] p-4 sm:flex-row sm:items-center sm:justify-between">
                   <div className="min-w-0">
-                    <p className="font-semibold">Buat Rental dari Reservasi</p>
-                    <p className="mt-1 text-sm leading-5 text-muted-foreground">Masukkan waktu operasional rental secara eksplisit. Server akan menyalin detail reservation sebagai snapshot transaksi.</p>
+                    <p className="font-semibold">Buat Penyewaan dari Reservasi</p>
+                    <p className="mt-1 text-sm leading-5 text-muted-foreground">Masukkan waktu operasional penyewaan secara jelas. Sistem akan menyalin detail Reservasi sebagai bagian dari transaksi.</p>
                   </div>
                   <DrawerTrigger asChild>
                     <Button className="h-11 shrink-0 rounded-xl px-5" disabled={busy}>
-                      Buat Rental <ArrowRight className="size-4" />
+                      Buat Penyewaan <ArrowRight className="size-4" />
                     </Button>
                   </DrawerTrigger>
                 </div>
                 <DrawerContent className="rounded-t-3xl">
                   <DrawerHeader className="pb-3 text-left">
-                    <DrawerTitle className="text-xl">Buat Rental {reservation.nomor_reservasi}</DrawerTitle>
+                    <DrawerTitle className="text-xl">Buat Penyewaan {reservation.nomor_reservasi}</DrawerTitle>
                     <DrawerDescription>
                       Jadwal disimpan sebagai waktu rental sebenarnya dalam timezone Usaha. Konversi ke status active baru terjadi setelah assignment dan serah-terima selesai.
                     </DrawerDescription>
@@ -417,7 +417,7 @@ export function ReservationShow() {
                   <div className="space-y-4 px-4 pb-4 sm:px-6">
                     {rentalFeedback && (
                       <Alert variant={rentalFeedback.kind === "error" || rentalFeedback.kind === "unknown" ? "destructive" : "default"}>
-                        <AlertTitle>{rentalFeedback.kind === "unknown" ? "Status rental belum pasti" : rentalFeedback.kind === "success" ? "Rental sudah dibuat" : "Rental belum dibuat"}</AlertTitle>
+                        <AlertTitle>{rentalFeedback.kind === "unknown" ? "Status penyewaan belum pasti" : rentalFeedback.kind === "success" ? "Penyewaan sudah dibuat" : "Penyewaan belum dibuat"}</AlertTitle>
                         <AlertDescription>{rentalFeedback.message}</AlertDescription>
                       </Alert>
                     )}
@@ -436,7 +436,7 @@ export function ReservationShow() {
                       <p className="mt-1 text-muted-foreground">{rentalContext.data?.timezone ?? "Memuat timezone…"}</p>
                     </div>
                     <Button className="h-11 w-full" onClick={() => createRentalMutation.mutate()} disabled={busy || !rentalStart || !rentalEnd || rentalContext.isPending}>
-                      {createRentalMutation.isPending ? "Membuat rental…" : "Buat Rental"}
+                      {createRentalMutation.isPending ? "Membuat rental…" : "Buat Penyewaan"}
                     </Button>
                   </div>
                 </DrawerContent>
@@ -446,7 +446,7 @@ export function ReservationShow() {
               <div className="flex flex-col gap-4 rounded-2xl border bg-primary/[0.03] p-4 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0">
                   <p className="font-semibold">Konfirmasi Reservasi</p>
-                  <p className="mt-1 text-sm leading-5 text-muted-foreground">Server akan memeriksa state dan availability, lalu mengubah commitment menjadi Confirmed dan mengunci kapasitas bila berhasil.</p>
+                  <p className="mt-1 text-sm leading-5 text-muted-foreground">Sistem akan memeriksa status dan ketersediaan, lalu mengesahkan Reservasi dan mengunci stok bila berhasil.</p>
                 </div>
                 <Button className="h-11 shrink-0 rounded-xl px-5" onClick={() => confirmMutation.mutate()} disabled={busy}>
                   {confirmMutation.isPending ? "Mengonfirmasi…" : "Konfirmasi Reservasi"}
@@ -510,7 +510,7 @@ export function ReservationShow() {
         <Card className="shadow-sm">
           <CardHeader>
             <CardTitle className="text-base">Penyewa & Periode</CardTitle>
-            <p className="text-xs text-muted-foreground">Konteks commitment sebelum masuk ke workflow berikutnya.</p>
+            <p className="text-xs text-muted-foreground">Data Reservasi sebelum masuk ke proses berikutnya.</p>
           </CardHeader>
           <CardContent className="grid gap-5 sm:grid-cols-2">
             <InfoBlock icon={UserRound} label="Penyewa" value={reservation.penyewa_nama ?? "Penyewa tidak ditemukan"} />
@@ -522,17 +522,17 @@ export function ReservationShow() {
 
         <Card className="shadow-sm">
           <CardHeader>
-            <CardTitle className="text-base">Commitment & Lock</CardTitle>
-            <p className="text-xs text-muted-foreground">Stock lock bukan assignment unit fisik.</p>
+            <CardTitle className="text-base">Reservasi & Penguncian Stok</CardTitle>
+            <p className="text-xs text-muted-foreground">Penguncian stok bukan Penetapan Unit fisik.</p>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="rounded-xl border bg-muted/30 p-4">
-              <p className="text-xs text-muted-foreground">Stock lock</p>
+              <p className="text-xs text-muted-foreground">Penguncian Stok</p>
               <div className="mt-2"><StockLockBadge status={reservation.stock_lock_status} /></div>
             </div>
             <div className="rounded-xl border bg-muted/30 p-4">
-              <p className="text-xs text-muted-foreground">Physical unit</p>
-              <p className="mt-1 text-sm font-medium">Belum menjadi fakta assignment pada Reservasi.</p>
+              <p className="text-xs text-muted-foreground">Unit Barang</p>
+              <p className="mt-1 text-sm font-medium">Belum menjadi Penetapan Unit pada Reservasi.</p>
             </div>
           </CardContent>
         </Card>
@@ -582,16 +582,16 @@ export function ReservationShow() {
 
         <Card className="shadow-sm">
           <CardHeader>
-            <CardTitle className="text-base">Payment</CardTitle>
-            <p className="text-xs text-muted-foreground">Ownership tetap berada di Keuangan.</p>
+            <CardTitle className="text-base">Pembayaran</CardTitle>
+            <p className="text-xs text-muted-foreground">Pembayaran tetap dikelola oleh Keuangan.</p>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="rounded-2xl bg-muted/40 p-4">
-              <p className="text-sm font-medium">Tidak ada keputusan payment di Reservasi</p>
+              <p className="text-sm font-medium">Keputusan pembayaran dilakukan pada menu Keuangan</p>
               <p className="mt-1 text-sm leading-5 text-muted-foreground">Halaman ini tidak membuat, mengubah, atau menyimpulkan status pembayaran.</p>
             </div>
             <div className="rounded-xl border p-4 text-sm">
-              <p className="text-xs text-muted-foreground">Reservation value</p>
+              <p className="text-xs text-muted-foreground">Nilai Reservasi</p>
               <p className="mt-1 font-semibold">{formatReservationMoney(totalValue, primaryCurrency)}</p>
             </div>
           </CardContent>
@@ -631,12 +631,12 @@ export function ReservationShow() {
 
         <Card className="shadow-sm">
           <CardHeader>
-            <CardTitle className="text-base">Ownership Boundary</CardTitle>
+            <CardTitle className="text-base">Batas Pengelolaan Data</CardTitle>
             <p className="text-xs text-muted-foreground">Context agar action tetap berada pada domain yang benar.</p>
           </CardHeader>
           <CardContent className="space-y-3">
-            <BoundaryRow title="Reservasi" value="Commitment truth" active />
-            <BoundaryRow title="Inventaris" value="Physical unit truth" />
+            <BoundaryRow title="Reservasi" value="Fakta Reservasi" active />
+            <BoundaryRow title="Inventaris" value="Data Unit Barang" />
             <BoundaryRow title="Penyewaan" value="Usage truth" />
             <BoundaryRow title="Keuangan" value="Money truth" />
             <BoundaryRow title="Pemeriksaan" value="Condition truth" />
@@ -662,7 +662,7 @@ export function ReservationShow() {
 
       <Alert className="border-primary/10 bg-primary/[0.03]">
         <ShieldCheck className="size-4" />
-        <AlertTitle>{capabilities.mutation ? "Command aktif" : "Mode baca"}</AlertTitle>
+        <AlertTitle>{capabilities.mutation ? "Aksi tersedia" : "Mode baca"}</AlertTitle>
         <AlertDescription>{capabilities.reason}</AlertDescription>
       </Alert>
 
@@ -670,7 +670,7 @@ export function ReservationShow() {
         <div className="grid gap-2">
           {canPrepare && (
             <Button asChild className="h-11 rounded-xl">
-              <Link to={paths.penyewaan}>Siapkan Rental <ArrowRight className="size-4" /></Link>
+              <Link to={paths.penyewaan}>Siapkan Penyewaan <ArrowRight className="size-4" /></Link>
             </Button>
           )}
           {canConfirm && (

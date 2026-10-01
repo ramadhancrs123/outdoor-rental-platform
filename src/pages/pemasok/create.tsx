@@ -108,7 +108,7 @@ export function SupplierCreate() {
         setFeedback("");
         setMode("success");
       } else if (result.state === "not_found") {
-        setFeedback("Command tidak ditemukan. State terbaru dapat diperiksa sebelum mencoba kembali.");
+        setFeedback("Perubahan belum ditemukan. Status terbaru dapat diperiksa sebelum mencoba kembali.");
         commandRef.current = null;
         if (editing) {
           await existing.refetch();
@@ -117,7 +117,7 @@ export function SupplierCreate() {
           setMode("form");
         }
       } else {
-        setFeedback("Command masih belum dapat dipastikan. Jangan kirim command kedua.");
+        setFeedback("Hasil tindakan belum dapat dipastikan. Jangan kirim tindakan yang sama lagi.");
       }
     } catch (error) {
       setFeedback(errorMessage(error));
@@ -180,7 +180,7 @@ export function SupplierCreate() {
         <Button asChild variant="ghost" size="icon" className="-ml-2 rounded-xl" aria-label="Kembali ke pemasok"><Link to={paths.pemasok}><ArrowLeft /></Link></Button>
         <div className="min-w-0">
           <p className="text-xs text-muted-foreground">Pemasok</p>
-          <h1 className="text-[22px] font-bold tracking-tight">{editing ? "Edit Pemasok" : "Tambah Pemasok"}</h1>
+          <h1 className="text-[22px] font-bold tracking-tight">{editing ? "Ubah Pemasok" : "Tambah Pemasok"}</h1>
           <p className="mt-1 text-sm text-muted-foreground">{context.data.usahaNama}</p>
         </div>
       </header>

@@ -253,7 +253,7 @@ export function RenterCreate() {
               className="h-11 rounded-xl"
             />
             <p id="renter-phone-help" className="text-xs leading-5 text-muted-foreground">
-              Nomor akan dinormalisasi di backend untuk pencarian dan pencegahan duplikasi saat perubahan profil.
+              Nomor akan dinormalisasi di sistem untuk pencarian dan pencegahan duplikasi saat perubahan profil.
             </p>
             {fieldErrors.phone ? (
               <p id="renter-phone-error" className="text-xs text-destructive">

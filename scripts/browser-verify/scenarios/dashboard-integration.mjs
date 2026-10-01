@@ -5,13 +5,30 @@ export default async function dashboardIntegrationScenario({ page, capture }) {
   }
 
   await page.getByTestId("dashboard-root").waitFor({ state: "visible", timeout: 10000 });
-  await page.getByText("Perlu Perhatian").waitFor({ state: "visible", timeout: 15000 });
-  await page.getByRole("link", { name: /^Laporan$/i }).first().waitFor({ state: "visible", timeout: 10000 });
-  await page.getByRole("link", { name: /^Pemberitahuan$/i }).first().waitFor({ state: "visible", timeout: 10000 }).catch(() => {});
+
+  const viewportWidth = await page.evaluate(() => window.innerWidth);
+  const visibleTitle = (label) =>
+    page.locator('[data-slot="card-title"]:visible').filter({ hasText: label }).first();
+
+  const requiredSections =
+    viewportWidth <= 768
+      ? ["Perlu Tindakan", "Quick Action", "Today", "Current Rentals", "Returns", "Notifications"]
+      : ["Perlu Tindakan", "Agenda Hari Ini", "Quick Actions", "Operational Snapshot", "Inventory", "Finance", "Recent Activity"];
+
+  for (const label of requiredSections) {
+    await visibleTitle(label).waitFor({ state: "visible", timeout: 10000 });
+  }
+
+  await page.getByRole("link", { name: /^Buka Laporan$/i }).waitFor({ state: "visible", timeout: 10000 });
   await capture("dashboard-integration");
 
   return {
     state: "VERIFIED",
-    interaction: ["dashboard-loaded", "attention-surface-visible", "report-entry-visible", "notification-entry-optional"],
+    viewport: viewportWidth <= 768 ? "mobile" : "desktop",
+    interaction: [
+      "dashboard-loaded",
+      "required-dashboard-surfaces-visible",
+      "report-entry-visible",
+    ],
   };
 }

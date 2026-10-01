@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router";
 import { useCurrentUsaha } from "@/app/current-usaha-context";
-import { listNotifications, markAllNotificationsRead, markNotificationRead, resolveNotificationTarget } from "@/features/pemberitahuan/service";
+import { listNotifications, markAllNotificationsRead, markNotificationRead, resolveNotificationTarget, subscribeToAdminNotifications } from "@/features/pemberitahuan/service";
 import type { NotificationRecord } from "@/features/pemberitahuan/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -38,7 +38,16 @@ export function PemberitahuanList() {
 
   useEffect(() => {
     void load();
-  }, [load]);
+    if (!usahaId || !adminId) return;
+    const unsubscribe = subscribeToAdminNotifications(usahaId, adminId, () => {
+      void load();
+    });
+    const fallback = window.setInterval(() => void load(), 60_000);
+    return () => {
+      unsubscribe();
+      window.clearInterval(fallback);
+    };
+  }, [load, usahaId, adminId]);
 
   async function handleRead(notificationId: string) {
     if (!current) return;
@@ -64,7 +73,7 @@ export function PemberitahuanList() {
           <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">Sistem</p>
           <h1 className="mt-1 text-2xl font-bold tracking-tight">Pemberitahuan</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Attention layer untuk fakta bisnis yang sudah committed. Membuka notifikasi tidak mengubah source workflow.
+            Lapisan perhatian untuk aktivitas bisnis yang sudah tercatat. Membuka notifikasi tidak mengubah proses sumber.
           </p>
         </div>
         <div className="flex gap-2">

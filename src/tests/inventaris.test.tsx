@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { InventoryList } from "@/pages/inventaris/list";
@@ -64,6 +64,7 @@ describe("Inventaris read-side", () => {
   test("tenant-scoped list renders physical unit facts", async () => {
     serviceMock.getInventarisContext.mockResolvedValue(context); serviceMock.listInventoryLocations.mockResolvedValue([location]); serviceMock.listInventoryUnits.mockResolvedValue({ units: [unit], total: 1 });
     renderWithQuery(<InventoryList />);
+    await waitFor(() => expect(serviceMock.listInventoryUnits).toHaveBeenCalled(), { timeout: 10_000 });
     expect((await screen.findAllByText("TD4P-001")).length).toBeGreaterThan(0);
     expect(screen.getAllByText("Tenda Dome 4P").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Gudang Utama").length).toBeGreaterThan(0);
@@ -91,7 +92,7 @@ describe("Inventaris read-side", () => {
     render(<QueryClientProvider client={client}><MemoryRouter initialEntries={["/inventaris/unit-1"]}><Routes><Route path="/inventaris/:id" element={<InventoryShow />} /></Routes></MemoryRouter></QueryClientProvider>);
     expect(await screen.findByRole("heading", { level: 1, name: "TD4P-001" })).toBeInTheDocument();
     expect(screen.getByText("UNIT_REGISTERED")).toBeInTheDocument();
-    expect(screen.getByText("Tidak ada rental aktif")).toBeInTheDocument();
-    expect(screen.getAllByText(/Inventaris trusted command aktif/i).length).toBeGreaterThan(0);
+    expect(screen.getByText("Tidak ada penyewaan aktif")).toBeInTheDocument();
+    expect(screen.getAllByText(/Aksi Inventaris/i).length).toBeGreaterThan(0);
   });
 });

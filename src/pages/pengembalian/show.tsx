@@ -6,6 +6,8 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { RentalTimingSummary } from "@/components/penyewaan/rental-timing";
+import { ToleranceExtensionDialog } from "@/components/penyewaan/tolerance-extension-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   ReturnConfirmationDialog,
@@ -28,6 +30,7 @@ import {
   reconcileReturnCommand,
   semanticReturnLabel,
 } from "@/features/pengembalian";
+import { listRentalToleranceHistory } from "@/features/penyewaan";
 import type { ReturnWorkspace as ReturnWorkspaceData } from "@/features/pengembalian";
 import { deriveReturnDueState } from "@/features/pengembalian/utils";
 import { paths } from "@/routes/paths";
@@ -42,14 +45,14 @@ function mapReturnError(message: string) {
     return {
       kind: "unknown" as const,
       title: "Hasil Command Belum Dapat Dipastikan",
-      body: "Hasil pengembalian belum dapat dipastikan. Jangan kirim pengembalian kedua. Periksa status command untuk mengetahui state terbaru.",
+      body: "Hasil pengembalian belum dapat dipastikan. Jangan proses pengembalian kedua. Periksa status terbaru terlebih dahulu.",
     };
   }
   if (normalized.includes("STALE") || normalized.includes("BERUBAH SEJAK") || normalized.includes("UPDATED_AT")) {
     return {
       kind: "stale" as const,
       title: "Data Berubah Sejak Halaman Dibuka",
-      body: "State rental sudah berubah. Muat ulang data terbaru sebelum memproses pengembalian.",
+      body: "Status penyewaan sudah berubah. Muat ulang data terbaru sebelum memproses pengembalian.",
     };
   }
   if (normalized.includes("CONFLICT") || normalized.includes("SUDAH DIKEMBALIKAN") || normalized.includes("TIDAK LAGI TERKAIT")) {
@@ -70,14 +73,14 @@ function mapReturnError(message: string) {
     return {
       kind: "not_found" as const,
       title: "Data Tidak Ditemukan",
-      body: "Rental, unit, atau konteks tenant tidak lagi tersedia. Muat ulang untuk memeriksa state terbaru.",
+      body: "Penyewaan, unit, atau Usaha tidak lagi tersedia. Muat ulang untuk memeriksa status terbaru.",
     };
   }
   if (normalized.includes("NETWORK") || normalized.includes("FETCH") || normalized.includes("TIMEOUT")) {
     return {
       kind: "network" as const,
       title: "Koneksi Tidak Stabil",
-      body: "Permintaan tidak dapat dipastikan selesai. Jangan membuat command kedua sebelum state sumber kebenaran diverifikasi.",
+      body: "Tindakan belum dapat dipastikan selesai. Jangan mengulang sebelum status sumber datanya diverifikasi.",
     };
   }
   return {
@@ -124,6 +127,11 @@ export function ReturnShow() {
     queryFn: () => getReturnWorkspace(context.data!.usahaId, id!),
     enabled: Boolean(context.data?.usahaId && id),
     staleTime: 10_000,
+  });
+  const toleranceHistory = useQuery({
+    queryKey: ["pengembalian", "tolerance-history", context.data?.usahaId, id],
+    queryFn: () => listRentalToleranceHistory(context.data!.usahaId, id!),
+    enabled: Boolean(context.data?.usahaId && id),
   });
 
   const item = workspace.data;
@@ -209,12 +217,12 @@ export function ReturnShow() {
         await queryClient.invalidateQueries({ queryKey: ["inventaris"] });
       } else if (result.state === "not_found") {
         commandRef.current = null;
-        setUnknownFeedback("Tidak ditemukan commitment untuk command tersebut. Verifikasi state terbaru sebelum membuat command baru.");
+        setUnknownFeedback("Perubahan sebelumnya belum ditemukan. Periksa status terbaru sebelum membuat tindakan baru.");
       } else {
-        setUnknownFeedback("Command masih UNKNOWN_OUTCOME. Jangan mengirim command kedua.");
+        setUnknownFeedback("Hasil tindakan belum dapat dipastikan. Jangan mengulang tindakan.");
       }
     } catch {
-      setUnknownFeedback("Status command belum dapat diverifikasi. Jangan mengirim pengembalian kedua.");
+      setUnknownFeedback("Status tindakan belum dapat diverifikasi. Jangan mengulang pengembalian.");
     } finally {
       setReconciling(false);
     }
@@ -336,7 +344,7 @@ export function ReturnShow() {
       ) : null}
 
       {unknownFeedback ? (
-        <ReturnStateNotice tone="warning" title="Hasil command tidak diketahui" actionLabel={reconciling ? "Memeriksa…" : "Periksa Status Command"} onAction={() => void reconcile()}>
+        <ReturnStateNotice tone="warning" title="Hasil tindakan tidak diketahui" actionLabel={reconciling ? "Memeriksa…" : "Periksa Status Tindakan"} onAction={() => void reconcile()}>
           {unknownFeedback}
         </ReturnStateNotice>
       ) : null}
@@ -352,8 +360,8 @@ export function ReturnShow() {
           <CardHeader>
             <div className="flex items-start justify-between gap-3">
               <div>
-                <CardTitle className="text-base">Informasi Rental</CardTitle>
-                <p className="mt-1 text-sm text-muted-foreground">Scheduled return dan actual return adalah fakta yang berbeda.</p>
+                <CardTitle className="text-base">Informasi Penyewaan</CardTitle>
+                <p className="mt-1 text-sm text-muted-foreground">Jadwal pengembalian dan pengembalian aktual adalah fakta yang berbeda.</p>
               </div>
               <ReturnDueBadge state={dueState} />
             </div>
@@ -372,15 +380,15 @@ export function ReturnShow() {
               <p className="mt-1 font-semibold">{formatReturnDateTime(item.rental.tolerance_deadline)}</p>
             </div>
             <div className="rounded-2xl border bg-muted/20 p-4">
-              <p className="text-[11px] text-muted-foreground">Pickup aktual</p>
+              <p className="text-[11px] text-muted-foreground">Pengambilan Aktual</p>
               <p className="mt-1 font-semibold">{formatReturnDateTime(item.rental.actual_pickup_at)}</p>
             </div>
             <div className="rounded-2xl border bg-primary/[0.03] p-4">
-              <p className="text-[11px] text-muted-foreground">Actual return mulai</p>
+              <p className="text-[11px] text-muted-foreground">Pengembalian aktual dimulai</p>
               <p className="mt-1 font-semibold">{formatReturnDateTime(item.rental.actual_return_started_at)}</p>
             </div>
             <div className="rounded-2xl border bg-primary/[0.03] p-4">
-              <p className="text-[11px] text-muted-foreground">Actual return selesai</p>
+              <p className="text-[11px] text-muted-foreground">Pengembalian aktual selesai</p>
               <p className="mt-1 font-semibold">{formatReturnDateTime(item.rental.actual_return_completed_at)}</p>
             </div>
           </CardContent>
@@ -395,7 +403,7 @@ export function ReturnShow() {
               <p className="mt-1 text-sm text-muted-foreground">{item.renter?.nomor_telepon ?? "Nomor telepon tidak tersedia"}</p>
             </div>
             <div className="rounded-2xl border bg-muted/20 p-4">
-              <p className="text-[11px] text-muted-foreground">Nomor rental</p>
+              <p className="text-[11px] text-muted-foreground">Nomor Penyewaan</p>
               <p className="mt-1 font-semibold">{item.rental.nomor_penyewaan}</p>
             </div>
             <Button type="button" variant="outline" className="h-11 w-full rounded-xl" onClick={() => setQrOpen(true)}>
@@ -414,12 +422,36 @@ export function ReturnShow() {
         </CardContent>
       </Card>
 
+      <RentalTimingSummary
+        scheduleAt={item.rental.jadwal_kembali}
+        toleranceDeadline={item.rental.tolerance_deadline}
+        actualReturnAt={item.rental.actual_return_completed_at}
+      />
+
+      <div className="flex flex-wrap gap-2">
+        {item.rental.status === "active" || item.rental.status === "return_in_progress" ? (
+          <ToleranceExtensionDialog
+            usahaId={context.data.usahaId}
+            penyewaanId={item.rental.penyewaan_id}
+            currentDeadline={item.rental.tolerance_deadline}
+            history={toleranceHistory.data ?? []}
+            onSaved={async () => {
+              await Promise.all([workspace.refetch(), toleranceHistory.refetch()]);
+            }}
+          />
+        ) : null}
+      </div>
+
+      <ReturnStateNotice tone="info" title="Batas toleransi pengembalian">
+        {"Pengembalian pada penyewaan ini memiliki batas toleransi sampai " + formatReturnDateTime(item.rental.tolerance_deadline) + ". Batas ini hanya menjelaskan waktu toleransi; penerimaan tetap mencatat waktu aktual saat unit diterima."}
+      </ReturnStateNotice>
+
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
         <Card className="border-border/80 shadow-sm">
           <CardHeader>
             <CardTitle className="text-base">Pilih Unit yang Dikembalikan</CardTitle>
             <p className="text-sm text-muted-foreground">
-              Pilih hanya unit yang benar-benar sudah diterima. Selection bukan authorization; command server tetap memvalidasi konteks rental.
+              Pilih hanya unit yang benar-benar sudah diterima. Pemilihan unit bukan izin otomatis; sistem tetap memvalidasi konteks penyewaan.
             </p>
           </CardHeader>
           <CardContent>
@@ -432,7 +464,7 @@ export function ReturnShow() {
                     <th className="px-4 py-3 font-medium">Barang</th>
                     <th className="px-4 py-3 font-medium">Varian</th>
                     <th className="px-4 py-3 font-medium">Status Unit</th>
-                    <th className="px-4 py-3 font-medium">Status Return</th>
+                    <th className="px-4 py-3 font-medium">Status Pengembalian</th>
                     <th className="px-4 py-3 font-medium">Status Pemeriksaan</th>
                   </tr>
                 </thead>
@@ -456,7 +488,7 @@ export function ReturnShow() {
                         <td className="px-4 py-4">{unit.varian_nama ?? "—"}</td>
                         <td className="px-4 py-4"><Badge variant="secondary" className="rounded-full">{semanticReturnLabel(unit.unit_status)}</Badge></td>
                         <td className="px-4 py-4"><Badge variant={unit.returned ? "outline" : "secondary"} className="rounded-full">{unit.returned ? "Sudah diterima" : "Belum diterima"}</Badge></td>
-                        <td className="px-4 py-4"><Badge variant="outline" className="rounded-full">{unit.inspection_status ? semanticReturnLabel(unit.inspection_status) : "Menunggu return"}</Badge></td>
+                        <td className="px-4 py-4"><Badge variant="outline" className="rounded-full">{unit.inspection_status ? semanticReturnLabel(unit.inspection_status) : "Menunggu pengembalian"}</Badge></td>
                       </tr>
                     );
                   })}
@@ -478,7 +510,7 @@ export function ReturnShow() {
 
             {!item.units.length ? (
               <div className="flex min-h-40 flex-col items-center justify-center rounded-2xl border border-dashed text-center">
-                <p className="font-medium">Belum ada unit pada rental ini</p>
+                <p className="font-medium">Belum ada unit pada penyewaan ini</p>
                 <p className="mt-1 text-sm text-muted-foreground">Tidak ada unit fisik yang dapat diproses di workspace ini.</p>
               </div>
             ) : null}
@@ -496,7 +528,7 @@ export function ReturnShow() {
             </div>
             <div className="text-sm">
               <p className="font-medium">{outstandingUnits.length} unit masih outstanding</p>
-              <p className="mt-1 text-xs text-muted-foreground">Hanya unit yang dipilih akan dikirim ke trusted command.</p>
+              <p className="mt-1 text-xs text-muted-foreground">Hanya unit yang dipilih yang akan diproses oleh sistem.</p>
             </div>
             <Button
               type="button"
@@ -508,7 +540,7 @@ export function ReturnShow() {
               <ArrowRight />
             </Button>
             <ReturnStateNotice tone="info" title="Waktu server">
-              Waktu actual return ditentukan server. Return tidak memperpanjang rental dan tidak menetapkan unit READY.
+              Waktu pengembalian aktual dicatat otomatis oleh sistem. Pengembalian tidak memperpanjang penyewaan dan tidak menetapkan unit menjadi Siap Disewakan.
             </ReturnStateNotice>
             <p className="text-[11px] leading-5 text-muted-foreground">{capabilities.reason}</p>
           </CardContent>
@@ -519,7 +551,7 @@ export function ReturnShow() {
         <Card className="border-border/80 shadow-sm">
           <CardHeader><CardTitle className="text-base">Catatan Penerimaan</CardTitle></CardHeader>
           <CardContent>
-            <p className="mb-2 text-sm text-muted-foreground">Catatan serah-terima / penerimaan, bukan temuan damage atau keputusan maintenance.</p>
+            <p className="mb-2 text-sm text-muted-foreground">Catatan serah-terima / penerimaan, bukan temuan kerusakan atau keputusan perawatan.</p>
             <textarea
               value={note}
               onChange={(event) => setNote(event.target.value)}
@@ -532,18 +564,37 @@ export function ReturnShow() {
         </Card>
 
         <Card id="return-history" className="border-border/80 shadow-sm">
-          <CardHeader><CardTitle className="text-base">Inspection Handoff</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="text-base">Diserahkan ke Pemeriksaan</CardTitle></CardHeader>
           <CardContent className="space-y-3">
-            <ReturnStateNotice tone="info" title="Setelah return">
-              Unit yang diterima masuk ke tahap pemeriksaan. Return menyediakan context; hasil inspection tetap dimiliki modul Pemeriksaan.
+            <ReturnStateNotice tone="info" title="Setelah Pengembalian">
+              Unit yang diterima masuk ke tahap pemeriksaan. Pengembalian menyediakan konteks awal; Pemeriksaan dilanjutkan langsung dari halaman ini.
             </ReturnStateNotice>
-            {returnedCount > 0 ? (
-              <Button asChild variant="outline" className="h-11 w-full rounded-xl">
-                <Link to={paths.pemeriksaan + "?unit_id=" + item.units.find((unit) => unit.returned)?.unit_barang_id}>
-                  Mulai Pemeriksaan
-                  <ArrowRight />
-                </Link>
-              </Button>
+            {item.units.filter((unit) => unit.returned && unit.detail_pengembalian_id).length ? (
+              <div className="space-y-2">
+                {item.units
+                  .filter((unit) => unit.returned && unit.detail_pengembalian_id)
+                  .map((unit) => (
+                    <Link
+                      key={unit.detail_pengembalian_id}
+                      to={paths.pemeriksaan + "/" + unit.detail_pengembalian_id}
+                      className="flex items-center justify-between gap-3 rounded-2xl border p-3 transition-colors hover:bg-accent/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      <div className="min-w-0">
+                        <p className="font-semibold">{unit.kode_unit}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {unit.barang_nama ?? "Barang"}{unit.varian_nama ? " · " + unit.varian_nama : ""}
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {unit.inspection_status === "in_progress" ? "Pemeriksaan sedang dikerjakan" : "Siap diperiksa"}
+                        </p>
+                      </div>
+                      <span className="inline-flex shrink-0 items-center gap-1 text-sm font-semibold text-primary">
+                        {unit.inspection_status === "in_progress" ? "Lanjutkan" : "Periksa"}
+                        <ArrowRight className="size-4" />
+                      </span>
+                    </Link>
+                  ))}
+              </div>
             ) : null}
           </CardContent>
         </Card>

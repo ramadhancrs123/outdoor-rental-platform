@@ -100,17 +100,17 @@ export function PaymentCreate() {
       } catch {
         // Keep unknown outcome state. Never blind retry.
       }
-      setFeedback("Permintaan telah dikirim, namun hasil transaksi belum dapat dipastikan. Sistem akan membaca kembali source of truth sebelum ada pengiriman ulang.");
+      setFeedback("Permintaan telah dikirim, namun hasil transaksi belum dapat dipastikan. Sistem akan membaca kembali data sumber sebelum ada pengiriman ulang.");
       setMode("unknown");
     },
   });
 
   if (mode === "processing") {
-    return <FinanceStateScreen icon={Clock3} tone="warning" title="Memproses Pembayaran" description="Mohon jangan menutup halaman ini. Sistem sedang mencatat pembayaran dan financial transaction." primary={<div className="space-y-3 text-left">{["Validasi data", "Menyimpan pembayaran", "Membuat transaksi keuangan", "Finalisasi"].map((label, index) => <div key={label} className="flex items-center gap-3 text-sm"><span className={index < 2 ? "grid size-7 place-items-center rounded-full bg-emerald-50 text-emerald-700" : "grid size-7 place-items-center rounded-full border bg-card text-muted-foreground"}>{index < 2 ? <Check className="size-3.5" /> : <span className="size-2 rounded-full bg-muted-foreground/30" />}</span><span>{label}</span></div>)}</div>} />;
+    return <FinanceStateScreen icon={Clock3} tone="warning" title="Memproses Pembayaran" description="Mohon jangan menutup halaman ini. Sistem sedang mencatat pembayaran dan transaksi keuangan." primary={<div className="space-y-3 text-left">{["Validasi data", "Menyimpan pembayaran", "Membuat transaksi keuangan", "Finalisasi"].map((label, index) => <div key={label} className="flex items-center gap-3 text-sm"><span className={index < 2 ? "grid size-7 place-items-center rounded-full bg-emerald-50 text-emerald-700" : "grid size-7 place-items-center rounded-full border bg-card text-muted-foreground"}>{index < 2 ? <Check className="size-3.5" /> : <span className="size-2 rounded-full bg-muted-foreground/30" />}</span><span>{label}</span></div>)}</div>} />;
   }
 
   if (mode === "success") {
-    return <FinanceStateScreen icon={Check} tone="success" title="Pembayaran Berhasil Dicatat" description="Pembayaran telah dicatat dan financial transaction dibuat. Status domain lain tetap mengikuti owner masing-masing." primary={<Button className="h-12 rounded-xl" onClick={() => result?.id ? navigate(paths.keuangan + "/pembayaran/" + result.id) : navigate(paths.keuangan + "/pembayaran")}>Lihat Detail Pembayaran <ArrowRight /></Button>} secondary={<Button variant="outline" className="h-12 rounded-xl" onClick={() => navigate(paths.keuangan + "/pembayaran")}>Kembali ke Pembayaran</Button>} />;
+    return <FinanceStateScreen icon={Check} tone="success" title="Pembayaran Berhasil Dicatat" description="Pembayaran telah dicatat dan transaksi keuangan dibuat. Status domain lain tetap mengikuti owner masing-masing." primary={<Button className="h-12 rounded-xl" onClick={() => result?.id ? navigate(paths.keuangan + "/pembayaran/" + result.id) : navigate(paths.keuangan + "/pembayaran")}>Lihat Detail Pembayaran <ArrowRight /></Button>} secondary={<Button variant="outline" className="h-12 rounded-xl" onClick={() => navigate(paths.keuangan + "/pembayaran")}>Kembali ke Pembayaran</Button>} />;
   }
 
   if (mode === "conflict") {
@@ -118,7 +118,7 @@ export function PaymentCreate() {
   }
 
   if (mode === "unknown") {
-    return <FinanceStateScreen icon={CircleAlert} tone="warning" title="Status Transaksi Belum Dapat Dipastikan" description={feedback || "Sistem sedang memeriksa kembali status pencatatan."} primary={<Button className="h-12 rounded-xl" onClick={() => { setMode("form"); setStep(3); }}>Cek Status</Button>} secondary={<Button variant="outline" className="h-12 rounded-xl" onClick={() => { setMode("form"); setStep(3); }}>Kembali ke Review</Button>} />;
+    return <FinanceStateScreen icon={CircleAlert} tone="warning" title="Status Transaksi Belum Dapat Dipastikan" description={feedback || "Sistem sedang memeriksa kembali status pencatatan."} primary={<Button className="h-12 rounded-xl" onClick={() => { setMode("form"); setStep(3); }}>Cek Status</Button>} secondary={<Button variant="outline" className="h-12 rounded-xl" onClick={() => { setMode("form"); setStep(3); }}>Kembali ke Tinjauan</Button>} />;
   }
 
   if (context.isPending) return <FinanceShell title="Catat Pembayaran"><Card><CardContent className="min-h-72 animate-pulse" /></Card></FinanceShell>;
@@ -138,7 +138,7 @@ export function PaymentCreate() {
 
       {step === 1 ? (
         <div className="space-y-4">
-          <section className="space-y-1"><h2 className="text-base font-semibold">Pilih Sumber Pembayaran</h2><p className="text-xs text-muted-foreground">Payment harus memiliki tepat satu source: Reservasi atau Penyewaan.</p></section>
+          <section className="space-y-1"><h2 className="text-base font-semibold">Pilih Sumber Pembayaran</h2><p className="text-xs text-muted-foreground">Pembayaran harus terkait tepat satu sumber: Reservasi atau Penyewaan.</p></section>
           <div className="grid grid-cols-2 gap-2 rounded-2xl border bg-card p-1.5 shadow-sm">
             {(["reservation", "rental"] as const).map((type) => <button key={type} type="button" onClick={() => { setSourceType(type); setSelected(null); }} className={cn("min-h-11 rounded-xl px-4 text-sm font-semibold", sourceType === type ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-muted")}>{type === "reservation" ? "Reservasi" : "Penyewaan"}</button>)}
           </div>
@@ -150,7 +150,7 @@ export function PaymentCreate() {
 
       {step === 2 ? (
         <div className="space-y-4">
-          <section className="space-y-1"><h2 className="text-base font-semibold">Detail Pembayaran</h2><p className="text-xs text-muted-foreground">Masukkan fakta payment yang akan dicatat.</p></section>
+          <section className="space-y-1"><h2 className="text-base font-semibold">Detail Pembayaran</h2><p className="text-xs text-muted-foreground">Masukkan data pembayaran yang akan dicatat.</p></section>
           {selected ? <SourcePreview type={selected.type === "reservation" ? "Reservasi" : "Penyewaan"} number={selected.number} renter={selected.renterName} period={selected.period} meta={selected.meta} /> : null}
           <Card className="shadow-sm"><CardContent className="space-y-4 p-4">
             <FieldSelect label="Jenis Pembayaran" value={form.jenis} options={paymentKinds} onChange={(v) => setForm((c) => ({ ...c, jenis: v as RecordPaymentInput["jenis"] }))} />
@@ -167,14 +167,14 @@ export function PaymentCreate() {
 
       {step === 3 ? (
         <div className="space-y-4">
-          <section className="space-y-1"><h2 className="text-base font-semibold">Review Pembayaran</h2><p className="text-xs text-muted-foreground">Periksa fakta sebelum mengirim command.</p></section>
+          <section className="space-y-1"><h2 className="text-base font-semibold">Tinjauan Pembayaran</h2><p className="text-xs text-muted-foreground">Periksa data sebelum menyimpan.</p></section>
           <Card className="shadow-sm"><CardContent className="space-y-4 p-4">{selected ? <SourcePreview type={selected.type === "reservation" ? "Reservasi" : "Penyewaan"} number={selected.number} renter={selected.renterName} period={selected.period} meta={selected.meta} /> : null}<div className="grid gap-3 rounded-2xl bg-muted/40 p-4 sm:grid-cols-2"><ReviewRow label="Jenis Pembayaran" value={paymentKinds.find(([key]) => key === form.jenis)?.[1] ?? form.jenis} /><ReviewRow label="Metode" value={methods.find(([key]) => key === form.metode)?.[1] ?? form.metode} /><ReviewRow label="Waktu Pembayaran" value={form.dibayarAt ?? "-"} /><ReviewRow label="Reference" value={form.referenceText || "-"} /></div><SeparatorLine /><AmountDisplay amount={form.amount} label="Total Pembayaran" /></CardContent></Card>
-          <Alert className="border-primary/10 bg-primary/[0.03]"><ShieldCheck className="size-4" /><AlertTitle>Payment → Financial Transaction</AlertTitle><AlertDescription>Pencatatan pembayaran akan membuat fakta payment dan financial transaction. Status Reservasi atau Penyewaan tetap dimiliki modulnya.</AlertDescription></Alert>
+          <Alert className="border-primary/10 bg-primary/[0.03]"><ShieldCheck className="size-4" /><AlertTitle>Pembayaran → Transaksi Keuangan</AlertTitle><AlertDescription>Pencatatan pembayaran akan menyimpan pembayaran dan transaksi keuangan. Status Reservasi atau Penyewaan tetap dikelola pada menu masing-masing.</AlertDescription></Alert>
           <StickyFinanceAction><Button className="h-12 w-full rounded-xl" disabled={mutation.isPending || !capabilities.mutation} onClick={() => mutation.mutate()}>{mutation.isPending ? "Mencatat Pembayaran…" : "Catat Pembayaran"} <Check /></Button></StickyFinanceAction>
         </div>
       ) : null}
 
-      <div className="flex items-center justify-center gap-2 pt-4 text-[10px] text-muted-foreground"><ShieldCheck className="size-3.5" />Tenant-scoped · idempotent · reconciliable</div>
+      <div className="flex items-center justify-center gap-2 pt-4 text-[10px] text-muted-foreground"><ShieldCheck className="size-3.5" />Untuk Usaha aktif</div>
     </FinanceShell>
   );
 }

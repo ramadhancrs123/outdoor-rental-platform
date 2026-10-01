@@ -90,7 +90,7 @@ function AssignmentTargetRow({
           commandRef.current = null;
           return;
         }
-        setFeedback({ kind: "unknown", message: "Status assignment belum dapat dipastikan. Periksa data rental sebelum mengirim command lagi." });
+        setFeedback({ kind: "unknown", message: "Status penetapan unit belum dapat dipastikan. Periksa data penyewaan sebelum mencoba lagi." });
       } catch (reconciliationError) {
         setFeedback({ kind: "unknown", message: reconciliationError instanceof Error ? reconciliationError.message : "Rekonsiliasi assignment gagal." });
       }
@@ -128,9 +128,9 @@ function AssignmentTargetRow({
             className="h-9 rounded-md border bg-background px-3 text-sm"
             value={note}
             onChange={(event) => setNote(event.target.value)}
-            placeholder="Catatan assignment (opsional)"
+            placeholder="Catatan Penetapan Unit (opsional)"
             disabled={mutation.isPending}
-            aria-label="Catatan assignment"
+            aria-label="Catatan Penetapan Unit"
           />
           <Button onClick={() => mutation.mutate()} disabled={!selectedUnit || mutation.isPending || units.isPending}>
             {mutation.isPending ? "Menyimpan…" : "Tetapkan Unit"}
@@ -140,7 +140,7 @@ function AssignmentTargetRow({
       {feedback && (
         <Alert className="mt-3" variant={feedback.kind === "error" || feedback.kind === "unknown" ? "destructive" : "default"}>
           {feedback.kind === "success" ? <CheckCircle2 /> : <AlertTriangle />}
-          <AlertTitle>{feedback.kind === "unknown" ? "Status belum pasti" : feedback.kind === "success" ? "Assignment tersimpan" : "Assignment belum selesai"}</AlertTitle>
+          <AlertTitle>{feedback.kind === "unknown" ? "Status belum pasti" : feedback.kind === "success" ? "Penetapan Unit tersimpan" : "Penetapan Unit belum selesai"}</AlertTitle>
           <AlertDescription>{feedback.message}</AlertDescription>
         </Alert>
       )}
@@ -210,7 +210,7 @@ export function RentalPhase2Actions({
     onSuccess: async () => {
       handoverRef.current = null;
       setHandoverNote("");
-      setFeedback({ kind: "success", message: "Serah-terima berhasil. Rental sekarang menjadi active dan unit sudah berpindah ke status rented melalui transaksi server." });
+      setFeedback({ kind: "success", message: "Serah-terima berhasil. Penyewaan sekarang aktif dan unit berubah menjadi Sedang Disewa melalui transaksi sistem." });
       await onChanged();
       await queryClient.invalidateQueries({ queryKey: ["penyewaan", "list"] });
     },
@@ -231,10 +231,10 @@ export function RentalPhase2Actions({
         }
         if (reconciliation.state === "not_found") {
           handoverRef.current = null;
-          setFeedback({ kind: "error", message: error instanceof Error ? error.message : "Pickup belum berhasil. Anda dapat mencoba lagi." });
+          setFeedback({ kind: "error", message: error instanceof Error ? error.message : "Serah-terima belum berhasil. Anda dapat mencoba lagi." });
           return;
         }
-        setFeedback({ kind: "unknown", message: "Status pickup belum dapat dipastikan. Periksa detail rental sebelum mengirim command lagi." });
+        setFeedback({ kind: "unknown", message: "Status serah-terima belum dapat dipastikan. Periksa detail penyewaan sebelum mencoba lagi." });
       } catch (reconciliationError) {
         setFeedback({ kind: "unknown", message: reconciliationError instanceof Error ? reconciliationError.message : "Rekonsiliasi pickup gagal." });
       }
@@ -248,13 +248,13 @@ export function RentalPhase2Actions({
     <div className="space-y-4">
       <Card>
         <CardHeader>
-          <div className="flex items-center gap-2"><ShieldCheck className="size-5 text-primary" /><div><CardTitle className="text-base">Phase 2 · Assignment</CardTitle><p className="text-sm text-muted-foreground">Tetapkan unit fisik dari Inventaris, satu unit per command.</p></div></div>
+          <div className="flex items-center gap-2"><ShieldCheck className="size-5 text-primary" /><div><CardTitle className="text-base">Penetapan Unit</CardTitle><p className="text-sm text-muted-foreground">Tetapkan unit dari Inventaris, satu unit setiap tindakan.</p></div></div>
         </CardHeader>
         <CardContent className="space-y-3">
           {rental.status === "active" ? (
-            <Alert><PackageCheck /><AlertTitle>Assignment sudah menjadi rental aktif</AlertTitle><AlertDescription>Pickup berhasil; assignment tidak lagi dapat diubah pada Phase 2.</AlertDescription></Alert>
+            <Alert><PackageCheck /><AlertTitle>Penetapan Unit sudah menjadi bagian dari penyewaan aktif</AlertTitle><AlertDescription>Serah-terima berhasil; penetapan unit tidak lagi dapat diubah pada tahap ini.</AlertDescription></Alert>
           ) : targets.length === 0 ? (
-            <Alert variant="destructive"><AlertTitle>Target assignment belum tersedia</AlertTitle><AlertDescription>Server belum menyediakan detail fisik yang dapat ditetapkan untuk rental ini.</AlertDescription></Alert>
+            <Alert variant="destructive"><AlertTitle>Unit yang akan ditetapkan belum tersedia</AlertTitle><AlertDescription>Sistem belum menyediakan detail unit fisik yang dapat ditetapkan untuk penyewaan ini.</AlertDescription></Alert>
           ) : (
             targets.map((target) => (
               <AssignmentTargetRow
@@ -272,10 +272,10 @@ export function RentalPhase2Actions({
       {showHandover && (
         <Card>
           <CardHeader>
-            <div className="flex items-center gap-2"><Handshake className="size-5 text-primary" /><div><CardTitle className="text-base">Phase 2 · Serah-terima / Pickup</CardTitle><p className="text-sm text-muted-foreground">Pickup hanya boleh sukses setelah seluruh quantity assignment terpenuhi dan unit masih ready. Waktu aktual dicatat server saat transaksi commit.</p></div></div>
+            <div className="flex items-center gap-2"><Handshake className="size-5 text-primary" /><div><CardTitle className="text-base">Serah-terima</CardTitle><p className="text-sm text-muted-foreground">Serah-terima hanya dapat berhasil setelah seluruh jumlah unit terpenuhi dan unit masih siap disewakan. Waktu aktual dicatat otomatis oleh sistem.</p></div></div>
           </CardHeader>
           <CardContent className="space-y-3">
-            {!assignmentComplete && <Alert><Clock3 /><AlertTitle>Menunggu assignment lengkap</AlertTitle><AlertDescription>{targets.reduce((sum, target) => sum + Math.max(0, target.required_quantity - target.assigned_quantity), 0)} unit masih perlu ditetapkan.</AlertDescription></Alert>}
+            {!assignmentComplete && <Alert><Clock3 /><AlertTitle>Menunggu penetapan unit lengkap</AlertTitle><AlertDescription>{targets.reduce((sum, target) => sum + Math.max(0, target.required_quantity - target.assigned_quantity), 0)} unit masih perlu ditetapkan.</AlertDescription></Alert>}
             <input
               className="min-h-20 w-full rounded-md border bg-background px-3 py-2 text-sm"
               value={handoverNote}
@@ -290,7 +290,7 @@ export function RentalPhase2Actions({
             {feedback && (
               <Alert variant={feedback.kind === "error" || feedback.kind === "unknown" ? "destructive" : "default"}>
                 {feedback.kind === "success" ? <CheckCircle2 /> : <AlertTriangle />}
-                <AlertTitle>{feedback.kind === "unknown" ? "Status pickup belum pasti" : feedback.kind === "success" ? "Serah-terima tersimpan" : "Pickup belum selesai"}</AlertTitle>
+                <AlertTitle>{feedback.kind === "unknown" ? "Status serah-terima belum pasti" : feedback.kind === "success" ? "Serah-terima tersimpan" : "Serah-terima belum selesai"}</AlertTitle>
                 <AlertDescription>{feedback.message}</AlertDescription>
               </Alert>
             )}

@@ -9,7 +9,7 @@ import { SidebarTrigger } from "@/components/ui/sidebar";
 import { paths } from "@/routes/paths";
 import { useCurrentUsaha } from "@/app/current-usaha-context";
 import { useEffect, useState } from "react";
-import { getUnreadNotificationCount } from "@/features/pemberitahuan/service";
+import { getUnreadNotificationCount, subscribeToAdminNotifications } from "@/features/pemberitahuan/service";
 
 function financeHeader(pathname: string) {
   if (!pathname.startsWith(paths.keuangan)) return null;
@@ -39,10 +39,22 @@ export function Header() {
       setUnreadCount(0);
       return () => { active = false; };
     }
-    void getUnreadNotificationCount(usahaId, adminId)
-      .then((count) => { if (active) setUnreadCount(count); })
-      .catch(() => { if (active) setUnreadCount(0); });
-    return () => { active = false; };
+
+    const refresh = () => {
+      void getUnreadNotificationCount(usahaId, adminId)
+        .then((count) => { if (active) setUnreadCount(count); })
+        .catch(() => { if (active) setUnreadCount(0); });
+    };
+
+    refresh();
+    const interval = window.setInterval(refresh, 60_000);
+    const unsubscribe = subscribeToAdminNotifications(usahaId, adminId, () => refresh());
+
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      unsubscribe();
+    };
   }, [usahaId, adminId]);
 
   return (
@@ -76,7 +88,7 @@ export function Header() {
 
         <div className="relative hidden w-full max-w-2xl md:block">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-          <Input aria-label="Cari operasional" placeholder="Cari penyewa, barang, kode rental, atau QR..." className="h-10 border-0 bg-muted/60 pl-9 pr-14 shadow-none focus-visible:ring-1" />
+          <Input aria-label="Cari operasional" placeholder="Cari penyewa, barang, kode penyewaan, atau QR..." className="h-10 border-0 bg-muted/60 pl-9 pr-14 shadow-none focus-visible:ring-1" />
           <kbd className="pointer-events-none absolute right-2 top-1/2 hidden -translate-y-1/2 rounded-md border bg-background px-2 py-0.5 text-[10px] text-muted-foreground lg:block">⌘K</kbd>
         </div>
 

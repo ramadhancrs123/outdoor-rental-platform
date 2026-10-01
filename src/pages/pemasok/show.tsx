@@ -103,7 +103,7 @@ export function SupplierShow() {
             <p className="font-semibold">{supplierData.nama}</p>
             <p className="mt-1 text-xs text-muted-foreground">{isActive ? "Dapat dipilih untuk pembelian baru." : "Tidak tersedia untuk pembelian baru."}</p>
           </div>
-          <Button asChild size="sm" variant="outline" className="rounded-xl"><Link to={paths.pemasok + "/" + supplierData.pemasok_id + "/edit"}><Edit3 />Edit</Link></Button>
+          <Button asChild size="sm" variant="outline" className="rounded-xl"><Link to={paths.pemasok + "/" + supplierData.pemasok_id + "/edit"}><Edit3 />Ubah</Link></Button>
         </CardContent>
       </Card>
 
@@ -162,7 +162,7 @@ export function SupplierShow() {
       </Tabs>
 
       {statusMutation.error ? <Alert variant="destructive"><AlertTitle>Status pemasok belum berubah</AlertTitle><AlertDescription>{statusMutation.error instanceof Error ? statusMutation.error.message : "Perubahan status pemasok gagal."}</AlertDescription></Alert> : null}
-      <Alert><Info /><AlertTitle>Kontrak Pemasok</AlertTitle><AlertDescription>Pemasok adalah master identity. Ia tidak memiliki payment, receiving, unit fisik, rental, atau availability.</AlertDescription></Alert>
+      <Alert><Info /><AlertTitle>Kontrak Pemasok</AlertTitle><AlertDescription>Pemasok adalah data pihak penyedia. Pemasok bukan sumber pembayaran, penerimaan barang, unit fisik, penyewaan, atau ketersediaan.</AlertDescription></Alert>
 
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <DialogContent className="rounded-2xl">

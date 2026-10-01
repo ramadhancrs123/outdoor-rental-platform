@@ -84,7 +84,7 @@ export function ReservationList() {
   return (
     <div className="mx-auto w-full max-w-5xl space-y-5 pb-24">
       <header className="space-y-1">
-        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-primary/75">Operasional · Commitment</p>
+        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-primary/75">Operasional · Reservasi</p>
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
             <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Reservasi</h1>
@@ -153,7 +153,7 @@ export function ReservationList() {
             <div className="space-y-1">
               <h2 className="text-lg font-semibold">Belum ada reservasi</h2>
               <p className="max-w-md text-sm leading-6 text-muted-foreground">
-                Commitment yang dibuat dari Permintaan akan muncul di sini.
+                Reservasi yang dibuat dari Permintaan Sewa akan muncul di sini.
               </p>
             </div>
             <Button asChild variant="outline" className="rounded-xl">
@@ -214,7 +214,7 @@ export function ReservationList() {
                       <th className="px-5 py-3 font-medium">Penyewa</th>
                       <th className="px-5 py-3 font-medium">Periode</th>
                       <th className="px-5 py-3 font-medium">Status</th>
-                      <th className="px-5 py-3 font-medium">Stock Lock</th>
+                      <th className="px-5 py-3 font-medium">Penguncian Stok</th>
                       <th className="px-5 py-3 text-right font-medium">Buka</th>
                     </tr>
                   </thead>
@@ -251,7 +251,7 @@ export function ReservationList() {
       )}
 
       <Alert className="border-primary/10 bg-primary/[0.03]">
-        <AlertTitle>{capabilities.mutation ? "Otoritas transaksi aktif" : "Mode baca"}</AlertTitle>
+        <AlertTitle>{capabilities.mutation ? "Aksi transaksi tersedia" : "Mode baca"}</AlertTitle>
         <AlertDescription>{capabilities.reason}</AlertDescription>
       </Alert>
     </div>

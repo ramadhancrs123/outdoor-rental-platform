@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router";
 import {
   Filter,
+  MapPin,
   PackagePlus,
   PackageSearch,
   QrCode,
@@ -135,13 +136,19 @@ export function InventoryList() {
           <p className="text-sm font-medium text-muted-foreground">Inventaris</p>
           <h1 className="text-2xl font-bold tracking-tight sm:text-[28px]">Unit Barang</h1>
           <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-            Physical truth setiap unit dalam konteks Usaha yang sedang terotorisasi.
+            Kondisi dan informasi fisik setiap unit dalam konteks Usaha yang dipilih.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Button asChild variant="outline" className="h-10 rounded-xl">
+            <Link to={paths.inventarisLocations}>
+              <MapPin />
+              Kelola Lokasi
+            </Link>
+          </Button>
           <Button variant="outline" className="h-10 rounded-xl" onClick={() => setQrOpen(true)}>
             <QrCode />
-            Scan QR
+            Pindai QR
           </Button>
           {capabilities.mutation ? (
             <Button asChild className="h-10 rounded-xl">
@@ -177,8 +184,8 @@ export function InventoryList() {
           <div className="max-md:flex flex gap-2 overflow-x-auto pb-1" aria-label="Filter cepat inventaris">
             {([
               ["all", "Semua"],
-              ["ready_now", "Ready"],
-              ["rental_active", "Rented"],
+              ["ready_now", "Siap Disewakan"],
+              ["rental_active", "Sedang Disewa"],
               ["attention", "Perhatian"],
             ] as const).map(([value, label]) => (
               <Button
@@ -325,7 +332,7 @@ export function InventoryList() {
       <Sheet open={filterOpen} onOpenChange={setFilterOpen}>
         <SheetContent side="right" className="w-full p-0 sm:max-w-md">
           <SheetHeader className="border-b px-5 pb-4 pt-5">
-            <SheetTitle>Filter Inventaris</SheetTitle>
+            <SheetTitle>Saring Inventaris</SheetTitle>
             <p className="text-sm text-muted-foreground">Persempit unit tanpa meninggalkan daftar.</p>
           </SheetHeader>
           <div className="flex-1 space-y-5 overflow-y-auto px-5 py-5">
@@ -532,7 +539,7 @@ export function InventoryList() {
                     <th className="px-5 py-3 font-medium">Status</th>
                     <th className="px-5 py-3 font-medium">Lokasi</th>
                     <th className="px-5 py-3 font-medium">Kondisi</th>
-                    <th className="px-5 py-3 font-medium">Rental</th>
+                    <th className="px-5 py-3 font-medium">Penyewaan</th>
                     <th className="px-5 py-3 font-medium">Updated</th>
                     <th className="px-5 py-3 text-right font-medium">Aksi</th>
                   </tr>
@@ -559,7 +566,7 @@ export function InventoryList() {
                         {unit.status === "rented" ? (
                           <span className="inline-flex items-center gap-1.5 text-xs font-medium text-primary">
                             <span className="size-2 rounded-full bg-primary" aria-hidden="true" />
-                            Rental aktif
+                            Penyewaan aktif
                           </span>
                         ) : (
                           <span className="text-xs text-muted-foreground">—</span>

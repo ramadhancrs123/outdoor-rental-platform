@@ -37,7 +37,7 @@ export async function listCatalogCategories(usahaId: string): Promise<CatalogCat
 export async function listCatalogVariants(usahaId: string): Promise<CatalogVariantOption[]> {
   const { data, error } = await supabase
     .from("varian_barang")
-    .select("varian_barang_id,barang_id,usaha_id,nama,kode_internal,deskripsi,atribut_pembeda,status,barang:barang(barang_id,nama)")
+    .select("varian_barang_id,barang_id,usaha_id,nama,kode_internal,deskripsi,atribut_pembeda,status,updated_at,barang:barang(barang_id,nama)")
     .eq("usaha_id", usahaId)
     .order("nama", { ascending: true });
   if (error) throw error;
@@ -51,6 +51,7 @@ export async function listCatalogVariants(usahaId: string): Promise<CatalogVaria
     deskripsi: variant.deskripsi,
     atribut_pembeda: variant.atribut_pembeda,
     status: variant.status,
+    updated_at: variant.updated_at,
     barang_nama: variant.barang?.nama ?? "Barang",
   }));
 }
@@ -123,7 +124,7 @@ export async function listCatalogProducts(usahaId: string, filters: CatalogListF
   const now = new Date();
   if (productIds.length) {
     const nowIso = now.toISOString();
-    const tariffResult = await supabase.from("tarif_sewa").select("tarif_sewa_id,usaha_id,barang_id,varian_barang_id,paket_sewa_id,nama,durasi_unit,durasi_nilai,nominal,currency_code,berlaku_mulai,berlaku_sampai,status").eq("usaha_id", usahaId).in("barang_id", productIds).eq("status", "active").lte("berlaku_mulai", nowIso).or("berlaku_sampai.is.null,berlaku_sampai.gt." + nowIso).order("nominal", { ascending: true });
+    const tariffResult = await supabase.from("tarif_sewa").select("tarif_sewa_id,usaha_id,barang_id,varian_barang_id,paket_sewa_id,nama,durasi_unit,durasi_nilai,nominal,currency_code,berlaku_mulai,berlaku_sampai,status,updated_at").eq("usaha_id", usahaId).in("barang_id", productIds).eq("status", "active").lte("berlaku_mulai", nowIso).or("berlaku_sampai.is.null,berlaku_sampai.gt." + nowIso).order("nominal", { ascending: true });
     if (tariffResult.error) throw tariffResult.error;
     tariffs = (tariffResult.data ?? []) as CatalogTariff[];
   }
@@ -143,11 +144,11 @@ export async function getCatalogProduct(usahaId: string, productId: string): Pro
   const productResult = await supabase.from("barang").select("barang_id,usaha_id,kategori_barang_id,nama,slug,deskripsi,ringkasan_publik,status,is_public,updated_at,kategori:kategori_barang!barang_kategori_tenant_fk(kategori_barang_id,nama,status)").eq("usaha_id", usahaId).eq("barang_id", productId).maybeSingle();
   if (productResult.error) throw productResult.error;
   if (!productResult.data) throw new Error("Barang tidak ditemukan dalam Usaha aktif.");
-  const variantsResult = await supabase.from("varian_barang").select("varian_barang_id,barang_id,usaha_id,nama,kode_internal,deskripsi,atribut_pembeda,status").eq("usaha_id", usahaId).eq("barang_id", productId).order("nama", { ascending: true });
+  const variantsResult = await supabase.from("varian_barang").select("varian_barang_id,barang_id,usaha_id,nama,kode_internal,deskripsi,atribut_pembeda,status,updated_at").eq("usaha_id", usahaId).eq("barang_id", productId).order("nama", { ascending: true });
   if (variantsResult.error) throw variantsResult.error;
   const variants = (variantsResult.data ?? []) as CatalogVariant[];
   const variantIds = variants.map((variant) => variant.varian_barang_id);
-  const tariffSelect = "tarif_sewa_id,usaha_id,barang_id,varian_barang_id,paket_sewa_id,nama,durasi_unit,durasi_nilai,nominal,currency_code,berlaku_mulai,berlaku_sampai,status";
+  const tariffSelect = "tarif_sewa_id,usaha_id,barang_id,varian_barang_id,paket_sewa_id,nama,durasi_unit,durasi_nilai,nominal,currency_code,berlaku_mulai,berlaku_sampai,status,updated_at";
   const productTariffQuery = supabase.from("tarif_sewa").select(tariffSelect).eq("usaha_id", usahaId).eq("barang_id", productId).order("berlaku_mulai", { ascending: false });
   const variantTariffQuery = variantIds.length
     ? supabase.from("tarif_sewa").select(tariffSelect).eq("usaha_id", usahaId).in("varian_barang_id", variantIds).order("berlaku_mulai", { ascending: false })
@@ -177,6 +178,74 @@ export async function getCatalogProduct(usahaId: string, productId: string): Pro
   };
 }
 
+
+export type CatalogReadyStock = {
+  byProduct: Record<string, number>;
+  byVariant: Record<string, number>;
+};
+
+export type CatalogProductCover = {
+  barang_id: string;
+  url: string | null;
+};
+
+export async function listCatalogProductCovers(usahaId: string, productIds: string[]): Promise<CatalogProductCover[]> {
+  const ids = [...new Set(productIds.filter(Boolean))];
+  if (!ids.length) return [];
+
+  const { data, error } = await supabase
+    .from("barang_media")
+    .select("barang_id,storage_bucket,storage_path,is_cover,urutan,status")
+    .eq("usaha_id", usahaId)
+    .in("barang_id", ids)
+    .eq("status", "active")
+    .order("is_cover", { ascending: false })
+    .order("urutan", { ascending: true });
+
+  if (error) throw error;
+
+  const coverMap = new Map<string, string>();
+  for (const row of (data ?? []) as Array<{
+    barang_id: string;
+    storage_bucket: string;
+    storage_path: string;
+  }>) {
+    if (!coverMap.has(row.barang_id)) {
+      coverMap.set(row.barang_id, getCatalogMediaUrl(row.storage_bucket, row.storage_path));
+    }
+  }
+
+  return ids.map((barangId) => ({
+    barang_id: barangId,
+    url: coverMap.get(barangId) ?? null,
+  }));
+}
+
+export async function listCatalogReadyStock(usahaId: string, productIds: string[]): Promise<CatalogReadyStock> {
+  const ids = [...new Set(productIds.filter(Boolean))];
+  if (!ids.length) return { byProduct: {}, byVariant: {} };
+
+  const { data, error } = await supabase
+    .from("unit_barang")
+    .select("barang_id,varian_barang_id")
+    .eq("usaha_id", usahaId)
+    .eq("status", "ready")
+    .in("barang_id", ids);
+
+  if (error) throw error;
+
+  const byProduct: Record<string, number> = {};
+  const byVariant: Record<string, number> = {};
+
+  for (const row of (data ?? []) as Array<{ barang_id: string; varian_barang_id: string | null }>) {
+    byProduct[row.barang_id] = (byProduct[row.barang_id] ?? 0) + 1;
+    if (row.varian_barang_id) {
+      byVariant[row.varian_barang_id] = (byVariant[row.varian_barang_id] ?? 0) + 1;
+    }
+  }
+
+  return { byProduct, byVariant };
+}
 
 export type CatalogCommandOptions = {
   idempotencyKey?: string;
@@ -283,8 +352,16 @@ export type AddCatalogMediaInput = {
 };
 
 function catalogCommandError(label: string, error: unknown) {
-  const message = error instanceof Error ? error.message : String(error);
-  return new Error(`${label}: ${message}`);
+  if (error instanceof Error) return new Error(`${label}: ${error.message}`);
+
+  const record = error && typeof error === "object" ? error as Record<string, unknown> : null;
+  const message = typeof record?.message === "string" ? record.message : null;
+  const hint = typeof record?.hint === "string" ? record.hint : null;
+  const details = typeof record?.details === "string" ? record.details : null;
+  const code = typeof record?.code === "string" ? record.code : null;
+  const parts = [message, hint, details, code ? `kode ${code}` : null].filter(Boolean) as string[];
+
+  return new Error(`${label}: ${parts.join(" · ") || "server mengembalikan error yang tidak dapat dibaca."}`);
 }
 
 async function executeCatalogCommand<T extends CatalogCommandResponse>(
@@ -898,4 +975,43 @@ export async function listCatalogPackageComponents(usahaId: string, paketSewaId:
     .order("created_at", { ascending: true });
   if (error) throw error;
   return (data ?? []) as import("./types").CatalogPackageComponent[];
+}
+
+export async function getCatalogPackageDetails(
+  usahaId: string,
+  paketSewaId: string,
+): Promise<{
+  package: import("./types").CatalogPackage;
+  components: import("./types").CatalogPackageComponentDetail[];
+  tariffs: import("./types").CatalogTariff[];
+}> {
+  const [packageResult, componentsResult, tariffsResult] = await Promise.all([
+    supabase
+      .from("paket_sewa")
+      .select("paket_sewa_id,usaha_id,nama,slug,deskripsi,harga_dasar,currency_code,status,is_public,metadata,updated_at")
+      .eq("usaha_id", usahaId)
+      .eq("paket_sewa_id", paketSewaId)
+      .maybeSingle(),
+    supabase
+      .from("komponen_paket")
+      .select("komponen_paket_id,usaha_id,paket_sewa_id,barang_id,varian_barang_id,jumlah,catatan,updated_at,barang:barang!komponen_barang_tenant_fk(barang_id,nama,slug),varian:varian_barang!komponen_varian_tenant_fk(varian_barang_id,nama,kode_internal)")
+      .eq("usaha_id", usahaId)
+      .eq("paket_sewa_id", paketSewaId)
+      .order("created_at", { ascending: true }),
+    supabase
+      .from("tarif_sewa")
+      .select("tarif_sewa_id,usaha_id,barang_id,varian_barang_id,paket_sewa_id,nama,durasi_unit,durasi_nilai,nominal,currency_code,berlaku_mulai,berlaku_sampai,status,updated_at")
+      .eq("usaha_id", usahaId)
+      .eq("paket_sewa_id", paketSewaId)
+      .order("berlaku_mulai", { ascending: false }),
+  ]);
+  if (packageResult.error) throw packageResult.error;
+  if (!packageResult.data) throw new Error("Paket sewa tidak ditemukan dalam Usaha aktif.");
+  if (componentsResult.error) throw componentsResult.error;
+  if (tariffsResult.error) throw tariffsResult.error;
+  return {
+    package: packageResult.data as import("./types").CatalogPackage,
+    components: (componentsResult.data ?? []) as unknown as import("./types").CatalogPackageComponentDetail[],
+    tariffs: (tariffsResult.data ?? []) as import("./types").CatalogTariff[],
+  };
 }

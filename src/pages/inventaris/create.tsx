@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ArrowRight, Check, CircleAlert, PackagePlus, ShieldCheck } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, CircleAlert, PackagePlus, Search, ShieldCheck } from "lucide-react";
 import { useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -22,6 +22,7 @@ import {
   registerInventoryUnit,
   type RegisterInventoryUnitInput,
 } from "@/features/inventaris";
+import { getPurchase, listPurchases } from "@/features/pemasok";
 import { paths } from "@/routes/paths";
 
 type CreateMode = "form" | "review" | "processing" | "success" | "error" | "unknown";
@@ -53,6 +54,8 @@ export function InventoryCreate() {
   const [feedback, setFeedback] = useState("");
   const [createdId, setCreatedId] = useState<string | null>(null);
   const [reconciling, setReconciling] = useState(false);
+  const [purchaseSearch, setPurchaseSearch] = useState("");
+  const [selectedPurchaseId, setSelectedPurchaseId] = useState<string | null>(null);
 
   const context = useQuery({
     queryKey: ["inventaris", "context"],
@@ -76,6 +79,18 @@ export function InventoryCreate() {
     queryFn: () => listInventoryLocations(context.data!.usahaId),
     enabled: Boolean(context.data?.usahaId),
     staleTime: 60_000,
+  });
+  const purchases = useQuery({
+    queryKey: ["inventaris", "purchase-sources", context.data?.usahaId, purchaseSearch],
+    queryFn: () => listPurchases(context.data!.usahaId, { search: purchaseSearch, status: "all", page: 1, pageSize: 20 }),
+    enabled: Boolean(context.data?.usahaId),
+    staleTime: 15_000,
+  });
+  const selectedPurchase = useQuery({
+    queryKey: ["inventaris", "purchase-source", context.data?.usahaId, selectedPurchaseId],
+    queryFn: () => getPurchase(context.data!.usahaId, selectedPurchaseId!),
+    enabled: Boolean(context.data?.usahaId && selectedPurchaseId),
+    staleTime: 30_000,
   });
 
   const capabilities = getInventoryStateCapabilities();
@@ -144,13 +159,13 @@ export function InventoryCreate() {
         setMode("success");
       } else if (result.state === "not_found") {
         commandRef.current = null;
-        setFeedback("Tidak ditemukan commitment untuk command tersebut. State server tidak menunjukkan unit baru dari command ini.");
+        setFeedback("Hasil pendaftaran tidak ditemukan. Periksa data terbaru sebelum mencoba lagi.");
         setMode("form");
       } else {
-        setFeedback("Command masih UNKNOWN_OUTCOME. Jangan kirim command kedua.");
+        setFeedback("Hasil tindakan belum dapat dipastikan. Jangan kirim tindakan yang sama lagi.");
       }
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "Rekonsiliasi command gagal.");
+      setFeedback(error instanceof Error ? error.message : "Pemeriksaan status tindakan gagal.");
     } finally {
       setReconciling(false);
     }
@@ -190,7 +205,7 @@ export function InventoryCreate() {
             <div>
               <h1 className="text-xl font-semibold">Mendaftarkan Unit</h1>
               <p className="mt-1 max-w-md text-sm leading-6 text-muted-foreground">
-                Command dikirim sebagai transaksi server. Jangan kirim command kedua selama hasil belum jelas.
+                Tindakan dikirim sebagai transaksi sistem. Jangan kirim tindakan yang sama lagi selama hasil belum jelas.
               </p>
             </div>
             <div className="grid w-full gap-2 text-left text-sm">
@@ -223,39 +238,23 @@ export function InventoryCreate() {
             <div>
               <h1 className="text-2xl font-bold tracking-tight">Unit berhasil didaftarkan</h1>
               <p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">
-                Unit telah masuk sebagai physical truth dan saat ini berada pada state <strong>Perlu Pemeriksaan</strong>.
+                Unit telah masuk sebagai physical truth dan berstatus <strong>Siap Disewakan</strong> berdasarkan konfirmasi admin saat pendaftaran.
               </p>
             </div>
             <div className="w-full max-w-md rounded-2xl border bg-muted/20 p-4 text-left">
               <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <p className="text-xs text-muted-foreground">Barang</p>
-                  <p className="mt-1 font-semibold">{selectedProduct?.nama ?? "—"}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Kode Unit</p>
-                  <p className="mt-1 font-semibold">{form.kodeUnit || "—"}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Lokasi</p>
-                  <p className="mt-1 font-semibold">{selectedLocation?.nama ?? "Belum ditentukan"}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">State</p>
-                  <Badge variant="secondary" className="mt-1 rounded-full">Perlu Pemeriksaan</Badge>
-                </div>
+                <div><p className="text-xs text-muted-foreground">Barang</p><p className="mt-1 font-semibold">{selectedProduct?.nama ?? "—"}</p></div>
+                <div><p className="text-xs text-muted-foreground">Kode Unit</p><p className="mt-1 font-semibold">{form.kodeUnit || "—"}</p></div>
+                <div><p className="text-xs text-muted-foreground">Lokasi</p><p className="mt-1 font-semibold">{selectedLocation?.nama ?? "Belum ditentukan"}</p></div>
+                <div><p className="text-xs text-muted-foreground">Status</p><Badge variant="secondary" className="mt-1 rounded-full">Siap Disewakan</Badge></div>
               </div>
             </div>
             <p className="max-w-md text-xs leading-5 text-muted-foreground">
-              Unit tidak otomatis READY. Tindak lanjut pemeriksaan tetap dilakukan melalui workflow Pemeriksaan.
+              Pemeriksaan terstruktur dilakukan setelah unit kembali dari penyewaan. Bila ada kebutuhan perawatan, admin dapat meneruskannya ke modul Perawatan.
             </p>
             <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
-              <Button className="h-11 min-w-44 rounded-xl" onClick={() => createdId && navigate(paths.inventaris + "/" + createdId)}>
-                Lihat Detail Unit
-              </Button>
-              <Button variant="outline" className="h-11 rounded-xl" onClick={() => navigate(paths.inventaris)}>
-                Kembali ke Inventaris
-              </Button>
+              <Button className="h-11 min-w-44 rounded-xl" onClick={() => createdId && navigate(paths.inventaris + "/" + createdId)}>Lihat Detail Unit</Button>
+              <Button variant="outline" className="h-11 rounded-xl" onClick={() => navigate(paths.inventaris)}>Kembali ke Inventaris</Button>
             </div>
           </CardContent>
         </Card>
@@ -288,7 +287,7 @@ export function InventoryCreate() {
         </Alert>
         <div className="flex gap-2">
           <Button className="rounded-xl" onClick={() => setMode("review")}>
-            Kembali ke Review
+            Kembali ke Tinjauan
           </Button>
           <Button variant="outline" className="rounded-xl" onClick={() => navigate(paths.inventaris)}>
             Kembali
@@ -310,16 +309,16 @@ export function InventoryCreate() {
           <p className="text-sm font-medium text-muted-foreground">{context.data.usahaNama}</p>
           <div className="mt-1 flex flex-wrap items-center gap-2">
             <h1 className="text-2xl font-bold tracking-tight sm:text-[28px]">Daftarkan Unit</h1>
-            <Badge variant="secondary" className="rounded-full">Trusted command</Badge>
+            <Badge variant="secondary" className="rounded-full">Aman digunakan</Badge>
           </div>
           <p className="mt-1 text-sm leading-6 text-muted-foreground">
-            Registrasikan benda fisik. Setelah sukses, unit masuk ke state Perlu Pemeriksaan.
+            Registrasikan benda fisik yang sudah diperiksa manual sebelum masuk Inventaris. Setelah sukses, unit masuk sebagai Siap Disewakan.
           </p>
         </div>
       </header>
 
       <div className="grid grid-cols-3 gap-2" aria-label="Tahap pendaftaran unit">
-        {["Identitas", "Lokasi", "Review"].map((label, index) => {
+        {["Identitas", "Lokasi", "Tinjauan"].map((label, index) => {
           const step = index + 1;
           const active = step === currentStep;
           const complete = step < currentStep;
@@ -461,20 +460,36 @@ export function InventoryCreate() {
               </div>
 
               <div className={formStep === 2 ? "space-y-1.5 sm:col-span-2" : "hidden"}>
-                <label htmlFor="inventory-purchase-detail" className="text-xs font-semibold">
-                  ID detail pembelian <span className="font-normal text-muted-foreground">(opsional)</span>
-                </label>
-                <Input
-                  id="inventory-purchase-detail"
-                  value={form.sumberPembelianDetailId ?? ""}
-                  onChange={(event) => update("sumberPembelianDetailId", event.target.value.trim() || null)}
-                  placeholder="Isi bila unit berasal dari detail pembelian yang sudah ada"
-                  className="h-11 rounded-xl"
-                  autoComplete="off"
-                />
-                <p className="text-[11px] leading-5 text-muted-foreground">
-                  Field ini hanya menjadi referensi source pengadaan; validasi final tetap dilakukan server.
-                </p>
+                <div>
+                  <p className="text-xs font-semibold">Pembelian terkait <span className="font-normal text-muted-foreground">(opsional)</span></p>
+                  <p className="mt-1 text-[11px] leading-5 text-muted-foreground">Pilih pembelian dan rincian barang yang menjadi asal unit. Anda tidak perlu memasukkan ID teknis.</p>
+                </div>
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+                  <Input value={purchaseSearch} onChange={(event) => setPurchaseSearch(event.target.value)} placeholder="Cari nomor pembelian atau pemasok…" className="h-11 rounded-xl pl-9" />
+                </div>
+                <div className="grid gap-2">
+                  {(purchases.data?.purchases ?? []).map((purchase) => (
+                    <button key={purchase.pembelian_id} type="button" onClick={() => { setSelectedPurchaseId(purchase.pembelian_id); update("sumberPembelianDetailId", null); }} className={selectedPurchaseId === purchase.pembelian_id ? "rounded-xl border border-primary bg-primary/[0.035] p-3 text-left ring-1 ring-primary/20" : "rounded-xl border p-3 text-left hover:bg-muted/40"}>
+                      <p className="text-sm font-semibold">{purchase.nomor_pembelian}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">{purchase.pemasok_nama ?? "Pemasok tidak tercatat"} · {purchase.tanggal_pembelian}</p>
+                    </button>
+                  ))}
+                  {!purchases.isPending && (purchases.data?.purchases ?? []).length === 0 ? <p className="rounded-xl border border-dashed p-4 text-center text-xs text-muted-foreground">Pembelian tidak ditemukan.</p> : null}
+                </div>
+                {selectedPurchase.data ? (
+                  <div className="rounded-xl border bg-muted/20 p-3">
+                    <p className="text-xs font-semibold">Pilih rincian barang</p>
+                    <div className="mt-2 grid gap-2">
+                      {selectedPurchase.data.lines.map((line) => (
+                        <button key={line.detail_pembelian_id} type="button" onClick={() => update("sumberPembelianDetailId", line.detail_pembelian_id)} className={form.sumberPembelianDetailId === line.detail_pembelian_id ? "rounded-lg border border-primary bg-background p-3 text-left ring-1 ring-primary/20" : "rounded-lg border bg-background p-3 text-left hover:bg-muted"}>
+                          <p className="text-sm font-medium">{line.barang_nama ?? line.deskripsi ?? "Barang pembelian"}</p>
+                          <p className="mt-0.5 text-xs text-muted-foreground">{line.varian_nama ?? "Tanpa varian"} · {line.jumlah} unit</p>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
               </div>
 
               <div className={formStep === 2 ? "space-y-1.5 sm:col-span-2" : "hidden"}>
@@ -494,9 +509,9 @@ export function InventoryCreate() {
 
           <Alert className="border-primary/15 bg-primary/[0.03]">
             <ShieldCheck className="size-4" />
-            <AlertTitle>Unit baru tidak otomatis READY</AlertTitle>
+            <AlertTitle>Registrasi adalah konfirmasi kelayakan awal</AlertTitle>
             <AlertDescription>
-              Pendaftaran membuat unit sebagai <strong>Perlu Pemeriksaan</strong>. Pemeriksaan, maintenance, dan readiness tetap mengikuti workflow masing-masing.
+              Sebelum menekan Daftarkan Unit, admin memastikan benda fisik sudah layak digunakan. Sistem tidak membuat acquisition inspection terpisah; Pemeriksaan terstruktur digunakan setelah return.
             </AlertDescription>
           </Alert>
         </>
@@ -504,7 +519,7 @@ export function InventoryCreate() {
         <>
           <Card className="shadow-sm">
             <CardHeader>
-              <CardTitle className="text-base">Review pendaftaran</CardTitle>
+              <CardTitle className="text-base">Tinjauan Pendaftaran</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid gap-3 sm:grid-cols-2">
@@ -535,10 +550,10 @@ export function InventoryCreate() {
               </div>
 
               <div className="rounded-2xl border p-4">
-                <p className="text-xs font-semibold text-muted-foreground">State setelah sukses</p>
+                <p className="text-xs font-semibold text-muted-foreground">Status setelah berhasil</p>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <Badge variant="secondary" className="rounded-full">Perlu Pemeriksaan</Badge>
-                  <span className="text-sm text-muted-foreground">Unit belum dianggap READY.</span>
+                  <Badge variant="secondary" className="rounded-full">Siap Disewakan</Badge>
+                  <span className="text-sm text-muted-foreground">Unit siap digunakan berdasarkan konfirmasi admin saat registrasi.</span>
                 </div>
               </div>
 
@@ -570,7 +585,7 @@ export function InventoryCreate() {
                 Kembali
               </Button>
               <Button className="h-12 rounded-xl" onClick={() => setMode("review")}>
-                Review Pendaftaran
+                Tinjauan Pendaftaran
                 <ArrowRight />
               </Button>
             </div>

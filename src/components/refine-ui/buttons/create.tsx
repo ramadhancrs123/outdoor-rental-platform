@@ -59,7 +59,7 @@ export const CreateButton = React.forwardRef<
         {children ?? (
           <div className="flex items-center gap-2 font-semibold">
             <Plus className="w-4 h-4" />
-            <span>{label ?? "Create"}</span>
+            <span>{label ?? "Buat"}</span>
           </div>
         )}
       </LinkComponent>

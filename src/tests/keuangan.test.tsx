@@ -48,15 +48,15 @@ describe("Finance visual contract", () => {
     expect(screen.getByText("Ahmad Fauzi")).toBeInTheDocument();
   });
 
-  test("financial transaction ownership boundary is visible", () => {
+  test("batas pengelolaan transaksi keuangan terlihat", () => {
     render(
       <FinanceShell title="Detail Pembayaran">
-        <FinanceNavNote>Payment → Financial Transaction → Source</FinanceNavNote>
-        <p>Recorded tidak otomatis berarti Reservation Confirmed atau Rental Active.</p>
+        <FinanceNavNote>Pembayaran → Transaksi Keuangan → Sumber</FinanceNavNote>
+        <p>Pembayaran tercatat tidak otomatis berarti Reservasi Dikonfirmasi atau Penyewaan Aktif.</p>
       </FinanceShell>,
     );
-    expect(screen.getByText("Payment → Financial Transaction → Source")).toBeInTheDocument();
-    expect(screen.getByText(/Recorded tidak otomatis/i)).toBeInTheDocument();
+    expect(screen.getByText("Pembayaran → Transaksi Keuangan → Sumber")).toBeInTheDocument();
+    expect(screen.getByText(/Pembayaran tercatat tidak otomatis/i)).toBeInTheDocument();
   });
 
   test("source picker preview supports reservation and rental semantics", () => {
@@ -75,7 +75,7 @@ describe("Finance visual contract", () => {
         icon={CreditCard}
         tone="warning"
         title="Memproses Pembayaran"
-        description="Sistem sedang mencatat pembayaran dan financial transaction."
+        description="Sistem sedang mencatat pembayaran dan transaksi keuangan."
         primary={<div>Validasi data → Menyimpan pembayaran → Finalisasi</div>}
       />,
     );
@@ -89,7 +89,7 @@ describe("Finance visual contract", () => {
         icon={CheckCircle2}
         tone="success"
         title="Pembayaran Berhasil Dicatat"
-        description="Pembayaran telah dicatat dan financial transaction dibuat."
+        description="Pembayaran telah dicatat dan transaksi keuangan dibuat."
         primary={<button type="button">Lihat Detail Pembayaran</button>}
         secondary={<button type="button">Kembali ke Pembayaran</button>}
       />,
@@ -126,19 +126,19 @@ describe("Finance visual contract", () => {
   test("expense flow keeps source and evidence semantics", () => {
     render(
       <FinanceShell title="Catat Pengeluaran">
-        <div>Purchase</div>
-        <div>Maintenance</div>
+        <div>Pembelian</div>
+        <div>Perawatan</div>
         <div>Operational</div>
         <div>Other</div>
         <div>Manual</div>
         <div>Bukti Tersedia</div>
-        <div>Financial Transaction</div>
+        <div>Transaksi Keuangan</div>
       </FinanceShell>,
     );
-    expect(screen.getByText("Purchase")).toBeInTheDocument();
-    expect(screen.getByText("Maintenance")).toBeInTheDocument();
+    expect(screen.getByText("Pembelian")).toBeInTheDocument();
+    expect(screen.getByText("Perawatan")).toBeInTheDocument();
     expect(screen.getByText("Operational")).toBeInTheDocument();
     expect(screen.getByText("Bukti Tersedia")).toBeInTheDocument();
-    expect(screen.getByText("Financial Transaction")).toBeInTheDocument();
+    expect(screen.getByText("Transaksi Keuangan")).toBeInTheDocument();
   });
 });

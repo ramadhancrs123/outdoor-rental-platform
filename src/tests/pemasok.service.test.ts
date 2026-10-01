@@ -197,6 +197,54 @@ describe("Pemasok & Pembelian trusted mutation service", () => {
     });
   });
 
+  test("variant-targeted purchase normalizes to variant-only canonical target", async () => {
+    rpcMock.mockResolvedValue({
+      data: {
+        pembelian_id: "purchase-variant-1",
+        usaha_id: "usaha-1",
+        status: "draft",
+        total_amount: "300000.00",
+        currency_code: "IDR",
+        line_count: 1,
+      },
+      error: null,
+    });
+
+    await expect(
+      createPurchaseDraft(
+        "usaha-1",
+        {
+          pemasokId: "supplier-1",
+          nomorPembelian: "PB-VARIANT-001",
+          tanggalPembelian: "2026-10-01",
+          lines: [
+            {
+              barangId: "barang-1",
+              varianBarangId: "variant-1",
+              deskripsi: "Tenda hijau",
+              jumlah: "2",
+              unitPrice: "150000",
+            },
+          ],
+        },
+        {
+          idempotencyKey: "purchase-variant-test",
+          requestId: "request-purchase-variant-test",
+        },
+      ),
+    ).resolves.toMatchObject({ pembelian_id: "purchase-variant-1", status: "draft" });
+
+    expect(rpcMock).toHaveBeenCalledWith("command_create_purchase", expect.objectContaining({
+      p_lines: [{
+        barang_id: null,
+        varian_barang_id: "variant-1",
+        deskripsi: "Tenda hijau",
+        jumlah: "2",
+        unit_price: "150000",
+      }],
+    }));
+  });
+
   test("purchase draft unknown outcome reconciles before returning error", async () => {
     rpcMock
       .mockResolvedValueOnce({

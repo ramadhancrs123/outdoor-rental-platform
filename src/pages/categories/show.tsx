@@ -18,7 +18,7 @@ export const CategoryShow = () => {
       <Card>
         <CardHeader>
           <CardTitle>{record?.title}</CardTitle>
-          <CardDescription>Category ID: {record?.id}</CardDescription>
+          <CardDescription>ID Kategori: {record?.id}</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="space-y-4">

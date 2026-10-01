@@ -68,16 +68,16 @@ export const CatalogShow = () => {
         <div className="flex min-w-0 items-start gap-2">
           <Button asChild variant="ghost" size="icon" className="-ml-2 rounded-xl" aria-label="Kembali ke katalog"><Link to={paths.katalog}><ArrowLeft /></Link></Button>
           <div className="min-w-0">
-            <p className="text-xs text-muted-foreground">Katalog · Detail Produk</p>
+            <p className="text-xs text-muted-foreground">Katalog · Detail Barang</p>
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-2xl font-bold tracking-tight">{item.nama}</h1>
               <Badge variant={item.status === "active" ? "default" : "secondary"} className="rounded-full">{catalogStatusLabel(item.status)}</Badge>
               <Badge variant="outline" className="rounded-full">{item.is_public ? "Publik" : "Internal"}</Badge>
             </div>
-            <p className="mt-1 text-sm text-muted-foreground">{item.kategori?.nama ?? "Tanpa kategori"} · Product truth</p>
+            <p className="mt-1 text-sm text-muted-foreground">{item.kategori?.nama ?? "Tanpa kategori"} · Katalog Barang</p>
           </div>
         </div>
-        <Button asChild className="rounded-xl"><Link to={paths.katalogEdit + "/" + item.barang_id}><Edit3 />Edit Produk</Link></Button>
+        <Button asChild className="rounded-xl"><Link to={paths.katalogEdit + "/" + item.barang_id}><Edit3 />Ubah Barang</Link></Button>
       </header>
 
       <div className="grid gap-4 lg:grid-cols-[1.2fr_.8fr]">
@@ -126,7 +126,7 @@ export const CatalogShow = () => {
             <div><p className="text-xs text-muted-foreground">Slug</p><p className="mt-1 break-all font-mono text-sm">{item.slug}</p></div>
             <div><p className="text-xs text-muted-foreground">Deskripsi</p><p className="mt-1 whitespace-pre-wrap text-sm leading-6">{item.deskripsi || "Belum ada deskripsi."}</p></div>
             <div><p className="text-xs text-muted-foreground">Ringkasan publik</p><p className="mt-1 whitespace-pre-wrap text-sm leading-6">{item.ringkasan_publik || "Belum ada ringkasan publik."}</p></div>
-            <div className="rounded-2xl border bg-muted/20 p-4"><p className="font-semibold">Public projection</p><p className="mt-1 text-sm leading-6 text-muted-foreground">{item.is_public ? "Produk ini eligible untuk ditampilkan pada public catalog sesuai projection policy." : "Produk ini masih internal dan belum ditawarkan pada public catalog."}</p></div>
+            <div className="rounded-2xl border bg-muted/20 p-4"><p className="font-semibold">Tampilan di Katalog Publik</p><p className="mt-1 text-sm leading-6 text-muted-foreground">{item.is_public ? "Barang ini dapat ditampilkan pada katalog publik sesuai aturan tampilan." : "Barang ini masih internal dan belum ditawarkan di katalog publik."}</p></div>
           </CardContent>
         </Card>
       </div>
@@ -167,13 +167,13 @@ export const CatalogShow = () => {
       <Card className="rounded-2xl shadow-sm">
         <CardHeader><CardTitle className="text-base">Relasi Paket ({item.package_references.length})</CardTitle></CardHeader>
         <CardContent>
-          {item.package_references.length === 0 ? <p className="text-sm text-muted-foreground">Produk ini belum menjadi komponen paket.</p> : <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{item.package_references.map((reference) => <div key={reference.komponen_paket_id} className="rounded-2xl border p-4"><p className="font-semibold">{reference.paket?.nama ?? "Paket tidak ditemukan"}</p><p className="mt-1 text-sm text-muted-foreground">Quantity {reference.jumlah}</p><div className="mt-3 flex gap-2"><Badge variant={reference.paket?.status === "active" ? "default" : "secondary"} className="rounded-full">{reference.paket?.status ?? "unknown"}</Badge><Badge variant="outline" className="rounded-full">{reference.paket?.is_public ? "Publik" : "Internal"}</Badge></div></div>)}</div>}
+          {item.package_references.length === 0 ? <p className="text-sm text-muted-foreground">Produk ini belum menjadi komponen paket.</p> : <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{item.package_references.map((reference) => <div key={reference.komponen_paket_id} className="rounded-2xl border p-4"><p className="font-semibold">{reference.paket?.nama ?? "Paket tidak ditemukan"}</p><p className="mt-1 text-sm text-muted-foreground">Jumlah {reference.jumlah}</p><div className="mt-3 flex gap-2"><Badge variant={reference.paket?.status === "active" ? "default" : "secondary"} className="rounded-full">{reference.paket?.status ?? "unknown"}</Badge><Badge variant="outline" className="rounded-full">{reference.paket?.is_public ? "Publik" : "Internal"}</Badge></div></div>)}</div>}
         </CardContent>
       </Card>
 
       <Alert>
-        <AlertTitle>Ownership boundary</AlertTitle>
-        <AlertDescription>Halaman ini adalah pusat informasi Product Truth. Unit fisik, kondisi, lokasi, assignment, availability aktual, reservation, rental, payment, inspection, dan maintenance bukan fakta yang dimiliki Katalog.</AlertDescription>
+        <AlertTitle>Batas Pengelolaan Data</AlertTitle>
+        <AlertDescription>Halaman ini menjadi pusat informasi Barang. Unit fisik, kondisi, lokasi, Penetapan Unit, Ketersediaan aktual, Reservasi, Penyewaan, Pembayaran, Pemeriksaan, dan Perawatan dikelola pada menu masing-masing.</AlertDescription>
       </Alert>
     </div>
   );

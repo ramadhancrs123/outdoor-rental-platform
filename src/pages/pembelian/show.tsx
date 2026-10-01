@@ -65,7 +65,7 @@ export function PurchaseShow() {
         <CardContent className="flex items-center gap-3 p-4">
           <div className="grid size-12 place-items-center rounded-full bg-muted"><ShoppingBag className="size-5 text-muted-foreground" /></div>
           <div className="min-w-0 flex-1"><p className="font-semibold">{item.nomor_pembelian}</p><p className="mt-1 text-xs text-muted-foreground">{item.pemasok_nama ?? "Pemasok tidak dicatat"} · {formatProcurementDate(item.tanggal_pembelian)}</p></div>
-          {item.status === "draft" ? <Button asChild size="sm" className="rounded-xl"><Link to={paths.pembelian + "/" + item.pembelian_id + "/edit"}><Edit3 />Edit Draft</Link></Button> : null}
+          {item.status === "draft" ? <Button asChild size="sm" className="rounded-xl"><Link to={paths.pembelian + "/" + item.pembelian_id + "/edit"}><Edit3 />Ubah Draf</Link></Button> : null}
         </CardContent>
       </Card>
 
@@ -102,7 +102,7 @@ export function PurchaseShow() {
 
         <TabsContent value="items" className="space-y-3">
           <Card className="rounded-2xl shadow-sm">
-            <CardHeader><CardTitle className="text-base">Daftar Item</CardTitle><p className="text-sm text-muted-foreground">Harga pada detail ini adalah purchase price, bukan harga sewa.</p></CardHeader>
+            <CardHeader><CardTitle className="text-base">Daftar Item</CardTitle><p className="text-sm text-muted-foreground">Harga pada detail ini adalah harga beli, bukan harga sewa.</p></CardHeader>
             <CardContent className="space-y-3">
               {item.lines.length === 0 ? (
                 <div className="flex min-h-44 flex-col items-center justify-center gap-2 text-center"><ShoppingBag className="size-7 text-muted-foreground" /><p className="font-semibold">Belum ada item</p><p className="text-sm text-muted-foreground">Draft ini belum memiliki line item.</p></div>

@@ -19,6 +19,9 @@ import type {
   RentalReconciliationResult,
   RentalTenantContext,
   RenterRentalListItem,
+  RentalPolicyInput,
+  RentalToleranceHistory,
+  RentalLateFeeAssessment,
 } from "./types";
 import { sanitizeRentalSearch } from "./utils";
 
@@ -63,10 +66,105 @@ export async function getPenyewaanContext(): Promise<RentalTenantContext> {
   if (rows.length === 0) throw new Error("Akun admin belum memiliki Usaha aktif.");
   if (rows.length > 1) throw new Error("Konteks Usaha belum ditentukan karena ada lebih dari satu keanggotaan aktif.");
 
-  const { data: usaha, error: usahaError } = await supabase.from("usaha").select("usaha_id,nama,status,timezone").eq("usaha_id", rows[0].usaha_id).eq("status", "active").maybeSingle();
+  const { data: usaha, error: usahaError } = await supabase
+    .from("usaha")
+    .select("usaha_id,nama,status,timezone,default_tolerance_hours,late_fee_enabled,late_fee_per_hour")
+    .eq("usaha_id", rows[0].usaha_id)
+    .eq("status", "active")
+    .maybeSingle();
   if (usahaError) throw usahaError;
   if (!usaha) throw new Error("Usaha aktif tidak ditemukan.");
-  return { akunAdminId: admin.akun_admin_id as string, usahaId: usaha.usaha_id as string, usahaNama: usaha.nama as string, timezone: usaha.timezone as string };
+  return {
+    akunAdminId: admin.akun_admin_id as string,
+    usahaId: usaha.usaha_id as string,
+    usahaNama: usaha.nama as string,
+    timezone: usaha.timezone as string,
+    defaultToleranceHours: Number(usaha.default_tolerance_hours ?? 10),
+    lateFeeEnabled: Boolean(usaha.late_fee_enabled),
+    lateFeePerHour: Number(usaha.late_fee_per_hour ?? 0),
+  };
+}
+
+
+export async function updateRentalPolicy(usahaId: string, input: RentalPolicyInput, options: RentalCommandOptions = {}) {
+  const { data, error } = await supabase.rpc("command_update_rental_policy", {
+    p_usaha_id: usahaId,
+    p_default_tolerance_hours: input.defaultToleranceHours,
+    p_late_fee_enabled: input.lateFeeEnabled,
+    p_late_fee_per_hour: input.lateFeePerHour,
+    p_idempotency_key: options.idempotencyKey ?? ("update-rental-policy-" + crypto.randomUUID()),
+    p_request_id: options.requestId ?? crypto.randomUUID(),
+  });
+  if (error) throw error;
+  return data as RentalTenantContext;
+}
+
+export async function extendRentalTolerance(
+  usahaId: string,
+  penyewaanId: string,
+  input: { additionalMinutes: number; reason: string },
+  options: RentalCommandOptions = {},
+) {
+  const { data, error } = await supabase.rpc("command_extend_rental_tolerance", {
+    p_usaha_id: usahaId,
+    p_penyewaan_id: penyewaanId,
+    p_additional_minutes: input.additionalMinutes,
+    p_reason: input.reason,
+    p_idempotency_key: options.idempotencyKey ?? ("extend-rental-tolerance-" + crypto.randomUUID()),
+    p_request_id: options.requestId ?? crypto.randomUUID(),
+  });
+  if (error) throw error;
+  return data as {
+    penyewaan_id: string;
+    nomor_penyewaan: string;
+    jadwal_kembali: string;
+    tolerance_sebelum: string;
+    tolerance_sesudah: string;
+    tambahan_menit: number;
+    history_id: string;
+  };
+}
+
+export async function listRentalToleranceHistory(usahaId: string, penyewaanId: string): Promise<RentalToleranceHistory[]> {
+  const { data, error } = await supabase
+    .from("riwayat_toleransi_penyewaan")
+    .select("riwayat_toleransi_penyewaan_id,usaha_id,penyewaan_id,tolerance_sebelum,tolerance_sesudah,tambahan_menit,alasan,actor_akun_admin_id,request_id,occurred_at,created_at")
+    .eq("usaha_id", usahaId)
+    .eq("penyewaan_id", penyewaanId)
+    .order("occurred_at", { ascending: false });
+  if (error) throw error;
+
+  const history = (data ?? []) as RentalToleranceHistory[];
+  const actorIds = [...new Set(history.map((item) => item.actor_akun_admin_id).filter(Boolean))];
+  if (!actorIds.length) return history;
+
+  const { data: actors, error: actorError } = await supabase
+    .from("akun_admin")
+    .select("akun_admin_id,nama_tampilan")
+    .eq("status", "active")
+    .in("akun_admin_id", actorIds);
+
+  if (actorError) throw actorError;
+
+  const names = new Map((actors ?? []).map((actor) => [actor.akun_admin_id, actor.nama_tampilan]));
+  return history.map((item) => ({
+    ...item,
+    actor_nama_tampilan: names.get(item.actor_akun_admin_id) ?? null,
+  }));
+}
+
+export async function calculateRentalLateFee(
+  usahaId: string,
+  penyewaanId: string,
+  asOf?: string,
+): Promise<RentalLateFeeAssessment> {
+  const { data, error } = await supabase.rpc("calculate_rental_late_fee", {
+    p_usaha_id: usahaId,
+    p_penyewaan_id: penyewaanId,
+    p_as_of: asOf ?? new Date().toISOString(),
+  });
+  if (error) throw error;
+  return data as RentalLateFeeAssessment;
 }
 
 async function findRenterIds(usahaId: string, search: string) {
@@ -368,7 +466,7 @@ export function getRentalCapabilities(): RentalCapabilities {
       "complete_rental_handover",
     ],
     reason:
-      "Rental trusted commands mencakup direct/walk-in creation, renter inline creation, reservation conversion, unit assignment, dan handover/pickup. Extension tetap di luar slice ini.",
+      "Penyewaan mendukung pembuatan langsung, pembuatan penyewa, pembuatan dari Reservasi, Penetapan Unit, dan Serah Terima. Perpanjangan dikelola terpisah.",
   };
 }
 
@@ -378,8 +476,25 @@ function newRentalCommandRequestId() {
 
 function assertRentalRpcResult<T>(data: T | null, error: unknown, label: string): T {
   if (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`${label}: ${message}`);
+    if (error instanceof Error) throw new Error(`${label}: ${error.message}`);
+
+    const record = error && typeof error === "object" ? error as Record<string, unknown> : null;
+    const message = typeof record?.message === "string" ? record.message : null;
+    const hint = typeof record?.hint === "string" ? record.hint : null;
+    const details = typeof record?.details === "string" ? record.details : null;
+    const code = typeof record?.code === "string" ? record.code : null;
+    const status = typeof record?.status === "number" ? `HTTP ${record.status}` : null;
+    const parts = [
+      message,
+      hint,
+      details,
+      code ? `kode ${code}` : null,
+      status,
+    ].filter(Boolean) as string[];
+
+    throw new Error(
+      `${label}: ${parts.join(" · ") || "server mengembalikan error yang tidak dapat dibaca."}`,
+    );
   }
   if (data == null) throw new Error(`${label}: server tidak mengembalikan hasil command.`);
   return data;
@@ -486,7 +601,7 @@ export async function createDirectRental(
   options: RentalCommandOptions = {},
 ): Promise<RentalCommandResult> {
   const lines = input.lines.map((line) => {
-    const subtotal = Math.round(line.jumlah * line.unit_price * 100) / 100;
+    const subtotal = Math.round(line.subtotal * 100) / 100;
     return {
       barang_id: line.barang_id ?? null,
       varian_barang_id: line.varian_barang_id ?? null,
@@ -495,6 +610,8 @@ export async function createDirectRental(
       unit_price: line.unit_price,
       currency_code: line.currency_code ?? "IDR",
       subtotal,
+      tarif_sewa_id: line.tarif_sewa_id,
+      duration_periods: line.duration_periods,
       catatan: line.catatan?.trim() || null,
     };
   });

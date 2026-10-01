@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
+  ArrowRight,
   Camera,
   Check,
   CheckCircle2,
@@ -40,6 +41,7 @@ import {
   type InspectionFindingInput,
 } from "@/features/pemeriksaan";
 import { formatInspectionDateTime, nextInspectionAction, semanticInspectionLabel } from "@/features/pemeriksaan/utils";
+import { paths } from "@/routes/paths";
 
 const FINDING_TYPES = ["damage", "loss", "missing_component", "dirty", "other"] as const;
 const DECISIONS = ["ready_review", "cleaning_required", "maintenance_required", "unavailable", "follow_up_required", "no_action", "readiness_review"] as const;
@@ -49,7 +51,7 @@ const SECTIONS = [
   ["findings", "Temuan"],
   ["evidence", "Bukti Foto"],
   ["notes", "Catatan"],
-  ["review", "Review & Simpan"],
+  ["review", "Tinjau & Simpan"],
 ] as const;
 type Section = typeof SECTIONS[number][0];
 type CommandRef = { key: string; type: "start" | "complete" | "evidence" };
@@ -76,13 +78,13 @@ function humanError(error: unknown, fallback: string) {
 
 function decisionLabel(value: string) {
   const map: Record<string, string> = {
-    ready_review: "Readiness Review",
-    readiness_review: "Readiness Review",
-    cleaning_required: "Cleaning Required",
-    maintenance_required: "Maintenance Required",
-    unavailable: "Unavailable",
-    follow_up_required: "Follow Up Required",
-    no_action: "No Action",
+    ready_review: "Verifikasi Kesiapan",
+    readiness_review: "Verifikasi Kesiapan",
+    cleaning_required: "Perlu Pembersihan",
+    maintenance_required: "Perlu Perawatan",
+    unavailable: "Belum Siap Digunakan",
+    follow_up_required: "Perlu Tindak Lanjut",
+    no_action: "Tidak Ada Tindakan",
   };
   return map[value] ?? semanticInspectionLabel(value);
 }
@@ -189,7 +191,7 @@ export function InspectionShow() {
       await workspace.refetch();
     } catch (error) {
       const message = humanError(error, "Pemeriksaan gagal dimulai.");
-      if (message.startsWith("UNKNOWN_OUTCOME:")) setUnknownFeedback(message);
+      if (message.startsWith("UNKNOWN_OUTCOME:")) setUnknownFeedback(message.replace(/^UNKNOWN_OUTCOME:\s*/, ""));
       else setErrorFeedback(message);
     } finally {
       setStarting(false);
@@ -240,7 +242,7 @@ export function InspectionShow() {
     },
     onError: (error) => {
       const raw = error instanceof Error ? error.message : "Pemeriksaan gagal disimpan.";
-      if (raw.startsWith("UNKNOWN_OUTCOME:")) setUnknownFeedback(raw);
+      if (raw.startsWith("UNKNOWN_OUTCOME:")) setUnknownFeedback(raw.replace(/^UNKNOWN_OUTCOME:\s*/, ""));
       else setErrorFeedback(humanError(error, "Pemeriksaan gagal disimpan."));
     },
   });
@@ -253,15 +255,15 @@ export function InspectionShow() {
       if (result.state === "committed") {
         setCommandRef(null);
         setUnknownFeedback("");
-        setFeedback("Command sudah committed. State pemeriksaan sedang disegarkan.");
+        setFeedback("Perubahan sudah disimpan. Status pemeriksaan sedang diperbarui.");
         await workspace.refetch();
       } else if (result.state === "not_found") {
         setCommandRef(null);
         setUnknownFeedback("");
-        setFeedback("Commitment belum ditemukan. Verifikasi state terbaru sebelum command baru.");
+        setFeedback("Perubahan sebelumnya belum ditemukan. Periksa status terbaru sebelum mencoba lagi.");
         await workspace.refetch();
       } else {
-        setUnknownFeedback("Command masih UNKNOWN_OUTCOME. Jangan mengirim pemeriksaan kedua.");
+        setUnknownFeedback("Hasil pemeriksaan belum dapat dipastikan. Jangan mengulang pemeriksaan.");
       }
     } catch (error) {
       setUnknownFeedback(humanError(error, "Rekonsiliasi gagal."));
@@ -291,7 +293,7 @@ export function InspectionShow() {
       setActiveSection("evidence");
     } catch (error) {
       const raw = error instanceof Error ? error.message : "";
-      if (raw.startsWith("UNKNOWN_OUTCOME:")) setUnknownFeedback(raw);
+      if (raw.startsWith("UNKNOWN_OUTCOME:")) setUnknownFeedback(raw.replace(/^UNKNOWN_OUTCOME:\s*/, ""));
       else setErrorFeedback(humanError(error, "Foto evidence gagal disimpan."));
     } finally {
       setPhotoUploading(false);
@@ -377,7 +379,7 @@ export function InspectionShow() {
             </div>
             <div className="relative space-y-2">
               <h1 className="text-2xl font-bold tracking-tight sm:text-[30px]">Pemeriksaan Berhasil Disimpan</h1>
-              <p className="text-sm leading-6 text-muted-foreground">Pemeriksaan telah dicatat sebagai fakta inspection.</p>
+              <p className="text-sm leading-6 text-muted-foreground">Pemeriksaan telah dicatat sebagai hasil pemeriksaan.</p>
             </div>
             <div className="relative w-full max-w-md rounded-2xl border bg-muted/20 p-4 text-left">
               <p className="text-xs font-medium text-muted-foreground">Keputusan Operasional</p>
@@ -388,12 +390,12 @@ export function InspectionShow() {
               <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
                 <div><p className="text-xs text-muted-foreground">Temuan</p><p className="mt-1 font-semibold">{completionResult.findingCount}</p></div>
                 <div><p className="text-xs text-muted-foreground">Bukti Foto</p><p className="mt-1 font-semibold">{completionResult.evidenceCount}</p></div>
-                <div><p className="text-xs text-muted-foreground">Status</p><p className="mt-1 font-semibold">Completed</p></div>
+                <div><p className="text-xs text-muted-foreground">Status</p><p className="mt-1 font-semibold">Selesai</p></div>
               </div>
             </div>
             <Alert className="relative w-full max-w-md text-left">
               <CircleAlert className="size-4" />
-              <AlertTitle>Pemeriksaan selesai tidak otomatis membuat unit READY</AlertTitle>
+              <AlertTitle>Pemeriksaan selesai tidak otomatis membuat unit menjadi Siap Disewakan</AlertTitle>
               <AlertDescription>Keputusan berikutnya tetap mengikuti ownership Inventaris atau Perawatan.</AlertDescription>
             </Alert>
             <div className="relative flex w-full max-w-md flex-col gap-2 sm:flex-row">
@@ -428,18 +430,18 @@ export function InspectionShow() {
 
       {feedback ? <Alert><CheckCircle2 className="size-4" /><AlertTitle>Status</AlertTitle><AlertDescription>{feedback}</AlertDescription></Alert> : null}
       {errorFeedback ? <Alert variant="destructive"><ShieldAlert className="size-4" /><AlertTitle>Pemeriksaan ditolak</AlertTitle><AlertDescription>{errorFeedback}</AlertDescription></Alert> : null}
-      {unknownFeedback ? <Alert variant="destructive"><ShieldAlert className="size-4" /><AlertTitle>Command belum dapat dipastikan</AlertTitle><AlertDescription className="space-y-3"><p>Jangan kirim pemeriksaan kedua. Periksa state command terlebih dahulu.</p><p className="text-xs">{unknownFeedback}</p><Button variant="outline" size="sm" disabled={reconciling} onClick={() => void reconcile()}><RotateCcw />{reconciling ? "Memeriksa…" : "Periksa Status Command"}</Button></AlertDescription></Alert> : null}
+      {unknownFeedback ? <Alert variant="destructive"><ShieldAlert className="size-4" /><AlertTitle>Hasil tindakan belum dapat dipastikan</AlertTitle><AlertDescription className="space-y-3"><p>Jangan kirim pemeriksaan kedua. Periksa status proses terlebih dahulu.</p><p className="text-xs">{unknownFeedback}</p><Button variant="outline" size="sm" disabled={reconciling} onClick={() => void reconcile()}><RotateCcw />{reconciling ? "Memeriksa…" : "Periksa Status Tindakan"}</Button></AlertDescription></Alert> : null}
 
       <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
         <aside className="hidden rounded-2xl border bg-card p-2 shadow-sm lg:block lg:self-start lg:sticky lg:top-4">
-          <div className="px-3 py-3"><p className="text-xs font-medium text-muted-foreground">Workflow Pemeriksaan</p><p className="mt-1 text-sm font-semibold">{item.unit.kode_unit}</p></div>
+          <div className="px-3 py-3"><p className="text-xs font-medium text-muted-foreground">Proses Pemeriksaan</p><p className="mt-1 text-sm font-semibold">{item.unit.kode_unit}</p></div>
           <nav aria-label="Bagian pemeriksaan" className="space-y-1">
             {SECTIONS.map(([value, label]) => {
               const active = activeSection === value;
               return <button key={value} type="button" onClick={() => setActiveSection(value)} className={`flex min-h-10 w-full items-center rounded-xl px-3 text-left text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${active ? "bg-primary text-primary-foreground font-semibold" : "text-muted-foreground hover:bg-accent hover:text-foreground"}`}>{label === "Temuan" ? `Temuan (${editableStarted ? summaryFindings.length : effectiveCurrent?.findings.length ?? 0})` : label}</button>;
             })}
           </nav>
-          <div className="mt-3 border-t pt-3 text-xs leading-5 text-muted-foreground"><p>Inspection completed tidak otomatis membuat unit READY.</p></div>
+          <div className="mt-3 border-t pt-3 text-xs leading-5 text-muted-foreground"><p>Pemeriksaan selesai tidak otomatis membuat unit Siap Disewakan.</p></div>
         </aside>
 
         <div className="min-w-0 space-y-4">
@@ -450,24 +452,24 @@ export function InspectionShow() {
           {activeSection === "context" ? (
             <div className="space-y-4">
               <div className="grid gap-3 lg:grid-cols-3">
-                <Card className="rounded-2xl shadow-sm"><CardContent className="space-y-2 p-4"><p className="text-xs font-medium text-muted-foreground">Informasi Return</p><p className="text-lg font-bold">{item.returnHeader.nomor_pengembalian}</p><p className="text-sm text-muted-foreground">Diterima {formatInspectionDateTime(item.returnDetail.diterima_at)}</p><Badge variant="outline" className="rounded-full">Status: {semanticInspectionLabel(item.returnDetail.status_pemeriksaan)}</Badge></CardContent></Card>
+                <Card className="rounded-2xl shadow-sm"><CardContent className="space-y-2 p-4"><p className="text-xs font-medium text-muted-foreground">Informasi Pengembalian</p><p className="text-lg font-bold">{item.returnHeader.nomor_pengembalian}</p><p className="text-sm text-muted-foreground">Diterima {formatInspectionDateTime(item.returnDetail.diterima_at)}</p><Badge variant="outline" className="rounded-full">Status: {semanticInspectionLabel(item.returnDetail.status_pemeriksaan)}</Badge></CardContent></Card>
                 <Card className="rounded-2xl shadow-sm"><CardContent className="space-y-2 p-4"><p className="text-xs font-medium text-muted-foreground">Informasi Penyewa</p><p className="text-lg font-bold">{item.renter?.nama_lengkap ?? "-"}</p><p className="text-sm text-muted-foreground">{item.renter?.nomor_telepon ?? "Nomor telepon tidak tersedia"}</p></CardContent></Card>
-                <Card className="rounded-2xl shadow-sm"><CardContent className="space-y-2 p-4"><p className="text-xs font-medium text-muted-foreground">Informasi Unit</p><p className="text-lg font-bold">{item.unit.kode_unit}</p><p className="text-sm text-muted-foreground">{item.unit.barang_nama ?? "-"}{item.unit.varian_nama ? " · " + item.unit.varian_nama : ""}</p><div className="flex flex-wrap gap-2"><Badge variant="secondary" className="rounded-full">Inventory: {semanticInspectionLabel(item.unit.status)}</Badge><Badge variant="outline" className="rounded-full">Inspection Pending</Badge></div></CardContent></Card>
+                <Card className="rounded-2xl shadow-sm"><CardContent className="space-y-2 p-4"><p className="text-xs font-medium text-muted-foreground">Informasi Unit</p><p className="text-lg font-bold">{item.unit.kode_unit}</p><p className="text-sm text-muted-foreground">{item.unit.barang_nama ?? "-"}{item.unit.varian_nama ? " · " + item.unit.varian_nama : ""}</p><div className="flex flex-wrap gap-2"><Badge variant="secondary" className="rounded-full">Status Unit: {semanticInspectionLabel(item.unit.status)}</Badge><Badge variant="outline" className="rounded-full">Menunggu Pemeriksaan</Badge></div></CardContent></Card>
               </div>
 
               <Card className="rounded-2xl shadow-sm">
                 <CardHeader><CardTitle className="text-base">Konteks Pemeriksaan</CardTitle><p className="text-sm text-muted-foreground">Pastikan informasi berikut sesuai dengan unit yang akan diperiksa.</p></CardHeader>
                 <CardContent className="grid gap-3 md:grid-cols-3">
                   <div className="rounded-2xl border p-4"><p className="text-xs text-muted-foreground">Detail Unit</p><p className="mt-2 text-sm font-semibold">{item.unit.kode_unit}</p><p className="mt-1 text-sm">{item.unit.barang_nama ?? "-"}</p><p className="text-sm text-muted-foreground">{item.unit.varian_nama ?? "Tanpa varian"}</p></div>
-                  <div className="rounded-2xl border p-4"><p className="text-xs text-muted-foreground">Riwayat Pemakaian</p><p className="mt-2 text-sm font-semibold">{item.returnHeader.penyewaan_id}</p><p className="mt-1 text-sm text-muted-foreground">Return terkait tercatat pada rental ini.</p></div>
-                  <div className="rounded-2xl border p-4"><p className="text-xs text-muted-foreground">Status Return</p><p className="mt-2 text-sm font-semibold">{semanticInspectionLabel(item.returnHeader.status)}</p><p className="mt-1 text-sm text-muted-foreground">Waktu diterima {formatInspectionDateTime(item.returnDetail.diterima_at)}</p></div>
+                  <div className="rounded-2xl border p-4"><p className="text-xs text-muted-foreground">Riwayat Pemakaian</p><p className="mt-2 text-sm font-semibold">{item.returnHeader.penyewaan_id}</p><p className="mt-1 text-sm text-muted-foreground">Pengembalian terkait tercatat pada penyewaan ini.</p></div>
+                  <div className="rounded-2xl border p-4"><p className="text-xs text-muted-foreground">Status Pengembalian</p><p className="mt-2 text-sm font-semibold">{semanticInspectionLabel(item.returnHeader.status)}</p><p className="mt-1 text-sm text-muted-foreground">Waktu diterima {formatInspectionDateTime(item.returnDetail.diterima_at)}</p></div>
                 </CardContent>
               </Card>
 
               {!editableStarted && (item.unit.status === "inspection_pending" || canReinspect) ? (
                 <Card className="rounded-2xl border-primary/20 bg-primary/[0.035] shadow-sm">
                   <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
-                    <div><p className="font-semibold">{canReinspect ? "Pemeriksaan ulang tersedia" : "Unit menunggu pemeriksaan"}</p><p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">{canReinspect ? "Inspection sebelumnya tetap dipertahankan sebagai history. Mulai draft baru untuk pemeriksaan ulang." : "Mulai membuat draft inspection server-side. Start bukan completed dan belum membuat fakta final."}</p></div>
+                    <div><p className="font-semibold">{canReinspect ? "Pemeriksaan ulang tersedia" : "Unit menunggu pemeriksaan"}</p><p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">{canReinspect ? "Pemeriksaan sebelumnya tetap tersimpan sebagai riwayat. Mulai pemeriksaan baru untuk pemeriksaan ulang." : "Mulai pemeriksaan untuk membuat draf. Memulai pemeriksaan belum berarti pemeriksaan selesai."}</p></div>
                     <Button className="h-11 rounded-xl sm:min-w-52" disabled={starting || Boolean(unknownFeedback)} onClick={() => void start()}>{starting ? "Memulai…" : canReinspect ? "Mulai Pemeriksaan Ulang" : "Mulai Pemeriksaan"}<ChevronRight /></Button>
                   </CardContent>
                 </Card>
@@ -477,7 +479,7 @@ export function InspectionShow() {
 
           {activeSection === "result" ? (
             <Card className="rounded-2xl shadow-sm">
-              <CardHeader><CardTitle className="text-base">Hasil & Keputusan</CardTitle><p className="text-sm text-muted-foreground">Nyatakan condition truth secara eksplisit. Evidence membantu pembuktian, bukan menjadi source of truth.</p></CardHeader>
+              <CardHeader><CardTitle className="text-base">Hasil & Keputusan</CardTitle><p className="text-sm text-muted-foreground">Catat kondisi unit berdasarkan fakta yang dapat diamati. Bukti foto membantu pembuktian.</p></CardHeader>
               <CardContent className="space-y-6">
                 {effectiveCurrent?.hasil === "pending" ? (
                   <>
@@ -499,13 +501,29 @@ export function InspectionShow() {
                   </>
                 ) : effectiveCurrent ? (
                   <>
-                    <Alert className="sm:col-span-3"><CircleAlert className="size-4" /><AlertTitle>Pemeriksaan selesai tidak otomatis membuat unit READY</AlertTitle><AlertDescription>Keputusan berikutnya tetap mengikuti ownership Inventaris atau Perawatan.</AlertDescription></Alert>
+                    <Alert className="sm:col-span-3"><CircleAlert className="size-4" /><AlertTitle>Pemeriksaan selesai tidak otomatis membuat unit menjadi Siap Disewakan</AlertTitle><AlertDescription>Keputusan berikutnya tetap mengikuti ownership Inventaris atau Perawatan.</AlertDescription></Alert>
                     <div className="grid gap-3 sm:grid-cols-3">
                     <div className="rounded-2xl border p-4"><p className="text-xs text-muted-foreground">Hasil</p><p className="mt-1 font-semibold">{semanticInspectionLabel(effectiveCurrent.hasil)}</p></div>
                     <div className="rounded-2xl border p-4"><p className="text-xs text-muted-foreground">Kelengkapan</p><p className="mt-1 font-semibold">{semanticInspectionLabel(effectiveCurrent.kelengkapan_status)}</p></div>
                     <div className="rounded-2xl border p-4"><p className="text-xs text-muted-foreground">Keputusan</p><p className="mt-1 font-semibold">{decisionLabel(effectiveCurrent.keputusan_operasional)}</p></div>
                     </div>
-                    <div className="rounded-2xl border bg-muted/20 p-4 sm:col-span-3"><p className="text-xs text-muted-foreground">Next Action</p><p className="mt-1 font-semibold">{nextInspectionAction(effectiveCurrent.keputusan_operasional)}</p></div>
+                    <div className="rounded-2xl border bg-muted/20 p-4 sm:col-span-3"><p className="text-xs text-muted-foreground">Aksi Berikutnya</p><p className="mt-1 font-semibold">{nextInspectionAction(effectiveCurrent.keputusan_operasional)}</p></div>
+                    {effectiveCurrent.keputusan_operasional === "maintenance_required" || effectiveCurrent.keputusan_operasional === "cleaning_required" ? (
+                      <Card className="sm:col-span-3 rounded-2xl border-primary/20 bg-primary/[0.025]">
+                        <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+                          <div>
+                            <p className="font-semibold">Unit perlu ditangani di Perawatan</p>
+                            <p className="mt-1 text-sm leading-6 text-muted-foreground">Pemeriksaan sudah menjadi sumber keputusan. Lanjutkan ke Perawatan agar pekerjaan dan verifikasi kesiapan tercatat.</p>
+                          </div>
+                          <Button asChild className="h-11 shrink-0 rounded-xl">
+                            <Link to={paths.perawatan + "/create?pemeriksaan_id=" + effectiveCurrent.pemeriksaan_id + "&unit_id=" + item.unit.unit_barang_id}>
+                              Lanjut ke Perawatan
+                              <ArrowRight />
+                            </Link>
+                          </Button>
+                        </CardContent>
+                      </Card>
+                    ) : null}
                   </>
                 ) : (
                   <Alert><AlertTitle>Belum ada draft pemeriksaan</AlertTitle><AlertDescription>Mulai pemeriksaan dari konteks unit untuk membuka hasil, kelengkapan, dan keputusan.</AlertDescription></Alert>
@@ -516,10 +534,10 @@ export function InspectionShow() {
 
           {activeSection === "findings" ? (
             <Card className="rounded-2xl shadow-sm">
-              <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><CardTitle className="text-base">Temuan / Finding</CardTitle><p className="text-sm text-muted-foreground">Catat fakta yang dapat diamati. Potential Cost bukan payment.</p></div>{effectiveCurrent?.hasil === "pending" && hasil === "issue_found" ? <Button type="button" variant="outline" className="rounded-xl" onClick={() => setFindings((list) => [...list, blankFinding()])}><Plus />Tambah Temuan</Button> : null}</CardHeader>
+              <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><CardTitle className="text-base">Temuan</CardTitle><p className="text-sm text-muted-foreground">Catat fakta yang dapat diamati. Potensi biaya bukan pembayaran.</p></div>{effectiveCurrent?.hasil === "pending" && hasil === "issue_found" ? <Button type="button" variant="outline" className="rounded-xl" onClick={() => setFindings((list) => [...list, blankFinding()])}><Plus />Tambah Temuan</Button> : null}</CardHeader>
               <CardContent className="space-y-3">
                 {effectiveCurrent?.hasil !== "pending" ? (
-                  effectiveCurrent?.findings.length ? effectiveCurrent.findings.map((finding, index) => <div key={finding.temuan_pemeriksaan_id} className="rounded-2xl border p-4"><div className="flex items-center justify-between gap-3"><div><p className="font-semibold">Temuan {index + 1}</p><Badge variant="secondary" className="mt-2 rounded-full">{semanticInspectionLabel(finding.jenis_temuan)}</Badge></div><span className="text-xs text-muted-foreground">{finding.status_tindak_lanjut ?? "-"}</span></div><p className="mt-3 text-sm leading-6">{finding.deskripsi}</p>{finding.nominal_potensi_biaya != null ? <p className="mt-2 text-xs text-muted-foreground">Potensi biaya · {finding.currency_code ?? "IDR"} {finding.nominal_potensi_biaya.toLocaleString("id-ID")}</p> : null}</div>) : <div className="rounded-2xl border border-dashed p-6 text-center"><LockKeyhole className="mx-auto size-7 text-muted-foreground" /><p className="mt-2 font-semibold">Belum ada finding</p><p className="mt-1 text-sm text-muted-foreground">No Finding ≠ No Inspection. Hasil pemeriksaan tetap tercatat sebagai inspection truth.</p></div>
+                  effectiveCurrent?.findings.length ? effectiveCurrent.findings.map((finding, index) => <div key={finding.temuan_pemeriksaan_id} className="rounded-2xl border p-4"><div className="flex items-center justify-between gap-3"><div><p className="font-semibold">Temuan {index + 1}</p><Badge variant="secondary" className="mt-2 rounded-full">{semanticInspectionLabel(finding.jenis_temuan)}</Badge></div><span className="text-xs text-muted-foreground">{finding.status_tindak_lanjut ?? "-"}</span></div><p className="mt-3 text-sm leading-6">{finding.deskripsi}</p>{finding.nominal_potensi_biaya != null ? <p className="mt-2 text-xs text-muted-foreground">Potensi biaya · {finding.currency_code ?? "IDR"} {finding.nominal_potensi_biaya.toLocaleString("id-ID")}</p> : null}</div>) : <div className="rounded-2xl border border-dashed p-6 text-center"><LockKeyhole className="mx-auto size-7 text-muted-foreground" /><p className="mt-2 font-semibold">Belum ada temuan</p><p className="mt-1 text-sm text-muted-foreground">Tidak ada temuan bukan berarti tidak ada pemeriksaan. Hasil pemeriksaan tetap tercatat.</p></div>
                 ) : hasil === "normal" ? (
                   <Alert><CheckCircle2 className="size-4" /><AlertTitle>Normal</AlertTitle><AlertDescription>Hasil Normal tidak dapat memiliki finding. Ubah Hasil menjadi Ada Temuan untuk menambahkan fakta kondisi.</AlertDescription></Alert>
                 ) : findings.length === 0 ? (
@@ -543,7 +561,7 @@ export function InspectionShow() {
                         <Input className="h-11 rounded-xl" value={finding.status_tindak_lanjut ?? "open"} onChange={(e) => changeFinding(index, { status_tindak_lanjut: e.target.value })} placeholder="Status sesuai contract" />
                       </label>
                       <label className="grid gap-2 text-sm font-medium">Potensi Biaya
-                        <Input className="h-11 rounded-xl" type="number" min="0" value={finding.nominal_potensi_biaya ?? ""} onChange={(e) => changeFinding(index, { nominal_potensi_biaya: e.target.value === "" ? null : Number(e.target.value) })} placeholder="Bukan payment" />
+                        <Input className="h-11 rounded-xl" type="number" min="0" value={finding.nominal_potensi_biaya ?? ""} onChange={(e) => changeFinding(index, { nominal_potensi_biaya: e.target.value === "" ? null : Number(e.target.value) })} placeholder="Bukan pembayaran" />
                       </label>
                     </div>
                   </div>
@@ -554,7 +572,7 @@ export function InspectionShow() {
 
           {activeSection === "evidence" ? (
             <Card className="rounded-2xl shadow-sm">
-              <CardHeader><CardTitle className="text-base">Bukti Foto Kondisi</CardTitle><p className="text-sm text-muted-foreground">Foto adalah evidence private, bukan source of truth. Bucket: rental-private-condition.</p></CardHeader>
+              <CardHeader><CardTitle className="text-base">Bukti Foto Kondisi</CardTitle><p className="text-sm text-muted-foreground">Foto merupakan bukti kondisi dan termasuk data internal.</p></CardHeader>
               <CardContent className="space-y-4">
                 {effectiveCurrent?.hasil === "pending" ? (
                   <>
@@ -563,15 +581,15 @@ export function InspectionShow() {
                       <Button type="button" variant="outline" className="h-12 rounded-xl" disabled={photoUploading || Boolean(unknownFeedback)} onClick={() => galleryInputRef.current?.click()}><ImagePlus />Pilih dari Galeri</Button>
                     </div>
                     <input ref={galleryInputRef} type="file" accept="image/*" className="sr-only" onChange={(e) => { const file = e.target.files?.[0]; if (file) void uploadEvidence(file); e.currentTarget.value = ""; }} />
-                    <div className="rounded-2xl border border-dashed p-4 text-sm leading-6 text-muted-foreground"><LockKeyhole className="mb-2 size-4" /> Evidence disimpan private dengan path <code className="break-all text-xs">usaha_id/pemeriksaan_id/bukti_foto_kondisi_id/filename</code>. Tidak ada public image URL.</div>
+                    <div className="rounded-2xl border border-dashed p-4 text-sm leading-6 text-muted-foreground"><LockKeyhole className="mb-2 size-4" /> Bukti foto disimpan sebagai data internal <code className="break-all text-xs">usaha_id/pemeriksaan_id/bukti_foto_kondisi_id/filename</code>. Tidak ada public image URL.</div>
                   </>
                 ) : null}
-                {photoUploading ? <Alert><Upload className="size-4" /><AlertTitle>Mengunggah evidence…</AlertTitle><AlertDescription>Object disimpan terlebih dahulu, kemudian metadata attachment dicatat lewat trusted command.</AlertDescription></Alert> : null}
+                {photoUploading ? <Alert><Upload className="size-4" /><AlertTitle>Mengunggah bukti foto…</AlertTitle><AlertDescription>Bukti foto disimpan terlebih dahulu, kemudian informasi buktinya dicatat oleh sistem.</AlertDescription></Alert> : null}
                 {effectiveCurrent?.evidences.length ? (
                   <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-                    {effectiveCurrent.evidences.map((evidence) => <figure key={evidence.bukti_foto_kondisi_id} className="overflow-hidden rounded-2xl border bg-muted/20"><div className="aspect-square bg-muted">{evidence.signed_url ? <img src={evidence.signed_url} alt={"Evidence " + evidence.jenis_foto} className="h-full w-full object-cover" /> : <div className="flex h-full items-center justify-center text-muted-foreground"><Upload /></div>}</div><figcaption className="space-y-1 p-3 text-xs"><p className="font-medium">{semanticInspectionLabel(evidence.jenis_foto)}</p><p className="text-muted-foreground">{formatInspectionDateTime(evidence.captured_at)}</p></figcaption></figure>)}
+                    {effectiveCurrent.evidences.map((evidence) => <figure key={evidence.bukti_foto_kondisi_id} className="overflow-hidden rounded-2xl border bg-muted/20"><div className="aspect-square bg-muted">{evidence.signed_url ? <img src={evidence.signed_url} alt={"Bukti Foto " + evidence.jenis_foto} className="h-full w-full object-cover" /> : <div className="flex h-full items-center justify-center text-muted-foreground"><Upload /></div>}</div><figcaption className="space-y-1 p-3 text-xs"><p className="font-medium">{semanticInspectionLabel(evidence.jenis_foto)}</p><p className="text-muted-foreground">{formatInspectionDateTime(evidence.captured_at)}</p></figcaption></figure>)}
                   </div>
-                ) : <div className="rounded-2xl border border-dashed p-8 text-center"><ImagePlus className="mx-auto size-7 text-muted-foreground" /><p className="mt-2 font-semibold">Belum ada evidence</p><p className="mt-1 text-sm text-muted-foreground">Ambil foto atau pilih dari galeri setelah draft inspection dimulai.</p></div>}
+                ) : <div className="rounded-2xl border border-dashed p-8 text-center"><ImagePlus className="mx-auto size-7 text-muted-foreground" /><p className="mt-2 font-semibold">Belum ada bukti foto</p><p className="mt-1 text-sm text-muted-foreground">Ambil foto atau pilih dari galeri setelah pemeriksaan dimulai.</p></div>}
                 {errorFeedback && photoUploading === false ? <Alert variant="destructive"><AlertTitle>Upload gagal</AlertTitle><AlertDescription>{errorFeedback}</AlertDescription></Alert> : null}
               </CardContent>
             </Card>
@@ -589,7 +607,7 @@ export function InspectionShow() {
           {activeSection === "review" ? (
             <div className="space-y-4">
               <Card className="rounded-2xl shadow-sm">
-                <CardHeader><CardTitle className="text-base">Review & Simpan</CardTitle><p className="text-sm text-muted-foreground">Periksa kembali fakta sebelum command completion dikirim.</p></CardHeader>
+                <CardHeader><CardTitle className="text-base">Tinjau & Simpan</CardTitle><p className="text-sm text-muted-foreground">Periksa kembali data sebelum hasil pemeriksaan disimpan.</p></CardHeader>
                 <CardContent className="grid gap-3 sm:grid-cols-2">
                   {[
                     ["Hasil Pemeriksaan", effectiveCurrent?.hasil === "pending" ? semanticInspectionLabel(hasil) : semanticInspectionLabel(effectiveCurrent?.hasil)],
@@ -603,17 +621,17 @@ export function InspectionShow() {
               </Card>
               {effectiveCurrent?.hasil === "pending" ? (
                 <>
-                  {reviewBlocked ? <Alert variant="destructive"><AlertTitle>Review belum valid</AlertTitle><AlertDescription>{hasil === "normal" ? "Hasil Normal tidak boleh memiliki finding." : "Ada Temuan memerlukan minimal satu finding."}</AlertDescription></Alert> : null}
+                  {reviewBlocked ? <Alert variant="destructive"><AlertTitle>Tinjauan belum lengkap</AlertTitle><AlertDescription>{hasil === "normal" ? "Hasil Normal tidak boleh memiliki finding." : "Ada Temuan memerlukan minimal satu finding."}</AlertDescription></Alert> : null}
                   <Card className="rounded-2xl border-primary/15 bg-primary/[0.025] shadow-sm lg:sticky lg:bottom-4">
                     <CardContent className="space-y-3 p-4">
                       <Button className="h-12 w-full rounded-xl text-base" disabled={completeMutation.isPending || photoUploading || Boolean(unknownFeedback) || reviewBlocked} onClick={() => completeMutation.mutate()}>
                         {completeMutation.isPending ? "Menyimpan Pemeriksaan…" : <>Simpan Pemeriksaan <Check /></>}
                       </Button>
-                      <p className="text-center text-xs leading-5 text-muted-foreground">Pemeriksaan selesai tidak otomatis membuat unit READY. Keputusan akan diteruskan ke readiness review atau Perawatan sesuai contract.</p>
+                      <p className="text-center text-xs leading-5 text-muted-foreground">Pemeriksaan selesai tidak otomatis membuat unit menjadi Siap Disewakan. Keputusan akan diteruskan ke verifikasi kesiapan atau Perawatan sesuai aturan.</p>
                     </CardContent>
                   </Card>
                 </>
-              ) : <Alert><FileCheck2 className="size-4" /><AlertTitle>Pemeriksaan Completed</AlertTitle><AlertDescription>Pemeriksaan ini sudah menjadi fakta historis. Reinspection membuat record baru, bukan overwrite.</AlertDescription></Alert>}
+              ) : <Alert><FileCheck2 className="size-4" /><AlertTitle>Pemeriksaan Selesai</AlertTitle><AlertDescription>Pemeriksaan ini sudah menjadi riwayat. Pemeriksaan ulang membuat pemeriksaan baru dan tidak menimpa yang lama.</AlertDescription></Alert>}
             </div>
           ) : null}
 
@@ -621,20 +639,20 @@ export function InspectionShow() {
 
           <div className="flex items-center justify-between gap-2">
             <Button type="button" variant="outline" className="rounded-xl" disabled={sectionIndex === 0} onClick={previousSection}><ChevronLeft />Sebelumnya</Button>
-            {sectionIndex < SECTIONS.length - 1 ? <Button type="button" className="rounded-xl" onClick={nextSection}>Lanjut <ChevronRight /></Button> : <span className="text-xs text-muted-foreground">Review terakhir sebelum simpan</span>}
+            {sectionIndex < SECTIONS.length - 1 ? <Button type="button" className="rounded-xl" onClick={nextSection}>Lanjut <ChevronRight /></Button> : <span className="text-xs text-muted-foreground">Tinjauan terakhir sebelum simpan</span>}
           </div>
 
           {(effectiveCurrent?.hasil !== "pending" && item.history.length > 0) || activeSection === "review" ? (
             <Card className="rounded-2xl shadow-sm">
-              <CardHeader><CardTitle className="text-base">Inspection History</CardTitle><p className="text-sm text-muted-foreground">Current result dan historical inspection tidak saling menghapus.</p></CardHeader>
+              <CardHeader><CardTitle className="text-base">Riwayat Pemeriksaan</CardTitle><p className="text-sm text-muted-foreground">Hasil terbaru dan riwayat pemeriksaan tetap tersimpan.</p></CardHeader>
               <CardContent className="space-y-4">
                 {item.history.length === 0 ? <p className="text-sm text-muted-foreground">Belum ada history.</p> : item.history.map((history, index) => (
                   <div key={history.pemeriksaan_id} className="relative pl-7">
                     {index < item.history.length - 1 ? <div className="absolute left-2.5 top-7 h-[calc(100%+16px)] w-px bg-border" aria-hidden="true" /> : null}
                     <div className={`absolute left-0 top-1 grid size-5 place-items-center rounded-full border-2 ${index === 0 ? "border-primary bg-primary/10" : "border-muted-foreground/25 bg-background"}`}><span className="size-2 rounded-full bg-primary" /></div>
                     <div className="rounded-2xl border p-4">
-                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-semibold">{index === 0 ? "Latest Inspection" : "Inspection " + (index + 1)}</p><p className="text-xs text-muted-foreground">{formatInspectionDateTime(history.diperiksa_at)} · {history.pemeriksaan_id}</p></div><Badge variant={history.hasil === "normal" ? "outline" : "secondary"} className="w-fit rounded-full">{semanticInspectionLabel(history.hasil)}</Badge></div>
-                      <div className="mt-3 grid gap-3 sm:grid-cols-4"><div><p className="text-xs text-muted-foreground">Kelengkapan</p><p className="mt-1 text-sm font-medium">{semanticInspectionLabel(history.kelengkapan_status)}</p></div><div><p className="text-xs text-muted-foreground">Keputusan</p><p className="mt-1 text-sm font-medium">{decisionLabel(history.keputusan_operasional)}</p></div><div><p className="text-xs text-muted-foreground">Finding</p><p className="mt-1 text-sm font-medium">{history.findings.length}</p></div><div><p className="text-xs text-muted-foreground">Evidence</p><p className="mt-1 text-sm font-medium">{history.evidences.length}</p></div></div>
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-semibold">{index === 0 ? "Pemeriksaan Terbaru" : "Pemeriksaan " + (index + 1)}</p><p className="text-xs text-muted-foreground">{formatInspectionDateTime(history.diperiksa_at)} · {history.pemeriksaan_id}</p></div><Badge variant={history.hasil === "normal" ? "outline" : "secondary"} className="w-fit rounded-full">{semanticInspectionLabel(history.hasil)}</Badge></div>
+                      <div className="mt-3 grid gap-3 sm:grid-cols-4"><div><p className="text-xs text-muted-foreground">Kelengkapan</p><p className="mt-1 text-sm font-medium">{semanticInspectionLabel(history.kelengkapan_status)}</p></div><div><p className="text-xs text-muted-foreground">Keputusan</p><p className="mt-1 text-sm font-medium">{decisionLabel(history.keputusan_operasional)}</p></div><div><p className="text-xs text-muted-foreground">Temuan</p><p className="mt-1 text-sm font-medium">{history.findings.length}</p></div><div><p className="text-xs text-muted-foreground">Bukti Foto</p><p className="mt-1 text-sm font-medium">{history.evidences.length}</p></div></div>
                     </div>
                   </div>
                 ))}
@@ -646,7 +664,7 @@ export function InspectionShow() {
 
       <Dialog open={cameraOpen} onOpenChange={setCameraOpen}>
         <DialogContent className="max-w-xl rounded-3xl p-0">
-          <DialogHeader className="border-b px-4 py-3"><div className="flex items-center justify-between"><div><DialogTitle>Bukti Foto Kondisi</DialogTitle><DialogDescription>Gunakan kamera belakang untuk menangkap evidence fisik.</DialogDescription></div><Button type="button" variant="ghost" size="icon" aria-label="Tutup kamera" className="rounded-xl" onClick={() => setCameraOpen(false)}><X /></Button></div></DialogHeader>
+          <DialogHeader className="border-b px-4 py-3"><div className="flex items-center justify-between"><div><DialogTitle>Bukti Foto Kondisi</DialogTitle><DialogDescription>Gunakan kamera belakang untuk mengambil bukti foto kondisi unit.</DialogDescription></div><Button type="button" variant="ghost" size="icon" aria-label="Tutup kamera" className="rounded-xl" onClick={() => setCameraOpen(false)}><X /></Button></div></DialogHeader>
           <div className="space-y-3 p-4">
             <div className="relative aspect-[4/3] overflow-hidden rounded-2xl bg-black">
               <video ref={videoRef} playsInline muted className="h-full w-full object-cover" aria-label="Pratinjau kamera pemeriksaan" />

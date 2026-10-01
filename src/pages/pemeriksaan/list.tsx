@@ -77,12 +77,12 @@ export function InspectionList() {
           <div className="flex flex-col gap-2 lg:flex-row">
             <label className="relative min-w-0 flex-1" htmlFor="inspection-search">
               <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-              <Input id="inspection-search" value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void queue.refetch(); }} className="h-11 rounded-xl pl-9" placeholder="Cari kode unit, barang, nomor return, atau nama penyewa..." />
+              <Input id="inspection-search" value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void queue.refetch(); }} className="h-11 rounded-xl pl-9" placeholder="Cari kode unit, barang, nomor pengembalian, atau nama penyewa..." />
             </label>
             <Button type="button" className="h-11 rounded-xl lg:w-auto" onClick={() => void queue.refetch()}><Search /> Cari</Button>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground"><SlidersHorizontal className="size-4" aria-hidden="true" />Filter state</div>
+            <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground"><SlidersHorizontal className="size-4" aria-hidden="true" />Saring berdasarkan status</div>
             {([
               ["all", "Semua"],
               ["waiting", "Menunggu"],
@@ -91,7 +91,7 @@ export function InspectionList() {
             ] as const).map(([value, label]) => (
               <Button key={value} type="button" size="sm" variant={activeState === value ? "default" : "outline"} className="rounded-xl" onClick={() => setActiveState(value)}>{label}</Button>
             ))}
-            <Button type="button" variant="ghost" size="sm" className="rounded-xl" onClick={() => { setSearch(""); setActiveState("all"); }}>Reset</Button>
+            <Button type="button" variant="ghost" size="sm" className="rounded-xl" onClick={() => { setSearch(""); setActiveState("all"); }}>Atur Ulang</Button>
           </div>
         </CardContent>
       </Card>
@@ -108,7 +108,7 @@ export function InspectionList() {
           <CardContent className="flex min-h-64 flex-col items-center justify-center gap-3 p-6 text-center">
             <div className="grid size-12 place-items-center rounded-2xl bg-primary/10 text-primary"><ClipboardCheck className="size-6" /></div>
             <p className="font-semibold">{activeState === "all" && !search ? "Tidak ada unit menunggu pemeriksaan" : "Tidak ada hasil sesuai filter"}</p>
-            <p className="max-w-md text-sm leading-6 text-muted-foreground">{activeState === "all" && !search ? "Unit yang benar-benar sudah diterima dan masuk konteks inspection_pending akan muncul di sini." : "Ubah kata pencarian atau filter state untuk melihat unit lain."}</p>
+            <p className="max-w-md text-sm leading-6 text-muted-foreground">{activeState === "all" && !search ? "Unit yang benar-benar sudah diterima dan menunggu pemeriksaan akan muncul di sini." : "Ubah kata pencarian atau saringan untuk melihat unit lain."}</p>
           </CardContent>
         </Card>
       ) : (
@@ -140,7 +140,7 @@ export function InspectionList() {
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="bg-muted/35 text-left"><tr>
-                    <th className="px-5 py-3 font-medium">No. Return</th><th className="px-5 py-3 font-medium">Kode Unit</th><th className="px-5 py-3 font-medium">Barang / Varian</th><th className="px-5 py-3 font-medium">Penyewa</th><th className="px-5 py-3 font-medium">Diterima</th><th className="px-5 py-3 font-medium">Hasil Terakhir</th><th className="px-5 py-3 font-medium">Keputusan</th><th className="px-5 py-3 font-medium">State</th><th className="px-5 py-3 text-right font-medium">Aksi</th>
+                    <th className="px-5 py-3 font-medium">No. Pengembalian</th><th className="px-5 py-3 font-medium">Kode Unit</th><th className="px-5 py-3 font-medium">Barang / Varian</th><th className="px-5 py-3 font-medium">Penyewa</th><th className="px-5 py-3 font-medium">Diterima</th><th className="px-5 py-3 font-medium">Hasil Terakhir</th><th className="px-5 py-3 font-medium">Keputusan</th><th className="px-5 py-3 font-medium">Status</th><th className="px-5 py-3 text-right font-medium">Aksi</th>
                   </tr></thead>
                   <tbody>{rows.map((item) => <tr key={item.detail_pengembalian_id} className="border-b last:border-0">
                     <td className="px-5 py-4 font-medium">{item.nomor_pengembalian}</td>
@@ -160,7 +160,7 @@ export function InspectionList() {
         </>
       )}
 
-      <div className="flex items-center justify-between text-xs text-muted-foreground"><span>Menampilkan {rows.length} unit pemeriksaan</span><span className="hidden sm:inline-flex items-center gap-1"><Filter className="size-3.5" /> State tidak mengubah ownership domain.</span></div>
+      <div className="flex items-center justify-between text-xs text-muted-foreground"><span>Menampilkan {rows.length} unit pemeriksaan</span><span className="hidden sm:inline-flex items-center gap-1"><Filter className="size-3.5" /> Saringan hanya membantu menemukan data.</span></div>
     </div>
   );
 }

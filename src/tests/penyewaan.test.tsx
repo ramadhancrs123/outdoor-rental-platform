@@ -44,7 +44,7 @@ describe("Penyewaan read-side",()=> {
     serviceMock.listRentals.mockResolvedValue({rentals:[rental],total:1});
     wrapper(<RentalList/>,"/penyewaan");
     expect((await screen.findAllByText("RNT-001")).length).toBeGreaterThan(0);
-    expect(screen.getByText(/Usage Truth/)).toBeInTheDocument();
+    expect(screen.getByText(/Data Penyewaan/)).toBeInTheDocument();
     expect(screen.getByText("2")).toBeInTheDocument();
   });
   test("rental detail keeps inventory and finance ownership boundaries",async()=> {
@@ -60,6 +60,6 @@ describe("Penyewaan read-side",()=> {
     render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><MemoryRouter initialEntries={["/penyewaan/rental-1"]}><Routes><Route path="/penyewaan/:id" element={<RentalShow/>}/></Routes></MemoryRouter></QueryClientProvider>);
     expect(await screen.findByRole("heading",{level:1,name:"RNT-001"})).toBeInTheDocument();
     expect(screen.getByText("TD4P-001")).toBeInTheDocument();
-    expect(screen.getByText(/Payment tetap dimiliki Keuangan/)).toBeInTheDocument();
+    expect(screen.getByText(/Pembayaran tetap dikelola oleh Keuangan/)).toBeInTheDocument();
   });
 });

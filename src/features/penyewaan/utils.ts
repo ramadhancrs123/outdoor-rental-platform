@@ -1,5 +1,16 @@
 export function semanticRentalLabel(value: string | null | undefined) {
   if (!value) return "-";
+  const labels: Record<string, string> = {
+    draft: "Draf",
+    active: "Aktif",
+    confirmed: "Dikonfirmasi",
+    ready_for_pickup: "Siap Diambil",
+    return_in_progress: "Pengembalian Sedang Diproses",
+    completed: "Selesai",
+    cancelled: "Dibatalkan",
+    returned: "Sudah Dikembalikan",
+  };
+  if (labels[value]) return labels[value];
   return value.toLowerCase().split("_").filter(Boolean).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
 }
 

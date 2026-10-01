@@ -115,7 +115,7 @@ export function PerawatanCreate() {
   const mutation = useMutation({
     mutationFn: async () => {
       if (!context.data) throw new Error("Konteks Usaha belum siap.");
-      if (!sourceReady) throw new Error(source === "manual" ? "Unit dan alasan maintenance manual wajib diisi." : "Pilih Inspection Source.");
+      if (!sourceReady) throw new Error(source === "manual" ? "Unit dan alasan maintenance manual wajib diisi." : "Pilih Asal Pemeriksaan.");
       const parsedCost = cost.trim() === "" ? null : Number(cost);
       if (parsedCost !== null && (!Number.isFinite(parsedCost) || parsedCost < 0)) {
         throw new Error("Biaya harus berupa angka nol atau lebih.");
@@ -158,13 +158,13 @@ export function PerawatanCreate() {
     return <Alert variant="destructive"><AlertTitle>Perawatan belum dapat dibuka</AlertTitle><AlertDescription>{errorMessage(context.error, "Usaha aktif tidak tersedia.")}</AlertDescription></Alert>;
   }
 
-  const stepLabels = ["Sumber & Unit", "Detail Pekerjaan", "Review"];
+  const stepLabels = ["Sumber & Unit", "Detail Pekerjaan", "Tinjau"];
 
   const renderSource = () => (
     <div className="space-y-5">
       <div>
-        <p className="text-sm font-semibold">Sumber Perawatan</p>
-        <p className="mt-1 text-sm text-muted-foreground">Tentukan konteks sebelum detail pekerjaan diisi.</p>
+        <p className="text-sm font-semibold">Mulai Perawatan</p>
+        <p className="mt-1 text-sm text-muted-foreground">Pilih hasil pemeriksaan atau pilih unit langsung. Setelah unit dipilih, lanjutkan ke detail pekerjaan.</p>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
@@ -177,8 +177,8 @@ export function PerawatanCreate() {
             <div className="grid size-10 place-items-center rounded-xl bg-emerald-50 text-emerald-700"><CheckCircle2 className="size-5" /></div>
             {source === "inspection" ? <Badge className="rounded-full">Dipilih</Badge> : null}
           </div>
-          <p className="mt-3 font-semibold">Dari Pemeriksaan</p>
-          <p className="mt-1 text-sm leading-5 text-muted-foreground">Buat perawatan dari hasil temuan pemeriksaan.</p>
+          <p className="mt-3 font-semibold">Dari hasil pemeriksaan</p>
+          <p className="mt-1 text-sm leading-5 text-muted-foreground">Pilih pemeriksaan yang menemukan kondisi yang perlu ditangani.</p>
         </button>
 
         <button
@@ -190,16 +190,16 @@ export function PerawatanCreate() {
             <div className="grid size-10 place-items-center rounded-xl bg-slate-100 text-slate-700"><Wrench className="size-5" /></div>
             {source === "manual" ? <Badge className="rounded-full">Dipilih</Badge> : null}
           </div>
-          <p className="mt-3 font-semibold">Manual</p>
-          <p className="mt-1 text-sm leading-5 text-muted-foreground">Buat perawatan tanpa Inspection Source.</p>
+          <p className="mt-3 font-semibold">Pilih unit langsung</p>
+          <p className="mt-1 text-sm leading-5 text-muted-foreground">Gunakan jalur ini bila perawatan perlu dibuat tanpa hasil pemeriksaan.</p>
         </button>
       </div>
 
       <Alert>
         <Info className="size-4" />
-        <AlertTitle>Maintenance tanpa pemeriksaan</AlertTitle>
+        <AlertTitle>Pilih unit dengan cara yang sederhana</AlertTitle>
         <AlertDescription>
-          Jalur manual diperbolehkan pada fase ini, tetapi alasan wajib dicatat. Jalur manual hanya dapat memilih unit yang READY saat ini.
+          Ketik kode unit atau nama barang untuk mempersempit pilihan. Jalur langsung hanya menampilkan unit yang saat ini Siap Disewakan.
         </AlertDescription>
       </Alert>
 
@@ -207,46 +207,76 @@ export function PerawatanCreate() {
         <div className="space-y-3">
           <label className="grid gap-2 text-sm font-medium" htmlFor="inspection-search">Cari pemeriksaan</label>
           <Input id="inspection-search" value={inspectionSearch} onChange={(e) => setInspectionSearch(e.target.value)} placeholder="Nomor pemeriksaan, kode unit, atau temuan..." />
-          <select
-            className="h-11 w-full rounded-xl border bg-background px-3 text-sm"
-            value={inspectionId}
-            onChange={(e) => setInspectionId(e.target.value)}
-            aria-label="Pilih pemeriksaan"
-          >
-            <option value="">Pilih Inspection Source</option>
-            {(inspections.data ?? []).map((item) => (
-              <option key={item.pemeriksaan_id} value={item.pemeriksaan_id}>
-                {item.kode_unit} · {item.barang_nama ?? "Barang"} · {semanticMaintenanceLabel(item.keputusan_operasional)}
-              </option>
-            ))}
-          </select>
-          {selectedInspection ? (
-            <div className="rounded-2xl border p-4">
-              <div className="flex items-start gap-3">
-                <div className="grid size-11 shrink-0 place-items-center rounded-xl bg-sky-50 text-sky-700"><Wrench className="size-5" /></div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2"><p className="font-semibold">{selectedInspection.kode_unit}</p><Badge variant="outline" className="rounded-full">{selectedInspection.finding_count} temuan</Badge></div>
-                  <p className="text-sm text-muted-foreground">{selectedInspection.barang_nama ?? "-"}{selectedInspection.varian_nama ? " · " + selectedInspection.varian_nama : ""}</p>
-                  <p className="mt-2 text-sm">{selectedInspection.finding_summary ?? "Temuan pemeriksaan tersedia."}</p>
-                  <p className="mt-2 text-xs text-muted-foreground">{formatMaintenanceDateTime(selectedInspection.diperiksa_at)} · {semanticMaintenanceLabel(selectedInspection.keputusan_operasional)}</p>
-                </div>
-              </div>
-            </div>
-          ) : inspections.data?.length === 0 && !inspections.isPending ? (
-            <div className="rounded-2xl border border-dashed p-5 text-sm text-muted-foreground">Belum ada hasil pemeriksaan yang tersedia untuk dibuatkan maintenance.</div>
+          <div className="grid gap-2">
+            {(inspections.data ?? []).map((item) => {
+              const selected = item.pemeriksaan_id === inspectionId;
+              return (
+                <button
+                  key={item.pemeriksaan_id}
+                  type="button"
+                  onClick={() => setInspectionId(item.pemeriksaan_id)}
+                  className={[
+                    "rounded-2xl border p-4 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    selected ? "border-primary bg-primary/[0.04] ring-1 ring-primary/20" : "hover:bg-accent/25",
+                  ].join(" ")}
+                  aria-pressed={selected}
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="grid size-11 shrink-0 place-items-center rounded-xl bg-sky-50 text-sky-700"><Wrench className="size-5" /></div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="font-semibold">{item.kode_unit}</p>
+                        <Badge variant={selected ? "default" : "outline"} className="rounded-full">{item.finding_count} temuan</Badge>
+                        {selected ? <Badge variant="secondary" className="rounded-full">Dipilih</Badge> : null}
+                      </div>
+                      <p className="text-sm text-muted-foreground">{item.barang_nama ?? "-"}{item.varian_nama ? " · " + item.varian_nama : ""}</p>
+                      <p className="mt-2 line-clamp-2 text-sm">{item.finding_summary ?? "Temuan pemeriksaan tersedia."}</p>
+                      <p className="mt-2 text-xs text-muted-foreground">{formatMaintenanceDateTime(item.diperiksa_at)} · {semanticMaintenanceLabel(item.keputusan_operasional)}</p>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+          {inspections.isPending ? <div className="rounded-2xl border border-dashed p-5 text-sm text-muted-foreground">Mencari hasil pemeriksaan…</div> : null}
+          {!inspections.isPending && inspections.data?.length === 0 ? (
+            <div className="rounded-2xl border border-dashed p-5 text-sm text-muted-foreground">Belum ada hasil pemeriksaan yang tersedia untuk dibuatkan perawatan.</div>
           ) : null}
         </div>
       ) : (
         <div className="space-y-3">
-          <label className="grid gap-2 text-sm font-medium" htmlFor="unit-search">Pilih Unit READY</label>
-          <Input id="unit-search" value={unitSearch} onChange={(e) => setUnitSearch(e.target.value)} placeholder="Cari kode unit atau barang..." />
-          <select className="h-11 w-full rounded-xl border bg-background px-3 text-sm" value={unitId} onChange={(e) => setUnitId(e.target.value)} aria-label="Pilih unit READY">
-            <option value="">Pilih unit</option>
-            {(units.data ?? []).filter((item) => item.status === "ready").map((item) => (
-              <option key={item.unit_barang_id} value={item.unit_barang_id}>{item.kode_unit} · {item.barang_nama ?? "Barang"} · READY</option>
-            ))}
-          </select>
-          {selectedManualUnit ? <Badge variant="secondary" className="rounded-full">Unit dipilih · READY</Badge> : null}
+          <label className="grid gap-2 text-sm font-medium" htmlFor="unit-search">Cari unit</label>
+          <Input id="unit-search" value={unitSearch} onChange={(e) => setUnitSearch(e.target.value)} placeholder="Ketik kode unit atau nama barang…" />
+          <div className="grid gap-2 sm:grid-cols-2">
+            {(units.data ?? []).filter((item) => item.status === "ready").map((item) => {
+              const selected = item.unit_barang_id === unitId;
+              return (
+                <button
+                  key={item.unit_barang_id}
+                  type="button"
+                  onClick={() => setUnitId(item.unit_barang_id)}
+                  className={[
+                    "rounded-2xl border p-4 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    selected ? "border-primary bg-primary/[0.04] ring-1 ring-primary/20" : "hover:bg-accent/25",
+                  ].join(" ")}
+                  aria-pressed={selected}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-semibold">{item.kode_unit}</p>
+                      <p className="mt-1 text-sm text-muted-foreground">{item.barang_nama ?? "Barang"}</p>
+                    </div>
+                    <Badge variant={selected ? "default" : "secondary"} className="rounded-full">Siap Disewakan</Badge>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+          {units.isPending ? <div className="rounded-2xl border border-dashed p-5 text-sm text-muted-foreground">Mencari unit…</div> : null}
+          {!units.isPending && (units.data ?? []).filter((item) => item.status === "ready").length === 0 ? (
+            <div className="rounded-2xl border border-dashed p-5 text-sm text-muted-foreground">Tidak ada unit Siap Disewakan yang cocok. Coba kata kunci lain.</div>
+          ) : null}
+          {selectedManualUnit ? <Badge variant="secondary" className="rounded-full">Unit dipilih · Siap Disewakan</Badge> : null}
         </div>
       )}
 
@@ -264,7 +294,7 @@ export function PerawatanCreate() {
           <div className="grid size-12 shrink-0 place-items-center rounded-xl bg-background"><Wrench className="size-5 text-primary" /></div>
           <div className="min-w-0 flex-1">
             <p className="font-semibold">{selectedUnitLabel || "Unit belum dipilih"}</p>
-            <p className="mt-1 text-sm text-muted-foreground">{source === "inspection" ? "Source · Pemeriksaan" : "Source · Manual Maintenance"}</p>
+            <p className="mt-1 text-sm text-muted-foreground">{source === "inspection" ? "Asal · Pemeriksaan" : "Asal · Perawatan Manual"}</p>
           </div>
           <Badge variant={source === "inspection" ? "secondary" : "outline"} className="rounded-full">{source === "inspection" ? "Pemeriksaan" : "Manual"}</Badge>
         </div>
@@ -272,7 +302,7 @@ export function PerawatanCreate() {
 
       <div className="grid gap-4 lg:grid-cols-[180px_minmax(0,1fr)]">
         <label className="grid gap-2 text-sm font-medium">Jenis Perawatan
-          <select className="h-11 rounded-xl border bg-background px-3" value={type} onChange={(e) => setType(e.target.value)}><option value="repair">Repair</option><option value="cleaning">Cleaning</option><option value="replacement">Replacement</option><option value="inspection_follow_up">Tindak lanjut pemeriksaan</option><option value="other">Lainnya</option></select>
+          <select className="h-11 rounded-xl border bg-background px-3" value={type} onChange={(e) => setType(e.target.value)}><option value="repair">Perbaikan</option><option value="cleaning">Pembersihan</option><option value="replacement">Penggantian</option><option value="inspection_follow_up">Tindak lanjut pemeriksaan</option><option value="other">Lainnya</option></select>
         </label>
         <label className="grid gap-2 text-sm font-medium">Deskripsi Pekerjaan
           <Textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Contoh: Ganti resleting sisi kiri dan uji buka-tutup." rows={4} />
@@ -287,19 +317,19 @@ export function PerawatanCreate() {
         <label className="grid gap-2 text-sm font-medium">Biaya Perawatan
           <Input type="number" min="0" value={cost} onChange={(e) => setCost(e.target.value)} placeholder="150000" />
         </label>
-        <label className="grid gap-2 text-sm font-medium">Currency
+        <label className="grid gap-2 text-sm font-medium">Mata Uang
           <Input value="IDR" readOnly />
         </label>
       </div>
 
       <label className="grid gap-2 text-sm font-medium">
-        {source === "inspection" ? "Catatan" : "Alasan maintenance manual *"}
-        <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder={source === "inspection" ? "Catatan pekerjaan atau konteks tambahan" : "Jelaskan kenapa maintenance dibuat tanpa Inspection Source"} rows={4} required={source === "manual"} />
+        {source === "inspection" ? "Catatan" : "Alasan perawatan manual *"}
+        <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder={source === "inspection" ? "Catatan pekerjaan atau konteks tambahan" : "Jelaskan alasan perawatan dibuat tanpa mengacu pada Pemeriksaan"} rows={4} required={source === "manual"} />
       </label>
 
       <div className="flex flex-col gap-2 sm:flex-row sm:justify-between">
         <Button variant="outline" className="rounded-xl" onClick={() => setStep(1)}><ArrowLeft />Kembali</Button>
-        <Button className="rounded-xl sm:min-w-48" disabled={!detailReady || (source === "manual" && !notes.trim())} onClick={() => setStep(3)}>Lanjut ke Review <ArrowRight /></Button>
+        <Button className="rounded-xl sm:min-w-48" disabled={!detailReady || (source === "manual" && !notes.trim())} onClick={() => setStep(3)}>Lanjut ke Tinjauan <ArrowRight /></Button>
       </div>
     </div>
   );
@@ -309,7 +339,7 @@ export function PerawatanCreate() {
       <div className="grid gap-3 lg:grid-cols-2">
         <Card className="rounded-2xl">
           <CardHeader><CardTitle className="text-base">Unit</CardTitle></CardHeader>
-          <CardContent><p className="font-semibold">{selectedUnitLabel}</p><p className="mt-1 text-sm text-muted-foreground">{source === "inspection" ? "Source " + (selectedInspection?.pemeriksaan_id ?? "-") : "Manual Maintenance · unit READY"}</p></CardContent>
+          <CardContent><p className="font-semibold">{selectedUnitLabel}</p><p className="mt-1 text-sm text-muted-foreground">{source === "inspection" ? "Asal " + (selectedInspection?.pemeriksaan_id ?? "-") : "Perawatan Manual · unit Siap Disewakan"}</p></CardContent>
         </Card>
         <Card className="rounded-2xl">
           <CardHeader><CardTitle className="text-base">Pekerjaan</CardTitle></CardHeader>
@@ -320,13 +350,13 @@ export function PerawatanCreate() {
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="rounded-2xl border p-4"><p className="text-xs text-muted-foreground">Pelaksana</p><p className="mt-1 font-semibold">{executor}</p></div>
         <div className="rounded-2xl border p-4"><p className="text-xs text-muted-foreground">Biaya Perawatan</p><p className="mt-1 font-semibold">{cost ? new Intl.NumberFormat("id-ID").format(Number(cost)) + " IDR" : "Belum dicatat"}</p></div>
-        <div className="rounded-2xl border p-4 sm:col-span-2"><p className="text-xs text-muted-foreground">{source === "inspection" ? "Catatan" : "Alasan maintenance manual"}</p><p className="mt-1 whitespace-pre-wrap text-sm">{notes || "-"}</p></div>
+        <div className="rounded-2xl border p-4 sm:col-span-2"><p className="text-xs text-muted-foreground">{source === "inspection" ? "Catatan" : "Alasan perawatan manual"}</p><p className="mt-1 whitespace-pre-wrap text-sm">{notes || "-"}</p></div>
       </div>
 
       <Alert>
         <Info className="size-4" />
-        <AlertTitle>Review sebelum membuat</AlertTitle>
-        <AlertDescription>Record akan dibuat sebagai <strong>Direncanakan</strong>. Completion tidak otomatis membuat unit READY.</AlertDescription>
+        <AlertTitle>Tinjauan sebelum membuat</AlertTitle>
+        <AlertDescription>Data akan dibuat sebagai <strong>Direncanakan</strong>. Perawatan selesai tidak otomatis membuat unit menjadi Siap Disewakan.</AlertDescription>
       </Alert>
 
       {errorFeedback ? (
@@ -338,9 +368,9 @@ export function PerawatanCreate() {
               const result = await reconcileMaintenanceCommand(context.data.usahaId, "create_maintenance", unknownKey);
               if (result.state === "committed" && result.response?.perawatan_id) navigate(paths.perawatan + "/" + String(result.response.perawatan_id));
               else if (result.state === "not_found") setErrorFeedback("Command tidak ditemukan. Muat state terbaru sebelum membuat record baru.");
-              else setErrorFeedback("Command masih UNKNOWN_OUTCOME. Jangan membuat maintenance kedua.");
+              else setErrorFeedback("Hasil pembuatan perawatan belum dapat dipastikan. Jangan mengulang pembuatan perawatan.");
             } catch (error) { setErrorFeedback(errorMessage(error, "Rekonsiliasi gagal.")); }
-          }}>Periksa Status Command</Button> : null}</AlertDescription>
+          }}>Periksa Status Tindakan</Button> : null}</AlertDescription>
         </Alert>
       ) : null}
 

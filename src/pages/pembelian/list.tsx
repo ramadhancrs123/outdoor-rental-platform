@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { ClipboardList, Plus, RefreshCw, Search, ChevronRight } from "lucide-react";
+import { Building2, ClipboardList, Plus, RefreshCw, Search, ChevronRight } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link } from "react-router";
 
@@ -55,7 +55,10 @@ export function PurchaseList() {
           <h1 className="mt-0.5 text-[26px] font-bold tracking-tight">Pembelian</h1>
           <p className="mt-1 text-sm text-muted-foreground">Kelola draft pembelian usaha Anda.</p>
         </div>
-        <Button asChild className="h-10 shrink-0 rounded-xl px-3 sm:px-4"><Link to={paths.pembelian + "/create"}><Plus /><span>Buat Draft Pembelian</span></Link></Button>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <Button asChild variant="outline" className="h-10 rounded-xl"><Link to={paths.pemasok}><Building2 /><span className="hidden sm:inline">Master Pemasok</span><span className="sm:hidden">Pemasok</span></Link></Button>
+          <Button asChild className="h-10 rounded-xl px-3 sm:px-4"><Link to={paths.pembelian + "/create"}><Plus /><span>Buat Draft Pembelian</span></Link></Button>
+        </div>
       </header>
 
       <div className="space-y-2">

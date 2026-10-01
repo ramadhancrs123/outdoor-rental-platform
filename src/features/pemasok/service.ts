@@ -319,7 +319,7 @@ export async function getPurchase(usahaId: string, pembelianId: string): Promise
       ? supabase.from("barang").select("barang_id,nama").eq("usaha_id", usahaId).in("barang_id", catalogIds)
       : Promise.resolve({ data: [], error: null }),
     variantIds.length
-      ? supabase.from("varian_barang").select("varian_barang_id,nama").eq("usaha_id", usahaId).in("varian_barang_id", variantIds)
+      ? supabase.from("varian_barang").select("varian_barang_id,barang_id,nama").eq("usaha_id", usahaId).in("varian_barang_id", variantIds)
       : Promise.resolve({ data: [], error: null }),
   ]);
 
@@ -328,6 +328,9 @@ export async function getPurchase(usahaId: string, pembelianId: string): Promise
 
   const catalogNames = new Map((catalogResult.data ?? []).map((row) => [row.barang_id as string, row.nama as string]));
   const variantNames = new Map((variantResult.data ?? []).map((row) => [row.varian_barang_id as string, row.nama as string]));
+  const variantProductIds = new Map(
+    (variantResult.data ?? []).map((row) => [row.varian_barang_id as string, row.barang_id as string]),
+  );
 
   return {
     ...purchase,
@@ -335,7 +338,17 @@ export async function getPurchase(usahaId: string, pembelianId: string): Promise
     line_count: lineCounts.get(purchase.pembelian_id) ?? 0,
     lines: lines.map((line) => ({
       ...line,
-      barang_nama: line.barang_id ? catalogNames.get(line.barang_id) ?? null : null,
+      // For variant-targeted purchase lines, resolve the parent product for
+      // editing/presentation. The command adapter will omit it on mutation.
+      barang_id:
+        line.barang_id ??
+        (line.varian_barang_id ? variantProductIds.get(line.varian_barang_id) ?? null : null),
+      barang_nama:
+        line.barang_id
+          ? catalogNames.get(line.barang_id) ?? null
+          : line.varian_barang_id
+            ? catalogNames.get(variantProductIds.get(line.varian_barang_id) ?? "") ?? null
+            : null,
       varian_nama: line.varian_barang_id ? variantNames.get(line.varian_barang_id) ?? null : null,
     })),
   };
@@ -393,13 +406,20 @@ async function executeProcurementCommand<T extends ProcurementCommandResponse>(
 }
 
 function normalizePurchaseLines(input: CreatePurchaseDraftInput["lines"]) {
-  return (input ?? []).map((line) => ({
-    barang_id: line.barangId ?? null,
-    varian_barang_id: line.varianBarangId ?? null,
-    deskripsi: line.deskripsi?.trim() || null,
-    jumlah: line.jumlah,
-    unit_price: line.unitPrice,
-  }));
+  return (input ?? []).map((line) => {
+    const variantId = line.varianBarangId?.trim() || null;
+
+    return {
+      // The purchase line has exactly one canonical target.
+      // A selected variant is itself the target; its parent product is
+      // presentation/context only and must not be sent alongside it.
+      barang_id: variantId ? null : line.barangId?.trim() || null,
+      varian_barang_id: variantId,
+      deskripsi: line.deskripsi?.trim() || null,
+      jumlah: line.jumlah,
+      unit_price: line.unitPrice,
+    };
+  });
 }
 
 export async function createSupplier(

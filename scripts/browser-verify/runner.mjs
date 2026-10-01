@@ -303,7 +303,7 @@ async function loginWithCredentials(page, credentials) {
 
   await page.getByLabel("Email").fill(credentials.email);
   await page.locator('input[type="password"]').first().fill(credentials.password);
-  await page.getByRole("button", { name: /^Sign in$/i }).click();
+  await page.getByRole("button", { name: /^(Masuk|Sign in)$/i }).click();
 
   await page.waitForURL(
     (url) => !url.pathname.startsWith("/login"),

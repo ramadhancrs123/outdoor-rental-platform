@@ -43,7 +43,7 @@ type LocationState = {
 const stepMeta = [
   { step: 1 as const, title: "Detail" },
   { step: 2 as const, title: "Item" },
-  { step: 3 as const, title: "Review" },
+  { step: 3 as const, title: "Tinjau" },
 ];
 
 function artworkFor(index: number) {
@@ -155,7 +155,7 @@ export function ReservationCreate() {
       }
 
       setReconciliationError(
-        "Permintaan sudah dikirim, namun hasil transaksi belum dapat dipastikan. Source of truth sudah diperiksa ulang dan tidak menunjukkan reservasi baru.",
+        "Permintaan sudah dikirim, namun hasil transaksi belum dapat dipastikan. Data sumber sudah diperiksa ulang dan tidak menunjukkan reservasi baru.",
       );
       setFlowMode("unknown");
     },
@@ -221,7 +221,7 @@ export function ReservationCreate() {
               Mohon jangan menutup halaman ini. Sistem sedang membuat reservasi dan memeriksa kesesuaian transaksi.
             </p>
             <div className="mt-7 w-full max-w-sm space-y-3 text-left">
-              {["Validasi data", "Memeriksa request", "Membuat reservasi", "Finalisasi"].map((label, index) => (
+              {["Validasi data", "Memeriksa Permintaan", "Membuat reservasi", "Finalisasi"].map((label, index) => (
                 <div key={label} className="flex items-center gap-3 text-sm">
                   <span className={cn(
                     "grid size-7 place-items-center rounded-full border",
@@ -250,7 +250,7 @@ export function ReservationCreate() {
                 <Check className="size-8" />
               </div>
             </div>
-            <p className="mt-8 text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700 dark:text-emerald-300">Transaction complete</p>
+            <p className="mt-8 text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700 dark:text-emerald-300">Reservasi berhasil dicatat</p>
             <h1 className="mt-2 text-2xl font-bold tracking-tight">Reservasi Berhasil Dibuat</h1>
             <p className="mt-2 text-sm text-muted-foreground">Nomor Reservasi</p>
             <p className="mt-1 text-2xl font-bold tracking-tight text-primary">{createdReservation?.nomor_reservasi ?? "Reservasi baru"}</p>
@@ -268,7 +268,7 @@ export function ReservationCreate() {
                 Kembali ke Permintaan
               </Button>
             </div>
-            <p className="mt-5 text-xs text-muted-foreground">Status hasil akhir tetap mengikuti source of truth transaction backend.</p>
+            <p className="mt-5 text-xs text-muted-foreground">Status hasil akhir mengikuti data transaksi yang tersimpan pada sistem.</p>
           </CardContent>
         </Card>
       </div>
@@ -288,7 +288,7 @@ export function ReservationCreate() {
               Kapasitas tidak cukup untuk periode tersebut. Silakan ubah periode atau jumlah item, lalu coba lagi.
             </p>
             <div className="mt-7 grid w-full max-w-sm grid-cols-2 gap-3">
-              <Metric label="Diminta" value={`${data.detail_count} line`} />
+              <Metric label="Diminta" value={`${data.detail_count} rincian`} />
               <Metric label="Tersedia" value="0" danger />
             </div>
             <div className="mt-7 grid w-full max-w-sm gap-3">
@@ -312,7 +312,7 @@ export function ReservationCreate() {
             </div>
             <h1 className="mt-7 text-2xl font-bold tracking-tight">Status Transaksi Belum Dapat Dipastikan</h1>
             <p className="mt-2 max-w-sm text-sm leading-6 text-muted-foreground">
-              Permintaan telah dikirim, namun status transaksi belum dapat dipastikan. Sistem sudah memeriksa source of truth.
+              Permintaan telah dikirim, namun status transaksi belum dapat dipastikan. Sistem sudah memeriksa data terbaru.
             </p>
             {reconciliationError && (
               <div className="mt-6 w-full rounded-2xl border bg-muted/40 p-4 text-left text-sm text-muted-foreground">
@@ -324,7 +324,7 @@ export function ReservationCreate() {
                 <Search className="size-4" /> Cek Status
               </Button>
               <Button variant="outline" className="h-11 rounded-xl" onClick={() => { setFlowMode("wizard"); setStep(3); }}>
-                Kembali ke Review
+                Kembali ke Tinjauan
               </Button>
             </div>
           </CardContent>
@@ -380,7 +380,7 @@ export function ReservationCreate() {
 
       {step === 1 && (
         <div className="space-y-4">
-          <SectionTitle title="Informasi Penyewa" subtitle="Pastikan konteks customer dan periode sudah benar." />
+          <SectionTitle title="Informasi Penyewa" subtitle="Pastikan data penyewa dan periode sudah benar." />
           <Card className="overflow-hidden border shadow-sm">
             <CardContent className="flex items-center gap-3 p-4">
               <div className="grid size-11 place-items-center rounded-full bg-stone-200 text-stone-700 dark:bg-stone-800 dark:text-stone-200">
@@ -388,13 +388,13 @@ export function ReservationCreate() {
               </div>
               <div className="min-w-0 flex-1">
                 <p className="font-semibold">{data.penyewa_nama}</p>
-                <p className="text-xs text-muted-foreground">{data.sumber === "admin" ? "Admin request" : "Customer request"}</p>
+                <p className="text-xs text-muted-foreground">{data.sumber === "admin" ? "Dari Admin" : "Dari Penyewa"}</p>
               </div>
               <Badge variant="outline">Ubah</Badge>
             </CardContent>
           </Card>
 
-          <SectionTitle title="Periode Rental" subtitle="Periode ini tetap mengikuti Permintaan." />
+          <SectionTitle title="Periode Penyewaan" subtitle="Periode ini tetap mengikuti Permintaan." />
           <Card className="shadow-sm">
             <CardContent className="p-4">
               <div className="flex items-center gap-3">
@@ -437,7 +437,7 @@ export function ReservationCreate() {
                 />
                 <div className="min-w-0 flex-1 py-1">
                   <p className="font-semibold">{line.barang_nama ?? line.varian_nama ?? line.paket_nama}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">{line.varian_nama ?? "Item rental"}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{line.varian_nama ?? "Barang"}</p>
                   <div className="mt-3 flex items-center justify-between gap-2">
                     <span className="text-xs text-muted-foreground">Jumlah permintaan</span>
                     <div className="flex items-center gap-2 rounded-xl border bg-muted/30 px-1.5 py-1">
@@ -453,9 +453,9 @@ export function ReservationCreate() {
 
           <Alert className="border-primary/10 bg-primary/[0.03]">
             <LockKeyhole className="size-4" />
-            <AlertTitle>Stock lock belum aktif</AlertTitle>
+            <AlertTitle>Penguncian stok belum aktif</AlertTitle>
             <AlertDescription>
-              Melanjutkan ke Review belum mengunci kapasitas. Stock lock hanya menjadi authoritative pada confirmation transaction.
+              Melanjutkan ke Tinjauan belum mengunci stok. Penguncian stok baru berlaku saat Reservasi dikonfirmasi.
             </AlertDescription>
           </Alert>
 
@@ -469,7 +469,7 @@ export function ReservationCreate() {
 
       {step === 3 && (
         <div className="space-y-4">
-          <SectionTitle title="Ringkasan Reservasi" subtitle="Review sebelum transaksi dikirim ke backend." />
+          <SectionTitle title="Ringkasan Reservasi" subtitle="Tinjauan sebelum transaksi dikirim ke sistem." />
           <Card className="shadow-sm">
             <CardContent className="space-y-3 p-4">
               <Row label="Penyewa" value={data.penyewa_nama ?? "-"} />
@@ -508,8 +508,8 @@ export function ReservationCreate() {
 
           <Alert className="border-amber-200 bg-amber-50 text-amber-950 dark:border-amber-900 dark:bg-amber-950/35 dark:text-amber-100">
             <ShieldCheck className="size-4" />
-            <AlertTitle>Payment bukan ownership Reservasi</AlertTitle>
-            <AlertDescription>Nilai ini adalah snapshot estimasi transaksi. Finalisasi payment tetap berada pada modul Keuangan.</AlertDescription>
+            <AlertTitle>Pembayaran dikelola oleh menu Keuangan</AlertTitle>
+            <AlertDescription>Nilai ini adalah perkiraan transaksi. Pencatatan pembayaran tetap dilakukan pada menu Keuangan.</AlertDescription>
           </Alert>
 
           {!allPricesFilled && (
@@ -528,7 +528,7 @@ export function ReservationCreate() {
       )}
 
       <div className="mt-8 flex items-center justify-center gap-2 text-[10px] text-muted-foreground">
-        <ShieldCheck className="size-3.5" /> Trusted transaction · tenant-scoped · idempotent
+        <ShieldCheck className="size-3.5" /> Transaksi aman untuk Usaha aktif
       </div>
     </div>
   );

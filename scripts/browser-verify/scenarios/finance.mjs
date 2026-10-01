@@ -228,8 +228,8 @@ export default async function financeScenario({ page, baseURL, capture }) {
   console.log("FINANCE_BODY_START", (await page.locator("body").innerText()).slice(0, 5000));
   await assertVisible(page, "Pendapatan Tercatat");
   await assertVisible(page, "Pergerakan Operasional Bersih");
-  await assertVisible(page, "Finance health");
-  await assertVisible(page, "exact attribution");
+  await assertVisible(page, "Status Keuangan");
+  await assertVisible(page, "Exact attribution only");
   await capture("finance-dashboard");
 
   const bodyWidth = await page.evaluate(() => document.body.scrollWidth);

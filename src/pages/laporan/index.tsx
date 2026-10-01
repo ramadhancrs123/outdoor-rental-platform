@@ -115,15 +115,15 @@ export function LaporanPage() {
             <CardContent className="grid gap-3 p-4 text-xs sm:grid-cols-2 lg:grid-cols-5">
               <div><p className="font-semibold text-foreground">Source</p><p className="mt-1 text-muted-foreground">Finance / transaksi keuangan</p></div>
               <div><p className="font-semibold text-foreground">Time basis</p><p className="mt-1 text-muted-foreground">{report.period.start_date} → {report.period.end_date_exclusive} · {report.period.timezone}</p></div>
-              <div><p className="font-semibold text-foreground">Tenant</p><p className="mt-1 text-muted-foreground">{current?.usahaNama ?? "Usaha aktif"}</p></div>
-              <div><p className="font-semibold text-foreground">Formula</p><p className="mt-1 text-muted-foreground">Net = recorded income − recorded expense; payment count dihitung dari Finance</p></div>
-              <div><p className="font-semibold text-foreground">Drill-down</p><p className="mt-1"><Link className="text-primary hover:underline" to={paths.keuangan + "/transaksi"}>Buka source record</Link></p></div>
+              <div><p className="font-semibold text-foreground">Usaha</p><p className="mt-1 text-muted-foreground">{current?.usahaNama ?? "Usaha aktif"}</p></div>
+              <div><p className="font-semibold text-foreground">Formula</p><p className="mt-1 text-muted-foreground">Bersih = pendapatan tercatat − pengeluaran tercatat; jumlah pembayaran dihitung dari Keuangan</p></div>
+              <div><p className="font-semibold text-foreground">Drill-down</p><p className="mt-1"><Link className="text-primary hover:underline" to={paths.keuangan + "/transaksi"}>Buka data sumber</Link></p></div>
             </CardContent>
           </Card>
 
           <section className="grid gap-5 xl:grid-cols-[1.1fr_.9fr]">
             <Card>
-              <CardHeader className="flex-row items-center justify-between gap-3"><CardTitle className="text-base">Transaksi Finansial</CardTitle><Badge variant="outline">{report.transactions.total} record</Badge></CardHeader>
+              <CardHeader className="flex-row items-center justify-between gap-3"><CardTitle className="text-base">Transaksi Finansial</CardTitle><Badge variant="outline">{report.transactions.total} data</Badge></CardHeader>
               <CardContent className="space-y-2">
                 {report.transactions.items.length === 0 ? <p className="text-sm text-muted-foreground">Tidak ada transaksi pada periode ini.</p> : report.transactions.items.map((row) => (
                   <Link key={row.transaksi_keuangan_id} to={paths.keuangan + "/transaksi/" + row.transaksi_keuangan_id} className="flex items-center justify-between gap-3 rounded-lg border p-3 hover:bg-muted/40">

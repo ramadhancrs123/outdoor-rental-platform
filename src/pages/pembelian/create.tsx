@@ -166,10 +166,10 @@ export function PurchaseCreate() {
         setMode("success");
       } else if (result.state === "not_found") {
         commandRef.current = null;
-        setFeedback("Command tidak ditemukan. State terbaru dapat diperiksa sebelum mencoba kembali.");
+        setFeedback("Perubahan belum ditemukan. Status terbaru dapat diperiksa sebelum mencoba kembali.");
         setMode("idle");
       } else {
-        setFeedback("Command masih belum dapat dipastikan. Jangan kirim command kedua.");
+        setFeedback("Hasil tindakan belum dapat dipastikan. Jangan kirim tindakan yang sama lagi.");
       }
     } catch (error) {
       setFeedback(errorMessage(error));
@@ -234,7 +234,7 @@ export function PurchaseCreate() {
         <Button asChild variant="ghost" size="icon" className="-ml-2 rounded-xl" aria-label="Kembali ke pembelian"><Link to={paths.pembelian}><ArrowLeft /></Link></Button>
         <div className="min-w-0">
           <p className="text-xs text-muted-foreground">Pembelian</p>
-          <h1 className="text-[22px] font-bold tracking-tight">{editing ? "Edit Draft Pembelian" : "Buat Draft Pembelian"}</h1>
+          <h1 className="text-[22px] font-bold tracking-tight">{editing ? "Ubah Draf Pembelian" : "Buat Draft Pembelian"}</h1>
           <p className="mt-1 text-sm text-muted-foreground">{context.data.usahaNama}</p>
         </div>
       </header>
@@ -275,7 +275,13 @@ export function PurchaseCreate() {
                     {(suppliers.data ?? []).map((supplier) => <SelectItem key={supplier.pemasok_id} value={supplier.pemasok_id}>{supplier.nama}</SelectItem>)}
                   </SelectContent>
                 </Select>
-                {(suppliers.data ?? []).length === 0 ? <p className="text-xs text-muted-foreground">Belum ada pemasok aktif. Pemasok tidak aktif tidak dapat dipilih untuk pembelian baru.</p> : null}
+                {(suppliers.data ?? []).length === 0 ? (
+                  <div className="rounded-xl border border-dashed p-3 text-sm">
+                    <p className="font-medium">Belum ada pemasok aktif.</p>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">Buat master pemasok terlebih dahulu. Setelah disimpan sebagai aktif, pemasok akan muncul di pilihan pembelian.</p>
+                    <Button asChild variant="outline" size="sm" className="mt-3 rounded-xl"><Link to={paths.pemasok + "/create"}><Plus />Tambah Pemasok</Link></Button>
+                  </div>
+                ) : null}
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2">

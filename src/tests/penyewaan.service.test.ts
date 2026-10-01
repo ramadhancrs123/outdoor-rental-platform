@@ -28,7 +28,7 @@ describe("Penyewaan trusted command service", () => {
     const capabilities = getRentalCapabilities();
     expect(capabilities.read).toBe(true);
     expect(capabilities.mutation).toBe(true);
-    expect(capabilities.reason).toMatch(/trusted commands/i);
+    expect(capabilities.reason).toMatch(/Penyewaan mendukung pembuatan langsung/i);
     expect(capabilities.commands).toContain("create_direct_rental");
   });
 
@@ -85,8 +85,11 @@ describe("Penyewaan trusted command service", () => {
       jadwal_kembali: "2026-10-11T01:00:00.000Z",
       lines: [{
         barang_id: "barang-1",
+        tarif_sewa_id: "tariff-1",
+        duration_periods: 2,
         jumlah: 2,
         unit_price: 75000,
+        subtotal: 300000,
         currency_code: "IDR",
       }],
       catatan: "walk-in",
@@ -110,7 +113,9 @@ describe("Penyewaan trusted command service", () => {
         jumlah: 2,
         unit_price: 75000,
         currency_code: "IDR",
-        subtotal: 150000,
+        subtotal: 300000,
+        tarif_sewa_id: "tariff-1",
+        duration_periods: 2,
         catatan: null,
       }],
       p_idempotency_key: "walkin-create-test",

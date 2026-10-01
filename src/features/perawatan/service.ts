@@ -227,7 +227,7 @@ export async function getMaintenanceWorkspace(usahaId: string, perawatanId: stri
     .eq("perawatan_id", perawatanId)
     .maybeSingle();
   if (maintenanceError) throw maintenanceError;
-  if (!maintenance) throw new Error("Maintenance tidak ditemukan.");
+  if (!maintenance) throw new Error("Perawatan tidak ditemukan.");
 
   const [unitResult, inspectionResult, historyResult] = await Promise.all([
     supabase
@@ -297,7 +297,7 @@ export async function createMaintenance(usahaId: string, input: CreateMaintenanc
   if (!input.jenisPerawatan.trim()) throw new Error("Jenis perawatan wajib diisi.");
   if (!input.deskripsiPekerjaan.trim()) throw new Error("Deskripsi pekerjaan wajib diisi.");
   if (!input.pemeriksaanId?.trim() && !input.catatan?.trim()) {
-    throw new Error("Maintenance tanpa Inspection Source wajib memiliki alasan.");
+    throw new Error("Perawatan tanpa mengacu pada Pemeriksaan wajib memiliki alasan.");
   }
 
   const { data, error } = await supabase.rpc("command_create_maintenance", {
@@ -354,7 +354,7 @@ export async function verifyMaintenanceReadiness(
   expectedUnitUpdatedAt: string,
   idempotencyKey = "verify-maintenance-" + crypto.randomUUID(),
 ) {
-  if (!input.perawatanId.trim()) throw new Error("Maintenance wajib dipilih.");
+  if (!input.perawatanId.trim()) throw new Error("Perawatan wajib dipilih.");
   if (!["passed", "failed"].includes(input.verificationResult)) {
     throw new Error("Hasil verification tidak valid.");
   }
@@ -394,6 +394,6 @@ export function getMaintenanceCapabilities(): MaintenanceCapabilities {
       "command_reconcile_maintenance_mutation",
     ],
     queries: ["listMaintenanceQueue","getMaintenanceWorkspace","listMaintenanceUnitCandidates"],
-    reason: "Perawatan memakai trusted command, tenant authorization, advisory lock, active-maintenance uniqueness, server timestamps, stale guards, idempotency, audit, outbox, dan reconciliation. Completion tidak mengubah unit menjadi READY; verification tetap menjadi langkah downstream.",
+    reason: "Perawatan diproses dengan validasi Usaha aktif, pencegahan perawatan ganda, pencatatan waktu otomatis, perlindungan data lama, audit, dan pemeriksaan ulang hasil tindakan. Perawatan selesai tidak otomatis membuat unit Siap Disewakan; verifikasi tetap diperlukan.",
   };
 }

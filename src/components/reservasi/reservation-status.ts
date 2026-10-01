@@ -2,19 +2,19 @@ export type ReservationStatusTone = "neutral" | "success" | "warning" | "danger"
 
 export function reservationStatusPresentation(status: string) {
   const normalized = status.toLowerCase();
-  if (normalized === "confirmed") return { label: "Confirmed", tone: "success" as ReservationStatusTone, iconName: "check" as const };
-  if (normalized === "cancelled") return { label: "Cancelled", tone: "danger" as ReservationStatusTone, iconName: "x" as const };
-  if (normalized === "pending") return { label: "Pending", tone: "warning" as ReservationStatusTone, iconName: "clock" as const };
-  if (normalized === "expired") return { label: "Expired", tone: "warning" as ReservationStatusTone, iconName: "alert" as const };
-  if (normalized === "converted" || normalized === "fulfilled") return { label: "Fulfilled", tone: "info" as ReservationStatusTone, iconName: "check" as const };
-  return { label: "Draft", tone: "neutral" as ReservationStatusTone, iconName: "draft" as const };
+  if (normalized === "confirmed") return { label: "Dikonfirmasi", tone: "success" as ReservationStatusTone, iconName: "check" as const };
+  if (normalized === "cancelled") return { label: "Dibatalkan", tone: "danger" as ReservationStatusTone, iconName: "x" as const };
+  if (normalized === "pending") return { label: "Menunggu", tone: "warning" as ReservationStatusTone, iconName: "clock" as const };
+  if (normalized === "expired") return { label: "Kedaluwarsa", tone: "warning" as ReservationStatusTone, iconName: "alert" as const };
+  if (normalized === "converted" || normalized === "fulfilled") return { label: "Terpenuhi", tone: "info" as ReservationStatusTone, iconName: "check" as const };
+  return { label: "Draf", tone: "neutral" as ReservationStatusTone, iconName: "draft" as const };
 }
 
 export function stockLockPresentation(status: string) {
   const normalized = status.toLowerCase();
   if (normalized === "locked") return { label: "Kapasitas Terkunci", tone: "success" as ReservationStatusTone, iconName: "lock" as const };
-  if (normalized === "pending") return { label: "Menunggu Lock", tone: "warning" as ReservationStatusTone, iconName: "clock" as const };
-  if (normalized === "released") return { label: "Kapasitas Dilepas", tone: "neutral" as ReservationStatusTone, iconName: "unlock" as const };
+  if (normalized === "pending") return { label: "Menunggu Penguncian Stok", tone: "warning" as ReservationStatusTone, iconName: "clock" as const };
+  if (normalized === "released") return { label: "Stok Tidak Lagi Terkunci", tone: "neutral" as ReservationStatusTone, iconName: "unlock" as const };
   return { label: "Belum Terkunci", tone: "neutral" as ReservationStatusTone, iconName: "unlock" as const };
 }
 

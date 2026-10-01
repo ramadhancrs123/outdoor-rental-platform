@@ -110,7 +110,7 @@ function OperationalRentalCard({
       <CardHeader>
         <div className="flex items-start justify-between gap-3">
           <div>
-            <CardTitle className="text-base">Rental Aktif</CardTitle>
+            <CardTitle className="text-base">Penyewaan Aktif</CardTitle>
             <p className="mt-1 text-sm text-muted-foreground">{semanticRentalLabel(rental.status)}</p>
           </div>
           <Badge variant="default" className="rounded-full">
@@ -612,7 +612,7 @@ export function RenterShow() {
             Scope: {usaha.usahaNama}
           </Badge>
           <Button type="button" variant="outline" className="rounded-xl" onClick={openEdit}>
-            <Pencil />Edit Profil Penyewa
+            <Pencil />Ubah Profil Penyewa
           </Button>
           <Button asChild className="rounded-xl">
             <Link to={paths.penyewaanWalkIn + "?renter_id=" + renter.penyewa_id}>
@@ -847,7 +847,7 @@ export function RenterShow() {
                 <p className="mt-1 text-sm text-muted-foreground">Informasi profil yang dapat diperbarui oleh admin.</p>
               </div>
               <Button type="button" variant="outline" className="rounded-xl" onClick={openEdit}>
-                <Pencil />Edit Profil
+                <Pencil />Ubah Profil
               </Button>
             </CardHeader>
             <CardContent className="grid gap-3 sm:grid-cols-2">
@@ -902,7 +902,7 @@ export function RenterShow() {
             <Card className="shadow-sm">
               <CardContent className="flex min-h-48 flex-col items-center justify-center p-6 text-center">
                 <CheckCircle2 className="size-8 text-muted-foreground" aria-hidden="true" />
-                <p className="mt-3 font-semibold">Tidak ada rental aktif</p>
+                <p className="mt-3 font-semibold">Tidak ada penyewaan aktif</p>
                 <p className="mt-1 max-w-md text-sm leading-5 text-muted-foreground">
                   Read-side Penyewaan saat ini tidak menunjukkan rental dengan status aktif untuk penyewa ini.
                 </p>
@@ -924,7 +924,7 @@ export function RenterShow() {
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent className="max-h-[88vh] overflow-y-auto rounded-3xl sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>Edit Profil Penyewa</DialogTitle>
+            <DialogTitle>Ubah Profil Penyewa</DialogTitle>
             <DialogDescription>
               Perubahan ini hanya mengubah identitas canonical penyewa, bukan membuat transaksi baru.
             </DialogDescription>
@@ -940,7 +940,7 @@ export function RenterShow() {
               <Alert variant="destructive">
                 <AlertTitle>Hasil perubahan belum diketahui</AlertTitle>
                 <AlertDescription className="gap-3">
-                  <p>Periksa status command sebelum mencoba menyimpan ulang.</p>
+                  <p>Periksa status tindakan sebelum mencoba menyimpan ulang.</p>
                   <Button type="button" variant="outline" size="sm" onClick={() => void reconcileProfile()}>
                     Periksa status
                   </Button>

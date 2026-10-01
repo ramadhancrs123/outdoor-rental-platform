@@ -187,10 +187,10 @@ export function TransactionShow() {
           <Info label="Arah" value={semanticFinanceLabel(item.arah)} />
           <Info label="Nominal" value={formatFinanceMoney(item.amount, item.currency_code)} />
           <Info label="Tanggal bisnis" value={formatFinanceDateTime(item.tanggal_transaksi, context.data.timezone)} />
-          <Info label="Source Type" value={semanticFinanceLabel(item.sumber_type)} />
+          <Info label="Jenis Sumber" value={semanticFinanceLabel(item.sumber_type)} />
           <Info label="Source ID" value={item.sumber_id ?? "-"} />
           <Info label="Status" value={semanticFinanceLabel(item.status)} />
-          <Info label="Currency" value={item.currency_code} />
+          <Info label="Mata Uang" value={item.currency_code} />
           <div className="sm:col-span-2"><Info label="Catatan" value={item.catatan ?? "-"} /></div>
         </CardContent>
       </Card>
@@ -198,7 +198,7 @@ export function TransactionShow() {
         <CardContent className="space-y-3 p-5">
           <p className="text-sm font-semibold">Traceability</p>
           <p className="text-sm leading-6 text-muted-foreground">
-            Financial Transaction → {semanticFinanceLabel(item.sumber_type) || "Source"} → {item.sumber_id ?? "source tidak ditautkan"}.
+            Transaksi Keuangan → {semanticFinanceLabel(item.sumber_type) || "Sumber"} → {item.sumber_id ?? "sumber belum ditautkan"}.
             Koreksi dilakukan melalui command correction domain, bukan edit nominal langsung.
           </p>
         </CardContent>

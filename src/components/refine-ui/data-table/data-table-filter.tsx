@@ -119,7 +119,7 @@ export function DataTableFilterDropdownActions({
         }}
       >
         <X className={cn("w-3.5", "h-3.5", "text-muted-foreground")} />
-        {t("buttons.clear", "Clear")}
+        {t("buttons.clear", "Bersihkan")}
       </Button>
 
       <Button
@@ -130,7 +130,7 @@ export function DataTableFilterDropdownActions({
           onApply();
         }}
       >
-        {t("buttons.apply", "Apply")}
+        {t("buttons.apply", "Terapkan")}
       </Button>
     </div>
   );
@@ -182,7 +182,7 @@ export function DataTableFilterDropdownText<TData>({
         <Input
           type="text"
           placeholder={
-            placeholder ?? t("table.filter.text.placeholder", "Filter by...")
+            placeholder ?? t("table.filter.text.placeholder", "Saring berdasarkan...")
           }
           value={value}
           onChange={(event) => {
@@ -221,7 +221,7 @@ export function DataTableFilterDropdownNumeric<TData>({
         <Input
           type="number"
           placeholder={
-            placeholder ?? t("table.filter.numeric.placeholder", "Filter by...")
+            placeholder ?? t("table.filter.numeric.placeholder", "Saring berdasarkan...")
           }
           value={value}
           onChange={(event) => {
@@ -296,7 +296,7 @@ export function DataTableFilterCombobox<TData>({
         const getDisplayText = () => {
           if (currentValues.length === 0) {
             return (
-              placeholder ?? t("table.filter.combobox.placeholder", "Select...")
+              placeholder ?? t("table.filter.combobox.placeholder", "Pilih...")
             );
           }
 
@@ -413,7 +413,7 @@ export function DataTableFilterCombobox<TData>({
             <PopoverContent className={cn("w-[200px]", "p-0")} align="start">
               <Command>
                 <CommandInput
-                  placeholder={t("table.filter.combobox.search", "Search...")}
+                  placeholder={t("table.filter.combobox.search", "Cari...")}
                 />
                 <CommandList>
                   <CommandEmpty>
@@ -909,7 +909,7 @@ export function DataTableFilterOperatorSelect({
       .defaultLabel
   );
   const placeholderText =
-    placeholder ?? t("table.filter.operator.placeholder", "Search operator...");
+    placeholder ?? t("table.filter.operator.placeholder", "Cari opsi...");
   const noResultsText = t(
     "table.filter.operator.noResults",
     "No operator found."

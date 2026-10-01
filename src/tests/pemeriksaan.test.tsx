@@ -146,8 +146,8 @@ describe("Pemeriksaan UI", () => {
       "/pemeriksaan/detail-1",
     );
 
-    expect(await screen.findByText("Maintenance Required")).toBeInTheDocument();
-    expect(screen.getByText(/Pemeriksaan selesai tidak otomatis membuat unit READY/i)).toBeInTheDocument();
+    expect(await screen.findByText("Perlu Perawatan")).toBeInTheDocument();
+    expect(screen.getByText(/Pemeriksaan selesai tidak otomatis membuat unit menjadi Siap Disewakan/i)).toBeInTheDocument();
     expect(screen.getByText(/Diteruskan ke Perawatan/i)).toBeInTheDocument();
   });
 
@@ -173,9 +173,9 @@ describe("Pemeriksaan UI", () => {
 
     expect(await screen.findByRole("heading", { name: "TD4P-001" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Mulai Pemeriksaan" }));
-    expect(await screen.findByRole("button", { name: "Periksa Status Command" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Periksa Status Command" }));
-    expect(await screen.findByText(/Command sudah committed/i)).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Periksa Status Tindakan" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Periksa Status Tindakan" }));
+    expect(await screen.findByText(/Perubahan sudah disimpan/i)).toBeInTheDocument();
     expect(serviceMock.startInspection).toHaveBeenCalledTimes(1);
     expect(serviceMock.reconcileInspectionCommand).toHaveBeenCalledTimes(1);
   });

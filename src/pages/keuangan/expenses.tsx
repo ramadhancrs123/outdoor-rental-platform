@@ -86,7 +86,7 @@ export function ExpenseList() {
   return (
     <FinanceShell
       title="Pengeluaran"
-      subtitle="Pengeluaran tercatat berasal dari server. Source domain tetap mempertahankan ownership-nya."
+      subtitle="Pengeluaran tercatat dari sistem. Data sumber tetap dikelola pada menu asalnya."
       action={<Button asChild className="rounded-xl"><Link to={paths.keuangan + "/pengeluaran/create"}><Plus />Catat Pengeluaran</Link></Button>}
     >
       <FinancePeriodBar
@@ -126,7 +126,7 @@ export function ExpenseList() {
                     </div>
                     <AmountDisplay amount={item.amount} direction="expense" compact />
                     <p className="text-xs text-muted-foreground">{item.pemasok_nama ?? "Tanpa pemasok"} · {formatFinanceDate(item.tanggal_pengeluaran, data.timezone)}</p>
-                    <p className="text-xs text-muted-foreground">Financial Transaction: {item.nomor_transaksi ?? "-"}</p>
+                    <p className="text-xs text-muted-foreground">Transaksi Keuangan: {item.nomor_transaksi ?? "-"}</p>
                   </CardContent>
                 </Card>
               </Link>
@@ -137,7 +137,7 @@ export function ExpenseList() {
             <CardContent className="p-0">
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
-                  <thead className="border-b bg-muted/30 text-left"><tr><th className="px-5 py-3 font-medium">Date</th><th className="px-5 py-3 font-medium">Description</th><th className="px-5 py-3 font-medium">Source</th><th className="px-5 py-3 font-medium">Supplier</th><th className="px-5 py-3 font-medium">Amount</th><th className="px-5 py-3 font-medium">Transaction</th></tr></thead>
+                  <thead className="border-b bg-muted/30 text-left"><tr><th className="px-5 py-3 font-medium">Date</th><th className="px-5 py-3 font-medium">Description</th><th className="px-5 py-3 font-medium">Source</th><th className="px-5 py-3 font-medium">Pemasok</th><th className="px-5 py-3 font-medium">Amount</th><th className="px-5 py-3 font-medium">Transaction</th></tr></thead>
                   <tbody>
                     {data.items.map((item) => (
                       <tr key={item.pengeluaran_id} className="border-b last:border-0">
@@ -215,13 +215,13 @@ export function ExpenseShow() {
   const sourceType = item.source_type?.toLowerCase() ?? null;
   const sourceRequired = sourceType === "purchase" || sourceType === "maintenance";
   const sourceTrace = sourceRequired && item.source_id
-    ? <SourcePreview type={sourceType === "purchase" ? "Purchase" : "Maintenance"} number={item.source_id} meta="Source relationship" />
-    : <div className="rounded-2xl border border-dashed p-4"><p className="text-sm font-semibold">{sourceType ? "Source tidak ditautkan" : "Source tidak diperlukan"}</p><p className="mt-1 text-xs text-muted-foreground">{sourceType ? "Source domain tercatat tanpa identifier yang dapat ditampilkan pada read-side saat ini." : "Kategori ini dapat dicatat tanpa source domain."}</p></div>;
+    ? <SourcePreview type={sourceType === "purchase" ? "Pembelian" : "Perawatan"} number={item.source_id} meta="Hubungan Sumber" />
+    : <div className="rounded-2xl border border-dashed p-4"><p className="text-sm font-semibold">{sourceType ? "Sumber belum ditautkan" : "Sumber tidak diperlukan"}</p><p className="mt-1 text-xs text-muted-foreground">{sourceType ? "Sumber tercatat tetapi nomor detailnya belum tersedia untuk ditampilkan." : "Kategori ini dapat dicatat tanpa sumber."}</p></div>;
 
   return (
     <FinanceShell
       title="Detail Pengeluaran"
-      subtitle={item.nomor_transaksi ? "Financial transaction " + item.nomor_transaksi : "Pengeluaran"}
+      subtitle={item.nomor_transaksi ? "Transaksi keuangan " + item.nomor_transaksi : "Pengeluaran"}
       action={
         <div className="flex items-center gap-2">
           <Button asChild variant="ghost" className="rounded-xl"><Link to={paths.keuangan + "/pengeluaran"}><ArrowLeft />Kembali</Link></Button>
@@ -242,17 +242,17 @@ export function ExpenseShow() {
 
       <div className="grid gap-5 lg:grid-cols-[1.15fr_.85fr]">
         <Card><CardHeader><CardTitle className="text-base">Fakta Pengeluaran</CardTitle></CardHeader><CardContent className="grid gap-4 sm:grid-cols-2">
-          <Info label="Source Type" value={semanticFinanceLabel(item.source_type ?? item.kategori_biaya)} />
+          <Info label="Jenis Sumber" value={semanticFinanceLabel(item.source_type ?? item.kategori_biaya)} />
           <Info label="Tanggal bisnis" value={formatFinanceDate(item.tanggal_pengeluaran, context.data.timezone)} />
           <Info label="Pemasok" value={item.pemasok_nama ?? "Tidak ditautkan"} />
           <Info label="Nominal" value={formatFinanceMoney(item.amount, item.currency_code)} />
           <Info label="Bukti" value={item.bukti_storage_path ? "Bukti Tersedia" : "Bukti Tidak Ada"} />
-          <Info label="Financial Transaction" value={item.nomor_transaksi ?? "-"} />
+          <Info label="Transaksi Keuangan" value={item.nomor_transaksi ?? "-"} />
         </CardContent></Card>
         <Card><CardHeader><CardTitle className="text-base">Source Trace</CardTitle></CardHeader><CardContent className="space-y-3">{sourceTrace}</CardContent></Card>
       </div>
 
-      <Card><CardContent className="space-y-3 p-5"><p className="text-sm font-semibold">Financial Transaction</p><p className="text-xs leading-5 text-muted-foreground">{item.nomor_transaksi ?? "-"} · Pengeluaran tercatat. Ini tidak menyimpulkan Purchase Received atau Maintenance Completed.</p></CardContent></Card>
+      <Card><CardContent className="space-y-3 p-5"><p className="text-sm font-semibold">Transaksi Keuangan</p><p className="text-xs leading-5 text-muted-foreground">{item.nomor_transaksi ?? "-"} · Pengeluaran tercatat. Ini tidak menyimpulkan Pembelian Sudah Diterima atau Perawatan Sudah Selesai.</p></CardContent></Card>
 
       <FinanceCorrectionDialog
         open={correctionOpen}

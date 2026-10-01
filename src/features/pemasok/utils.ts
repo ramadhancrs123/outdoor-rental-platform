@@ -9,7 +9,15 @@ export function supplierStatusLabel(status: string) {
 }
 
 export function purchaseStatusLabel(status: string) {
-  return status
+  const labels: Record<string, string> = {
+    draft: "Draf",
+    active: "Aktif",
+    completed: "Selesai",
+    cancelled: "Dibatalkan",
+    received: "Diterima",
+    pending: "Menunggu",
+  };
+  return labels[status.toLowerCase()] ?? status
     .toLowerCase()
     .split("_")
     .filter(Boolean)

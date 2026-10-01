@@ -33,6 +33,7 @@ export type CatalogVariant = {
   deskripsi: string | null;
   atribut_pembeda: Record<string, unknown> | null;
   status: string;
+  updated_at: string;
 };
 
 export type CatalogTariff = {
@@ -49,6 +50,7 @@ export type CatalogTariff = {
   berlaku_mulai: string;
   berlaku_sampai: string | null;
   status: string;
+  updated_at: string;
 };
 
 export type CatalogMedia = {
@@ -125,6 +127,11 @@ export type CatalogPackageComponent = {
   jumlah: number;
   catatan: string | null;
   updated_at: string;
+};
+
+export type CatalogPackageComponentDetail = CatalogPackageComponent & {
+  barang: { barang_id: string; nama: string; slug: string } | null;
+  varian: { varian_barang_id: string; nama: string; kode_internal: string | null } | null;
 };
 
 export type CatalogVariantOption = CatalogVariant & {

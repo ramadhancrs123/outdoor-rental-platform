@@ -9,6 +9,7 @@ export const paths = {
   pengembalian: "/pengembalian",
   inventaris: "/inventaris",
   inventarisCreate: "/inventaris/create",
+  inventarisLocations: "/inventaris/lokasi",
   pemeriksaan: "/pemeriksaan",
   perawatan: "/perawatan",
   penyewa: "/penyewa",
