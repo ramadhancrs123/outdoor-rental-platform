@@ -131,6 +131,9 @@ importers:
       '@zxing/browser':
         specifier: 0.2.1
         version: 0.2.1(@zxing/library@0.23.0)
+      '@zxing/library':
+        specifier: 0.23.0
+        version: 0.23.0
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -1565,8 +1568,4 @@ packages:
       react-dom: ^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc
     peerDependenciesMeta:
       '@types/react':
-        optional: true
-      '@types/react-dom':
-        optional: true
-
-  '@r
+    
