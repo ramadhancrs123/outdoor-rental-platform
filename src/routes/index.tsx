@@ -24,6 +24,7 @@ import { PemeriksaanList, PemeriksaanShow } from "@/pages/pemeriksaan";
 import { PerawatanCreate, PerawatanList, PerawatanShow } from "@/pages/perawatan";
 import { PemberitahuanList } from "@/pages/pemberitahuan";
 import { LaporanPage } from "@/pages/laporan";
+import { QrResolvePage } from "@/pages/qr-operasional/resolve";
 import { paths } from "./paths";
 
 export function AppRoutes() {
@@ -42,6 +43,8 @@ export function AppRoutes() {
 
         <Route path={paths.pemberitahuan} element={<PemberitahuanList />} />
         <Route path={paths.laporan} element={<LaporanPage />} />
+        <Route path={paths.qrUnit + "/:token"} element={<QrResolvePage />} />
+        <Route path={paths.qrPenyewaan + "/:token"} element={<QrResolvePage />} />
 
         <Route path={paths.inventaris}>
           <Route index element={<InventoryList />} />

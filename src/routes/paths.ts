@@ -23,6 +23,8 @@ export const paths = {
   keuangan: "/keuangan",
   pemberitahuan: "/pemberitahuan",
   laporan: "/laporan",
+  qrUnit: "/qr/unit",
+  qrPenyewaan: "/qr/penyewaan",
 } as const;
 
 export type AppPath = (typeof paths)[keyof typeof paths];
