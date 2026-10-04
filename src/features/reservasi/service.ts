@@ -1,3 +1,4 @@
+import { createClientId } from "@/lib/client-id";
 import { supabase } from "@/app/providers/supabase/client";
 import type {
   ReservationCapabilities,
@@ -572,7 +573,7 @@ export function getReservationCapabilities(): ReservationCapabilities {
 }
 
 function newCommandRequestId() {
-  return crypto.randomUUID();
+  return createClientId();
 }
 
 function assertRpcResult<T>(data: T | null, error: unknown, label: string): T {
@@ -599,7 +600,7 @@ export async function createReservationFromRequest(
     p_usaha_id: usahaId,
     p_permintaan_sewa_id: permintaanSewaId,
     p_lines: lines,
-    p_idempotency_key: options.idempotencyKey ?? `create-reservation-${permintaanSewaId}-${crypto.randomUUID()}`,
+    p_idempotency_key: options.idempotencyKey ?? `create-reservation-${permintaanSewaId}-${createClientId()}`,
     p_request_id: options.requestId ?? newCommandRequestId(),
   });
   return assertRpcResult(data as ReservationCommandResult | null, error, "Pembuatan reservasi");
@@ -613,7 +614,7 @@ export async function confirmReservation(
   const { data, error } = await supabase.rpc("command_confirm_reservation", {
     p_usaha_id: usahaId,
     p_reservasi_id: reservationId,
-    p_idempotency_key: options.idempotencyKey ?? `confirm-reservation-${reservationId}-${crypto.randomUUID()}`,
+    p_idempotency_key: options.idempotencyKey ?? `confirm-reservation-${reservationId}-${createClientId()}`,
     p_request_id: options.requestId ?? newCommandRequestId(),
   });
   return assertRpcResult(data as ReservationCommandResult | null, error, "Konfirmasi reservasi");
@@ -631,7 +632,7 @@ export async function cancelReservation(
     p_usaha_id: usahaId,
     p_reservasi_id: reservationId,
     p_reason: normalizedReason,
-    p_idempotency_key: options.idempotencyKey ?? `cancel-reservation-${reservationId}-${crypto.randomUUID()}`,
+    p_idempotency_key: options.idempotencyKey ?? `cancel-reservation-${reservationId}-${createClientId()}`,
     p_request_id: options.requestId ?? newCommandRequestId(),
   });
   return assertRpcResult(data as ReservationCommandResult | null, error, "Pembatalan reservasi");

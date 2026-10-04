@@ -1,3 +1,4 @@
+import { createClientId } from "@/lib/client-id";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -110,8 +111,8 @@ export function ReservationCreate() {
 
       if (!createCommandContext.current) {
         createCommandContext.current = {
-          idempotencyKey: `create-reservation-${requestId}-${crypto.randomUUID()}`,
-          requestId: crypto.randomUUID(),
+          idempotencyKey: `create-reservation-${requestId}-${createClientId()}`,
+          requestId: createClientId(),
         };
       }
 

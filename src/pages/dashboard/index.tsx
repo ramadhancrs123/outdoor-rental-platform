@@ -4,6 +4,7 @@ import { useGetIdentity } from "@refinedev/core";
 import {
   Bell,
   CalendarClock,
+  ChevronDown,
   ChevronRight,
   CreditCard,
   FileBarChart,
@@ -11,7 +12,6 @@ import {
   Mountain,
   Receipt,
   RotateCcw,
-  Search,
   TentTree,
   Wrench,
 } from "lucide-react";
@@ -19,6 +19,7 @@ import { useCurrentUsaha } from "@/app/current-usaha-context";
 import { getFinancialReport } from "@/features/laporan/service";
 import { listNotifications } from "@/features/pemberitahuan/service";
 import { listInventoryUnits } from "@/features/inventaris/service";
+import { DEFAULT_RENTAL_LIST_FILTERS } from "@/features/penyewaan/types";
 import { listRentals } from "@/features/penyewaan/service";
 import { listReturnQueue } from "@/features/pengembalian/service";
 import { listReservations } from "@/features/reservasi/service";
@@ -29,9 +30,6 @@ import type { RentalListItem } from "@/features/penyewaan/types";
 import type { ReturnQueueItem } from "@/features/pengembalian/types";
 import type { ReservationListItem } from "@/features/reservasi/types";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { paths } from "@/routes/paths";
 
@@ -47,7 +45,7 @@ type ActionItem = {
 
 type AgendaItem = {
   id: string;
-  type: "Pickup" | "Return" | "Reservasi";
+  type: "Pickup" | "Pengembalian" | "Reservasi";
   title: string;
   meta: string;
   href: string;
@@ -105,6 +103,93 @@ const inventoryQuery = {
   pageSize: 1,
 };
 
+function SectionHeader({
+  icon: Icon,
+  title,
+  description,
+  count,
+  href,
+  actionLabel = "Lihat semua",
+}: {
+  icon: typeof Bell;
+  title: string;
+  description: string;
+  count?: number;
+  href?: string;
+  actionLabel?: string;
+}) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <div className="flex min-w-0 items-start gap-3">
+        <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+          <Icon className="size-4.5" aria-hidden="true" />
+        </span>
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <h2 className="text-[15px] font-bold tracking-tight text-foreground sm:text-base">{title}</h2>
+            {typeof count === "number" ? (
+              <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                {count}
+              </span>
+            ) : null}
+          </div>
+          <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">{description}</p>
+        </div>
+      </div>
+      {href ? (
+        <Link
+          to={href}
+          className="inline-flex shrink-0 items-center gap-0.5 pt-1 text-[11px] font-semibold text-primary hover:underline"
+        >
+          {actionLabel}
+          <ChevronRight className="size-3.5" aria-hidden="true" />
+        </Link>
+      ) : null}
+    </div>
+  );
+}
+
+function AttentionRow({ item }: { item: ActionItem }) {
+  const Icon = item.tone === "danger" ? Bell : item.title.toLowerCase().includes("pickup") ? CalendarClock : Wrench;
+
+  return (
+    <Link
+      to={item.href}
+      className="group flex min-w-0 items-center gap-3 rounded-xl border border-border/70 bg-background/70 px-3 py-2.5 transition-colors hover:bg-muted/40"
+    >
+      <span
+        className={cn(
+          "grid size-9 shrink-0 place-items-center rounded-xl",
+          item.tone === "danger"
+            ? "bg-red-50 text-red-600 dark:bg-red-950/30 dark:text-red-300"
+            : "bg-amber-50 text-amber-600 dark:bg-amber-950/30 dark:text-amber-300",
+        )}
+      >
+        {item.tone === "danger" ? (
+          <RotateCcw className="size-4" aria-hidden="true" />
+        ) : (
+          <Icon className="size-4" aria-hidden="true" />
+        )}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[12px] font-semibold text-foreground">{item.title}</span>
+        <span className="mt-0.5 block truncate text-[10px] text-muted-foreground">{item.description}</span>
+      </span>
+      <span
+        className={cn(
+          "hidden shrink-0 rounded-full px-2 py-1 text-[9px] font-semibold sm:inline-flex",
+          item.tone === "danger"
+            ? "bg-red-50 text-red-600 dark:bg-red-950/30 dark:text-red-300"
+            : "bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300",
+        )}
+      >
+        {item.tone === "danger" ? "Perlu tindakan" : "Perhatian"}
+      </span>
+      <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
+    </Link>
+  );
+}
+
 export function Dashboard() {
   const { data: identity } = useGetIdentity<AdminIdentity>();
   const { current } = useCurrentUsaha();
@@ -117,6 +202,7 @@ export function Dashboard() {
   const [inventoryAttentionUnits, setInventoryAttentionUnits] = useState<InventoryUnit[]>([]);
   const [inventoryCounts, setInventoryCounts] = useState({ ready: 0, rented: 0, maintenance: 0, inactive: 0 });
   const [error, setError] = useState<string | null>(null);
+  const [activityOpen, setActivityOpen] = useState(false);
 
   const usahaId = current?.usahaId;
   const adminId = current?.akunAdminId;
@@ -132,7 +218,7 @@ export function Dashboard() {
     Promise.all([
       listNotifications(usahaId, adminId, 8),
       getFinancialReport(usahaId, p.start, p.end),
-      listRentals(usahaId, { search: "", page: 1, pageSize: 50 }),
+      listRentals(usahaId, { ...DEFAULT_RENTAL_LIST_FILTERS, pageSize: 50 }),
       listReturnQueue(usahaId, { search: "", page: 1, pageSize: 50, rentalStatus: "all", dueState: "all" }),
       listReservations(usahaId, { search: "", status: "all", page: 1, pageSize: 50 }),
       listInventoryUnits(usahaId, inventoryQuery),
@@ -171,6 +257,7 @@ export function Dashboard() {
           maintenance: maintenanceData.total,
           inactive: inactiveData.total,
         });
+        setError(null);
       })
       .catch((cause) => {
         if (active) setError(cause instanceof Error ? cause.message : "Dashboard gagal dimuat.");
@@ -190,7 +277,7 @@ export function Dashboard() {
             !item.actual_return_completed_at &&
             !["completed", "cancelled", "canceled"].includes(item.status),
         )
-        .slice(0, 5),
+        .slice(0, 4),
     [rentals],
   );
 
@@ -231,7 +318,7 @@ export function Dashboard() {
       })),
       ...returnsToday.map((item) => ({
         id: `return-${item.penyewaan_id}`,
-        type: "Return" as const,
+        type: "Pengembalian" as const,
         title: `${item.nomor_penyewaan} · ${item.penyewa_nama ?? "Penyewa"}`,
         meta: `Kembali ${formatTime(item.jadwal_kembali)}`,
         href: `${paths.pengembalian}/${item.penyewaan_id}`,
@@ -245,7 +332,7 @@ export function Dashboard() {
       })),
     ];
 
-    return items.slice(0, 7);
+    return items.slice(0, 6);
   }, [pickupToday, returnsToday, reservationsToday]);
 
   const attentionItems = useMemo<ActionItem[]>(() => {
@@ -280,7 +367,7 @@ export function Dashboard() {
       items.push({
         id: "inventory-attention",
         title: "Unit membutuhkan perhatian",
-        description: `${inventoryAttentionUnits.length} unit terlihat pada antrean perhatian inventaris.`,
+        description: `${inventoryAttentionUnits.length} unit · Hasil pemeriksaan / status inventaris`,
         href: `${paths.inventaris}?availability=attention`,
         tone: "warning",
       });
@@ -302,401 +389,350 @@ export function Dashboard() {
   }, [inventoryAttentionUnits.length, notifications, pickupToday, returns]);
 
   const quickActions = [
-    ["Rental Langsung", paths.penyewaanWalkIn, TentTree, "Buka flow walk-in"],
-    ["Proses Pengembalian", paths.pengembalian, RotateCcw, "Buka antrean return"],
-    ["Buat Perawatan", paths.perawatan, Wrench, "Kelola maintenance"],
-    ["Tambah Unit", paths.inventarisCreate, Mountain, "Daftarkan unit"],
-    ["Tambah Barang", paths.katalogEdit, TentTree, "Kelola katalog"],
-    ["Catat Pembayaran", paths.keuangan, CreditCard, "Buka finance"],
-    ["Buat Reservasi", paths.reservasiCreate, CalendarClock, "Buat reservation"],
+    ["Rental Langsung", paths.penyewaanWalkIn, TentTree],
+    ["Proses Pengembalian", paths.pengembalian, RotateCcw],
+    ["Buat Perawatan", paths.perawatan, Wrench],
+    ["Tambah Unit", paths.inventarisCreate, Mountain],
+    ["Tambah Barang", paths.katalogEdit, TentTree],
+    ["Catat Pembayaran", paths.keuangan, CreditCard],
   ] as const;
 
-  const statusTone = (tone: ActionItem["tone"]) =>
-    cn(
-      "size-2.5 rounded-full",
-      tone === "danger" ? "bg-destructive" : tone === "warning" ? "bg-amber-500" : "bg-primary",
-    );
+  const activityItems = notifications.slice(0, activityOpen ? 6 : 3);
+
+  const financeCards = [
+    {
+      label: "Belum Dibaca",
+      value: String(unreadCount),
+      helper: unreadCount > 0 ? "Perlu perhatian" : "Semua sudah dibaca",
+      icon: Bell,
+      surface: "bg-emerald-50/80 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300",
+      href: paths.pemberitahuan,
+    },
+    {
+      label: "Pemasukan",
+      value: report ? money(report.summary.recorded_income) : "—",
+      helper: "Tercatat periode berjalan",
+      icon: CreditCard,
+      surface: "bg-emerald-50/80 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300",
+      href: paths.keuangan,
+    },
+    {
+      label: "Pengeluaran",
+      value: report ? money(report.summary.recorded_expense) : "—",
+      helper: "Tercatat periode berjalan",
+      icon: Receipt,
+      surface: "bg-red-50/80 text-red-600 dark:bg-red-950/25 dark:text-red-300",
+      href: paths.keuangan + "/pengeluaran",
+    },
+    {
+      label: "Pembayaran",
+      value: report ? `${report.summary.recorded_payment_count} transaksi` : "—",
+      helper: "Source Keuangan",
+      icon: FileBarChart,
+      surface: "bg-sky-50/80 text-sky-700 dark:bg-sky-950/25 dark:text-sky-300",
+      href: paths.keuangan + "/pembayaran",
+    },
+    {
+      label: "Net Operasional",
+      value: report ? money(report.summary.net_operational_movement) : "—",
+      helper: "Pemasukan − Pengeluaran",
+      icon: FileBarChart,
+      surface: "bg-violet-50/80 text-violet-700 dark:bg-violet-950/25 dark:text-violet-300",
+      href: paths.laporan,
+    },
+  ] as const;
 
   return (
-    <div data-testid="dashboard-root" className="space-y-5 pb-8">
-      <section className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-emerald-950 via-emerald-900 to-slate-900 text-white shadow-sm">
-        <div className="absolute inset-0 opacity-70" aria-hidden="true">
-          <div className="absolute -right-16 -top-16 size-48 rounded-full bg-emerald-400/20 blur-3xl sm:size-64" />
-          <div className="absolute -bottom-24 right-16 size-56 rounded-full bg-sky-400/10 blur-3xl sm:size-72" />
-          <div className="absolute inset-0 bg-gradient-to-r from-black/25 via-transparent to-transparent" />
-        </div>
-        <div className="pointer-events-none absolute right-[-1rem] bottom-[-2.5rem] opacity-15 sm:right-4 sm:bottom-[-3rem]" aria-hidden="true">
-          <Mountain className="size-48 stroke-[1.1] sm:size-64" />
-        </div>
-        <div className="pointer-events-none absolute right-20 bottom-5 opacity-10 sm:right-36" aria-hidden="true">
-          <TentTree className="size-20 stroke-[1.2] sm:size-24" />
-        </div>
-        <div className="relative z-10 flex min-h-[210px] flex-col justify-between p-5 sm:min-h-[240px] sm:p-7 lg:p-8">
-          <div className="max-w-xl">
-            <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-3">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/60">Operational control center</p>
-              <span className="hidden h-1 w-1 rounded-full bg-white/30 sm:block" aria-hidden="true" />
-              <p className="text-sm font-medium text-white/80">{current?.usahaNama ?? "Usaha aktif"}</p>
+    <div data-testid="dashboard-root" className="space-y-4 pb-8 sm:space-y-5">
+      <section className="relative overflow-hidden rounded-[1.45rem] border border-border/60 bg-card shadow-[0_8px_30px_rgba(35,55,45,.08)]">
+        <div
+          aria-hidden="true"
+          className="absolute inset-0 bg-cover bg-center opacity-35"
+          style={{ backgroundImage: "url('/login-bg.webp')" }}
+        />
+        <div
+          aria-hidden="true"
+          className="absolute inset-0 bg-gradient-to-br from-white/80 via-white/70 to-emerald-50/40 dark:from-slate-950/85 dark:via-slate-950/75 dark:to-emerald-950/40"
+        />
+        <div className="relative z-10 min-h-[178px] px-4 pb-4 pt-4 sm:min-h-[208px] sm:px-6 sm:pb-5 sm:pt-5">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">Beranda</p>
+            <div className="inline-flex max-w-[58%] items-center gap-1.5 rounded-full border border-border/70 bg-background/85 px-3 py-2 text-[10px] font-semibold shadow-sm backdrop-blur-sm sm:text-[11px]">
+              <span className="grid size-5 shrink-0 place-items-center rounded-full bg-primary/10 text-primary">
+                <Mountain className="size-3" aria-hidden="true" />
+              </span>
+              <span className="truncate">{current?.usahaNama ?? "Usaha aktif"}</span>
+              <ChevronDown className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
             </div>
-            <div className="mt-5 space-y-1">
-              <p className="text-sm font-medium text-white/65">Selamat datang kembali,</p>
-              <h1 className="text-[2rem] font-bold leading-none tracking-[-0.03em] sm:text-4xl">{greetingName}</h1>
-            </div>
-            <p className="mt-4 max-w-lg text-sm leading-6 text-white/72 sm:text-base">
-              Pantau pekerjaan yang membutuhkan perhatian dan kembali ke modul pemilik saat tindakan diperlukan.
+          </div>
+
+          <div className="mt-6 max-w-[34rem] sm:mt-7">
+            <h1 className="text-[1.75rem] font-bold leading-[1.08] tracking-[-0.03em] text-foreground sm:text-3xl">
+              Selamat datang, {greetingName}
+            </h1>
+            <p className="mt-2 max-w-[27rem] text-[12px] leading-5 text-muted-foreground sm:text-sm sm:leading-6">
+              Pantau pekerjaan operasional yang membutuhkan perhatian hari ini.
             </p>
           </div>
-          <div className="mt-6 flex flex-wrap items-center gap-x-4 gap-y-3">
-            <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-black/20 px-3 py-1.5 text-xs font-medium text-white/90 backdrop-blur-sm">
-              <span className={cn("size-2 rounded-full", error ? "bg-amber-400" : "bg-emerald-300")} aria-hidden="true" />
+
+          <div className="mt-5 flex flex-wrap items-center gap-2">
+            <span
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[9px] font-semibold",
+                error
+                  ? "border-amber-200 bg-amber-50 text-amber-700"
+                  : "border-emerald-200 bg-emerald-50 text-emerald-700",
+              )}
+            >
+              <span className={cn("size-1.5 rounded-full", error ? "bg-amber-500" : "bg-emerald-500")} aria-hidden="true" />
               {error ? "Perlu dimuat ulang" : "Source terhubung"}
             </span>
-            <Link
-              className="inline-flex items-center text-xs font-semibold text-white/90 underline-offset-4 hover:text-white hover:underline"
-              to={paths.laporan}
-            >
-              Buka Laporan
-            </Link>
+            <span className="text-[10px] text-muted-foreground">Operational control center</span>
           </div>
         </div>
       </section>
 
-      {/* Existing KPI block — intentionally preserved in content and semantics. */}
-      <section className="grid grid-cols-2 gap-3 xl:grid-cols-5" aria-label="KPI">
-        {([
-          ["Belum dibaca", String(unreadCount), "Perlu Perhatian", Bell, "bg-primary/10 text-primary", paths.pemberitahuan],
-          ["Pemasukan", report ? money(report.summary.recorded_income) : "—", "Finance source", CreditCard, "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/35 dark:text-emerald-300", paths.keuangan],
-          ["Pengeluaran", report ? money(report.summary.recorded_expense) : "—", "Finance source", Receipt, "bg-amber-100 text-amber-700 dark:bg-amber-950/35 dark:text-amber-300", paths.keuangan + "/pengeluaran"],
-          ["Net operasional", report ? money(report.summary.net_operational_movement) : "—", "Derived report", FileBarChart, "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200", paths.laporan],
-          ["Pembayaran", report ? String(report.summary.recorded_payment_count) : "—", "Finance source", CreditCard, "bg-primary/10 text-primary", paths.keuangan + "/pembayaran"],
-        ] as const).map(([label, value, delta, Icon, tone, href]) => (
-          <Link key={label} to={href} className="block">
-            <Card className="h-full shadow-sm transition-colors hover:bg-muted/30">
-              <CardContent className="p-4 sm:p-5">
-                <div className="flex items-start justify-between gap-3">
+      <section
+        aria-label="Ringkasan"
+        className="grid grid-cols-6 gap-2.5 max-[359px]:grid-cols-2"
+      >
+        {financeCards.map((item, index) => {
+          const Icon = item.icon;
+          const compactClass =
+            index < 3
+              ? "col-span-2 max-[359px]:col-span-1"
+              : index === 3
+                ? "col-span-2 max-[359px]:col-span-1"
+                : "col-span-4 max-[359px]:col-span-2";
+
+          return (
+            <Link key={item.label} to={item.href} className={cn("min-w-0", compactClass)}>
+              <div className="h-full rounded-[1.1rem] border border-border/60 bg-card p-3 shadow-[0_4px_20px_rgba(35,55,45,.05)] transition-colors hover:bg-muted/20 sm:p-3.5">
+                <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
-                    <p className="truncate text-xs font-medium text-muted-foreground">{label}</p>
-                    <p className="mt-1 text-2xl font-bold tracking-tight sm:text-3xl">{value}</p>
+                    <p className="truncate text-[10px] font-medium text-muted-foreground">{item.label}</p>
+                    <p className="mt-1 truncate text-[15px] font-bold tracking-tight sm:text-lg">{item.value}</p>
                   </div>
-                  <span className={cn("grid size-9 shrink-0 place-items-center rounded-xl", tone)}>
-                    <Icon className="size-4" aria-hidden="true" />
+                  <span className={cn("grid size-8 shrink-0 place-items-center rounded-xl", item.surface)}>
+                    <Icon className="size-3.5" aria-hidden="true" />
                   </span>
                 </div>
-                <p className="mt-3 text-[11px] text-muted-foreground">{delta}</p>
-              </CardContent>
-            </Card>
-          </Link>
-        ))}
+                <p className="mt-2 truncate text-[9px] text-muted-foreground">{item.helper}</p>
+              </div>
+            </Link>
+          );
+        })}
       </section>
 
-      <div className="hidden space-y-5 lg:block">
-        <section className="grid gap-5 xl:grid-cols-[1.15fr_.85fr]">
-          <Card className="shadow-sm">
-            <CardHeader className="flex-row items-start justify-between gap-3 pb-3">
-              <div>
-                <CardTitle className="text-base sm:text-lg">Perlu Tindakan</CardTitle>
-                <p className="mt-1 text-xs text-muted-foreground">Pekerjaan yang perlu dilanjutkan dari source domain masing-masing.</p>
-              </div>
-              <Badge variant={attentionItems.length ? "default" : "secondary"}>{attentionItems.length} item</Badge>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {attentionItems.length === 0 ? (
-                <div className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">
-                  Tidak ada pekerjaan yang terdeteksi perlu tindakan saat ini.
-                </div>
-              ) : (
-                attentionItems.map((item) => (
-                  <Link key={item.id} to={item.href} className="flex items-center gap-3 rounded-xl border bg-background p-3 transition-colors hover:bg-muted/40">
-                    <span className={statusTone(item.tone)} aria-hidden="true" />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-semibold">{item.title}</p>
-                      <p className="truncate text-xs text-muted-foreground">{item.description}</p>
-                    </div>
-                    <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-                  </Link>
-                ))
-              )}
-            </CardContent>
-          </Card>
-
-          <Card className="shadow-sm">
-            <CardHeader className="flex-row items-start justify-between gap-3 pb-3">
-              <div>
-                <CardTitle className="text-base sm:text-lg">Agenda Hari Ini</CardTitle>
-                <p className="mt-1 text-xs text-muted-foreground">Pickup, return, dan reservasi yang jatuh pada hari ini.</p>
-              </div>
-              <Badge variant="secondary">{agenda.length}</Badge>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {agenda.length === 0 ? (
-                <div className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">
-                  Tidak ada agenda operasional untuk hari ini.
-                </div>
-              ) : (
-                agenda.map((item) => (
-                  <Link key={item.id} to={item.href} className="flex items-center gap-3 rounded-xl border p-3 transition-colors hover:bg-muted/40">
-                    <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-muted text-muted-foreground">
-                      {item.type === "Pickup" ? <TentTree className="size-4" /> : item.type === "Return" ? <RotateCcw className="size-4" /> : <CalendarClock className="size-4" />}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium">{item.title}</p>
-                      <p className="text-xs text-muted-foreground">{item.type} · {item.meta}</p>
-                    </div>
-                    <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-                  </Link>
-                ))
-              )}
-            </CardContent>
-          </Card>
-        </section>
-
-        <Card className="shadow-sm">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base sm:text-lg">Quick Actions</CardTitle>
-            <p className="mt-1 text-xs text-muted-foreground">Shortcut menuju workflow domain. Validasi tetap dilakukan di halaman dan server pemilik.</p>
-          </CardHeader>
-          <CardContent className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-            {quickActions.map(([label, href, Icon, helper]) => (
-              <Button key={label} asChild variant="outline" className="h-auto justify-between px-3 py-3 text-left">
-                <Link to={href}>
-                  <span className="flex min-w-0 items-center gap-3">
-                    <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
-                      <Icon className="size-4" aria-hidden="true" />
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block truncate text-sm font-semibold">{label}</span>
-                      <span className="block truncate text-[11px] font-normal text-muted-foreground">{helper}</span>
-                    </span>
-                  </span>
-                  <ChevronRight className="size-4 shrink-0" aria-hidden="true" />
-                </Link>
-              </Button>
-            ))}
-          </CardContent>
-        </Card>
-
-        <section className="grid gap-5 xl:grid-cols-[1.05fr_.95fr]">
-          <Card className="shadow-sm">
-            <CardHeader>
-              <CardTitle className="text-base sm:text-lg">Operational Snapshot</CardTitle>
-              <p className="mt-1 text-xs text-muted-foreground">Kondisi operasional saat ini. Angka tetap berasal dari source domain.</p>
-            </CardHeader>
-            <CardContent className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              {[
-                ["Rental berjalan", currentRentals.length, paths.penyewaan],
-                ["Pickup hari ini", pickupToday.length, paths.penyewaan],
-                ["Return hari ini", returnsToday.length, paths.pengembalian],
-                ["Perlu inventory attention", inventoryAttentionUnits.length, paths.inventaris],
-              ].map(([label, value, href]) => (
-                <Link key={label} to={href as string} className="rounded-xl border p-4 transition-colors hover:bg-muted/40">
-                  <p className="text-xs text-muted-foreground">{label}</p>
-                  <p className="mt-2 text-2xl font-bold tracking-tight">{value as number}</p>
-                </Link>
-              ))}
-            </CardContent>
-          </Card>
-
-          <Card className="shadow-sm">
-            <CardHeader>
-              <CardTitle className="text-base sm:text-lg">Inventory</CardTitle>
-              <p className="mt-1 text-xs text-muted-foreground">Physical truth unit berdasarkan status inventaris saat ini.</p>
-            </CardHeader>
-            <CardContent className="grid grid-cols-2 gap-3">
-              {[
-                ["Ready", inventoryCounts.ready, paths.inventaris + "?status=ready"],
-                ["Rented", inventoryCounts.rented, paths.inventaris + "?status=rented"],
-                ["Maintenance", inventoryCounts.maintenance, paths.inventaris + "?status=maintenance"],
-                ["Inactive", inventoryCounts.inactive, paths.inventaris + "?status=inactive"],
-              ].map(([label, value, href]) => (
-                <Link key={label} to={href as string} className="rounded-xl border bg-background p-3 transition-colors hover:bg-muted/40">
-                  <p className="text-xs text-muted-foreground">{label}</p>
-                  <p className="mt-1 text-xl font-semibold">{value as number}</p>
-                </Link>
-              ))}
-            </CardContent>
-          </Card>
-        </section>
-
-        <section className="grid gap-5 xl:grid-cols-[.9fr_1.1fr]">
-          <Card className="shadow-sm">
-            <CardHeader>
-              <CardTitle className="text-base sm:text-lg">Finance</CardTitle>
-              <p className="mt-1 text-xs text-muted-foreground">Ringkasan periode berjalan dari source keuangan. KPI di atas tetap dipertahankan.</p>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              <Link to={paths.keuangan} className="flex items-center justify-between rounded-xl border p-3 hover:bg-muted/40">
-                <span><span className="block text-sm font-medium">Pemasukan tercatat</span><span className="text-xs text-muted-foreground">Periode berjalan</span></span>
-                <span className="font-semibold">{report ? money(report.summary.recorded_income) : "—"}</span>
-              </Link>
-              <Link to={paths.keuangan + "/pengeluaran"} className="flex items-center justify-between rounded-xl border p-3 hover:bg-muted/40">
-                <span><span className="block text-sm font-medium">Pengeluaran tercatat</span><span className="text-xs text-muted-foreground">Periode berjalan</span></span>
-                <span className="font-semibold">{report ? money(report.summary.recorded_expense) : "—"}</span>
-              </Link>
-              <Link to={paths.laporan} className="flex items-center justify-between rounded-xl border p-3 hover:bg-muted/40">
-                <span><span className="block text-sm font-medium">Net operasional</span><span className="text-xs text-muted-foreground">Derived report</span></span>
-                <span className="font-semibold">{report ? money(report.summary.net_operational_movement) : "—"}</span>
-              </Link>
-            </CardContent>
-          </Card>
-
-          <Card className="shadow-sm">
-            <CardHeader>
-              <CardTitle className="text-base sm:text-lg">Recent Activity</CardTitle>
-              <p className="mt-1 text-xs text-muted-foreground">Aktivitas sistem terbaru yang memiliki notifikasi atau target tindakan.</p>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {notifications.length === 0 ? (
-                <div className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">Belum ada aktivitas yang dapat ditampilkan.</div>
-              ) : (
-                notifications.slice(0, 6).map((item) => (
-                  <Link key={item.pemberitahuan_id} to={item.action_target || paths.pemberitahuan} className="flex items-center gap-3 rounded-xl border p-3 hover:bg-muted/40">
-                    <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-muted text-muted-foreground"><History className="size-4" /></span>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-semibold">{item.judul}</p>
-                      <p className="truncate text-xs text-muted-foreground">{item.pesan}</p>
-                    </div>
-                    {!item.dibaca_at && <Badge variant="secondary">Baru</Badge>}
-                  </Link>
-                ))
-              )}
-            </CardContent>
-          </Card>
-        </section>
-
-        <section className="rounded-2xl border bg-card p-4 shadow-sm sm:p-5">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <p className="text-sm font-semibold">Pencarian operasional</p>
-              <p className="mt-1 text-xs text-muted-foreground">Cari penyewa, penyewaan, unit, barang, atau QR dari satu tempat.</p>
+      <section className="rounded-[1.2rem] border border-border/60 bg-card p-3.5 shadow-[0_5px_24px_rgba(35,55,45,.05)] sm:p-4">
+        <SectionHeader
+          icon={Bell}
+          title="Perlu Tindakan"
+          count={attentionItems.length}
+          description="Pekerjaan yang membutuhkan perhatian segera."
+          href={attentionItems.length ? paths.pemberitahuan : undefined}
+        />
+        <div className="mt-3 space-y-1.5">
+          {attentionItems.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-border px-3 py-4 text-center text-[11px] text-muted-foreground">
+              Tidak ada pekerjaan yang membutuhkan perhatian saat ini.
             </div>
-            <div className="relative w-full lg:max-w-xl">
-              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-              <Input aria-label="Cari operasional" placeholder="Cari penyewa, barang, kode penyewaan, atau QR..." className="h-11 pl-9" />
-            </div>
+          ) : (
+            attentionItems.slice(0, 3).map((item) => <AttentionRow key={item.id} item={item} />)
+          )}
+        </div>
+      </section>
+
+      <section className="rounded-[1.2rem] border border-border/60 bg-card p-3.5 shadow-[0_5px_24px_rgba(35,55,45,.05)] sm:p-4">
+        <SectionHeader
+          icon={TentTree}
+          title="Aksi Cepat"
+          description="Akses langsung ke pekerjaan yang sering dilakukan."
+          href={paths.penyewaan}
+          actionLabel="Lainnya"
+        />
+        <div className="mt-3 grid grid-cols-3 gap-2 max-[359px]:grid-cols-2 sm:grid-cols-6">
+          {quickActions.map(([label, href, Icon]) => (
+            <Link
+              key={label}
+              to={href}
+              className="group flex min-h-[80px] flex-col items-center justify-center rounded-xl border border-border/60 bg-emerald-50/45 px-1.5 py-2.5 text-center transition-colors hover:bg-emerald-50 dark:bg-emerald-950/15 dark:hover:bg-emerald-950/25"
+            >
+              <span className="grid size-8 place-items-center rounded-xl text-primary">
+                <Icon className="size-4.5" strokeWidth={1.9} aria-hidden="true" />
+              </span>
+              <span className="mt-1 line-clamp-2 text-[10px] font-semibold leading-4 text-foreground">{label}</span>
+            </Link>
+          ))}
+        </div>
+      </section>
+
+      <div className="grid gap-3.5 min-[380px]:grid-cols-2">
+        <section className="rounded-[1.2rem] border border-border/60 bg-card p-3.5 shadow-[0_5px_24px_rgba(35,55,45,.05)] sm:p-4">
+          <SectionHeader
+            icon={CalendarClock}
+            title="Hari Ini"
+            count={agenda.length}
+            description="Jadwal operasional hari ini."
+            href={agenda.length ? paths.penyewaan : undefined}
+          />
+          <div className="mt-3 space-y-0.5">
+            {agenda.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-border px-3 py-4 text-center text-[11px] text-muted-foreground">
+                Tidak ada agenda operasional hari ini.
+              </div>
+            ) : (
+              agenda.slice(0, 4).map((item, index) => (
+                <Link
+                  key={item.id}
+                  to={item.href}
+                  className="relative flex gap-2.5 rounded-xl px-1.5 py-2 hover:bg-muted/30"
+                >
+                  <div className="relative mt-1.5 flex w-4 shrink-0 justify-center">
+                    {index < Math.min(agenda.length, 4) - 1 ? (
+                      <span className="absolute left-1/2 top-3 h-full w-px -translate-x-1/2 bg-border" aria-hidden="true" />
+                    ) : null}
+                    <span
+                      className={cn(
+                        "relative z-10 size-2.5 rounded-full ring-4 ring-card",
+                        item.type === "Pickup"
+                          ? "bg-emerald-500"
+                          : item.type === "Pengembalian"
+                            ? "bg-sky-500"
+                            : "bg-slate-400",
+                      )}
+                      aria-hidden="true"
+                    />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[9px] font-semibold text-muted-foreground">{formatTime(item.type === "Pickup" ? pickupToday.find((x) => item.id.includes(x.penyewaan_id))?.jadwal_mulai : item.type === "Pengembalian" ? returns.find((x) => item.id.includes(x.penyewaan_id))?.jadwal_kembali : reservations.find((x) => item.id.includes(x.reservasi_id))?.mulai_reservasi)}</p>
+                    <p className="mt-0.5 truncate text-[11px] font-semibold">{item.type}</p>
+                    <p className="truncate text-[9px] text-muted-foreground">{item.title}</p>
+                  </div>
+                  <ChevronRight className="mt-2 size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+                </Link>
+              ))
+            )}
           </div>
         </section>
-      </div>
 
-      <div className="space-y-4 lg:hidden">
-        <Card className="shadow-sm">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base">Perlu Tindakan</CardTitle>
-            <p className="mt-1 text-xs text-muted-foreground">Prioritas operasional yang perlu dilanjutkan.</p>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {attentionItems.length === 0 ? (
-              <div className="rounded-xl border border-dashed p-5 text-center text-sm text-muted-foreground">Tidak ada tindakan mendesak saat ini.</div>
-            ) : attentionItems.slice(0, 4).map((item) => (
-              <Link key={item.id} to={item.href} className="flex items-center gap-3 rounded-xl border p-3">
-                <span className={statusTone(item.tone)} aria-hidden="true" />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold">{item.title}</p>
-                  <p className="truncate text-xs text-muted-foreground">{item.description}</p>
-                </div>
-                <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
-              </Link>
-            ))}
-          </CardContent>
-        </Card>
-
-        <Card className="shadow-sm">
-          <CardHeader className="pb-3"><CardTitle className="text-base">Quick Action</CardTitle></CardHeader>
-          <CardContent className="grid grid-cols-2 gap-2">
-            {quickActions.slice(0, 6).map(([label, href, Icon]) => (
-              <Button key={label} asChild variant="outline" className="h-auto justify-start px-3 py-3 text-left">
-                <Link to={href}>
-                  <span className="flex min-w-0 items-center gap-2">
-                    <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary"><Icon className="size-4" /></span>
-                    <span className="truncate text-xs font-semibold">{label}</span>
-                  </span>
-                </Link>
-              </Button>
-            ))}
-          </CardContent>
-        </Card>
-
-        <Card className="shadow-sm">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base">Today</CardTitle>
-            <p className="mt-1 text-xs text-muted-foreground">Jadwal operasional hari ini.</p>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {agenda.length === 0 ? (
-              <div className="rounded-xl border border-dashed p-5 text-center text-sm text-muted-foreground">Tidak ada agenda hari ini.</div>
-            ) : agenda.slice(0, 5).map((item) => (
-              <Link key={item.id} to={item.href} className="flex items-center gap-3 rounded-xl border p-3">
-                <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">
-                  {item.type === "Pickup" ? <TentTree className="size-4" /> : item.type === "Return" ? <RotateCcw className="size-4" /> : <CalendarClock className="size-4" />}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">{item.title}</p>
-                  <p className="text-xs text-muted-foreground">{item.type} · {item.meta}</p>
-                </div>
-              </Link>
-            ))}
-          </CardContent>
-        </Card>
-
-        <Card className="shadow-sm">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base">Current Rentals</CardTitle>
-            <p className="mt-1 text-xs text-muted-foreground">Rental yang saat ini sedang berjalan.</p>
-          </CardHeader>
-          <CardContent className="space-y-2">
+        <section className="rounded-[1.2rem] border border-border/60 bg-card p-3.5 shadow-[0_5px_24px_rgba(35,55,45,.05)] sm:p-4">
+          <SectionHeader
+            icon={TentTree}
+            title="Rental Berjalan"
+            count={currentRentals.length}
+            description="Rental yang saat ini sedang berjalan."
+            href={paths.penyewaan}
+          />
+          <div className="mt-3 space-y-1">
             {currentRentals.length === 0 ? (
-              <div className="rounded-xl border border-dashed p-5 text-center text-sm text-muted-foreground">Belum ada rental aktif.</div>
-            ) : currentRentals.map((item) => (
-              <Link key={item.penyewaan_id} to={`${paths.penyewaan}/${item.penyewaan_id}`} className="flex items-center gap-3 rounded-xl border p-3">
-                <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary"><TentTree className="size-4" /></span>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">{item.nomor_penyewaan}</p>
-                  <p className="truncate text-xs text-muted-foreground">{item.penyewa_nama ?? "Penyewa"} · s.d. {formatTime(item.jadwal_kembali)}</p>
-                </div>
-                <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
-              </Link>
-            ))}
-          </CardContent>
-        </Card>
+              <div className="rounded-xl border border-dashed border-border px-3 py-4 text-center text-[11px] text-muted-foreground">
+                Belum ada rental berjalan.
+              </div>
+            ) : (
+              currentRentals.slice(0, 2).map((item) => (
+                <Link
+                  key={item.penyewaan_id}
+                  to={`${paths.penyewaan}/${item.penyewaan_id}`}
+                  className="group flex items-start gap-2 rounded-xl border border-border/60 px-2.5 py-2.5 hover:bg-muted/25"
+                >
+                  <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-emerald-50 text-primary dark:bg-emerald-950/20">
+                    <TentTree className="size-3.5" aria-hidden="true" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-start justify-between gap-2">
+                      <span className="min-w-0 truncate text-[10px] font-bold">{item.nomor_penyewaan}</span>
+                      <span className="shrink-0 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[8px] font-semibold text-emerald-700 dark:bg-emerald-950/25 dark:text-emerald-300">
+                        Berjalan
+                      </span>
+                    </span>
+                    <span className="mt-0.5 block truncate text-[9px] text-muted-foreground">{item.penyewa_nama ?? "Penyewa"}</span>
+                    <span className="mt-1 block truncate text-[9px] text-muted-foreground">
+                      {item.detail_count} jenis · {item.assignment_count} unit · s.d. {formatTime(item.jadwal_kembali)}
+                    </span>
+                  </span>
+                  <ChevronRight className="mt-1 size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+                </Link>
+              ))
+            )}
+          </div>
 
-        <Card className="shadow-sm">
-          <CardHeader className="pb-3"><CardTitle className="text-base">Returns</CardTitle></CardHeader>
-          <CardContent className="space-y-2">
-            {returns.slice(0, 5).length === 0 ? (
-              <div className="rounded-xl border border-dashed p-5 text-center text-sm text-muted-foreground">Tidak ada return dalam antrean.</div>
-            ) : returns.slice(0, 5).map((item) => (
-              <Link key={item.penyewaan_id} to={`${paths.pengembalian}/${item.penyewaan_id}`} className="flex items-center gap-3 rounded-xl border p-3">
-                <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground"><RotateCcw className="size-4" /></span>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">{item.nomor_penyewaan}</p>
-                  <p className="truncate text-xs text-muted-foreground">{item.penyewa_nama ?? "Penyewa"} · {humanStatus(item.due_state)}</p>
-                </div>
-                <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
-              </Link>
-            ))}
-          </CardContent>
-        </Card>
-
-        <Card className="shadow-sm">
-          <CardHeader className="flex-row items-center justify-between gap-3 pb-3">
-            <div><CardTitle className="text-base">Notifications</CardTitle><p className="mt-1 text-xs text-muted-foreground">Notifikasi terbaru yang perlu diketahui.</p></div>
-            <Badge variant="secondary">{unreadCount}</Badge>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {notifications.length === 0 ? (
-              <div className="rounded-xl border border-dashed p-5 text-center text-sm text-muted-foreground">Belum ada notifikasi.</div>
-            ) : notifications.slice(0, 5).map((item) => (
-              <Link key={item.pemberitahuan_id} to={item.action_target || paths.pemberitahuan} className="flex items-center gap-3 rounded-xl border p-3">
-                <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground"><Bell className="size-4" /></span>
-                <div className="min-w-0 flex-1">
-                  <p className={cn("truncate text-sm font-medium", !item.dibaca_at && "text-primary")}>{item.judul}</p>
-                  <p className="truncate text-xs text-muted-foreground">{item.pesan}</p>
-                </div>
-                {!item.dibaca_at && <Badge variant="secondary">Baru</Badge>}
-              </Link>
-            ))}
-          </CardContent>
-        </Card>
+          <details className="mt-2.5 rounded-xl border border-border/60 bg-muted/15">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2.5 text-[10px] font-semibold marker:hidden">
+              <span className="flex items-center gap-2">
+                <span className="grid size-6 place-items-center rounded-lg bg-muted text-muted-foreground">
+                  <Mountain className="size-3.5" aria-hidden="true" />
+                </span>
+                Kondisi Inventaris
+              </span>
+              <span className="text-[9px] font-normal text-muted-foreground">Lihat ringkasan</span>
+            </summary>
+            <div className="grid grid-cols-4 gap-1.5 border-t border-border/60 px-3 py-2.5">
+              {[
+                ["Ready", inventoryCounts.ready, paths.inventaris + "?status=ready"],
+                ["Disewa", inventoryCounts.rented, paths.inventaris + "?status=rented"],
+                ["Perawatan", inventoryCounts.maintenance, paths.inventaris + "?status=maintenance"],
+                ["Tidak Aktif", inventoryCounts.inactive, paths.inventaris + "?status=inactive"],
+              ].map(([label, value, href]) => (
+                <Link key={label} to={href as string} className="rounded-lg bg-background px-2 py-2 text-center hover:bg-card">
+                  <span className="block text-[8px] text-muted-foreground">{label}</span>
+                  <span className="mt-0.5 block text-xs font-bold">{value as number}</span>
+                </Link>
+              ))}
+            </div>
+          </details>
+        </section>
       </div>
+
+      <section className="rounded-[1.2rem] border border-border/60 bg-card p-3.5 shadow-[0_5px_24px_rgba(35,55,45,.05)] sm:p-4">
+        <SectionHeader
+          icon={History}
+          title="Aktivitas Terbaru"
+          count={notifications.length}
+          description="Pemberitahuan terbaru yang perlu diketahui."
+          href={paths.pemberitahuan}
+        />
+        {notifications.length > 3 ? (
+          <button
+            type="button"
+            aria-expanded={activityOpen}
+            onClick={() => setActivityOpen((open) => !open)}
+            className="mt-2 inline-flex items-center gap-1 text-[10px] font-semibold text-primary min-[380px]:hidden"
+          >
+            {activityOpen ? "Ringkas" : "Tampilkan lebih banyak"}
+            <ChevronDown className={cn("size-3.5 transition-transform", activityOpen && "rotate-180")} aria-hidden="true" />
+          </button>
+        ) : null}
+        <div className="mt-2.5 space-y-1.5">
+          {activityItems.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-border px-3 py-4 text-center text-[11px] text-muted-foreground">
+              Belum ada pemberitahuan.
+            </div>
+          ) : (
+            activityItems.map((item) => (
+              <Link
+                key={item.pemberitahuan_id}
+                to={item.action_target || paths.pemberitahuan}
+                className="flex items-center gap-2.5 rounded-xl border border-border/60 px-2.5 py-2 hover:bg-muted/25"
+              >
+                <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">
+                  <Bell className="size-3.5" aria-hidden="true" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className={cn("block truncate text-[10px] font-semibold", !item.dibaca_at && "text-primary")}>{item.judul}</span>
+                  <span className="block truncate text-[9px] text-muted-foreground">{item.pesan}</span>
+                </span>
+                {!item.dibaca_at ? <Badge variant="secondary" className="shrink-0 px-1.5 py-0.5 text-[8px]">Baru</Badge> : null}
+                <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+              </Link>
+            ))
+          )}
+        </div>
+      </section>
+
+      <p className="px-1 text-[9px] text-muted-foreground">
+        Data dashboard berasal dari modul pemilik dan laporan turunan. Dashboard tidak mengubah fakta bisnis.
+      </p>
     </div>
   );
 }

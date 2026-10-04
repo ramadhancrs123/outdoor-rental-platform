@@ -218,6 +218,7 @@ export default async function financeScenario({ page, baseURL, capture }) {
     else if (table === "reservasi") body = [{ reservasi_id: "reservation-fin-001", nomor_reservasi: "RSV-F3-001" }];
     else if (table === "penyewaan") body = [];
     else if (table === "pemasok") body = [{ pemasok_id: "supplier-fin-001", nama: "Supplier QA" }];
+    else if (table === "akun_keuangan") body = [{ akun_keuangan_id: "akun-fin-001", usaha_id: usahaId, kode_akun: "KAS-01", nama_akun: "Kas Utama", jenis_akun: "kas", mata_uang: "IDR", status: "active", catatan: null, saldo_awal: 0, uang_masuk: 950000, uang_keluar: 250000, saldo: 700000, tanggal_saldo_awal: null }];
 
     if (object) body = body[0] ?? null;
     return json(route, body);
@@ -226,10 +227,12 @@ export default async function financeScenario({ page, baseURL, capture }) {
   await page.goto(baseURL + "/keuangan?f3=1", { waitUntil: "domcontentloaded" });
   await page.waitForLoadState("networkidle").catch(() => {});
   console.log("FINANCE_BODY_START", (await page.locator("body").innerText()).slice(0, 5000));
-  await assertVisible(page, "Pendapatan Tercatat");
-  await assertVisible(page, "Pergerakan Operasional Bersih");
-  await assertVisible(page, "Status Keuangan");
-  await assertVisible(page, "Exact attribution only");
+  await assertVisible(page, "Pemasukan Tercatat");
+  await assertVisible(page, "Pengeluaran Tercatat");
+  await assertVisible(page, "Net Operasional");
+  await assertVisible(page, "Transaksi Terbaru");
+  await assertVisible(page, "Perlu Perhatian");
+  await assertVisible(page, "Analisis Keuangan");
   await capture("finance-dashboard");
 
   const bodyWidth = await page.evaluate(() => document.body.scrollWidth);

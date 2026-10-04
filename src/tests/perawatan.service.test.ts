@@ -13,6 +13,7 @@ vi.mock("@/app/providers/supabase/client", () => ({
 
 import {
   completeMaintenance,
+  completeMaintenanceWithFinanceCashout,
   verifyMaintenanceReadiness,
   createMaintenance,
   getMaintenanceCapabilities,
@@ -183,6 +184,80 @@ describe("Perawatan trusted command service", () => {
       p_expected_updated_at: "maintenance-time",
       p_expected_unit_updated_at: "unit-time",
     }));
+  });
+
+  test("maintenance cash-out maps multi-account allocations and settlement time", async () => {
+    rpcMock.mockResolvedValue({
+      data: {
+        perawatan_id: "maintenance-1",
+        status: "completed",
+        biaya: 125000,
+        pengeluaran_id: "expense-1",
+        cash_out_recorded: true,
+        settlement: {
+          allocations: [
+            { akun_keuangan_id: "account-1", amount: 75000 },
+            { akun_keuangan_id: "account-2", amount: 50000 },
+          ],
+        },
+      },
+      error: null,
+    });
+
+    await expect(completeMaintenanceWithFinanceCashout(
+      "usaha-1",
+      {
+        perawatanId: "maintenance-1",
+        pelaksana: "Teknisi",
+        biaya: 125000,
+        currencyCode: "IDR",
+        catatan: "Bayar vendor setelah pekerjaan selesai.",
+        allocations: [
+          { akunKeuanganId: "account-1", amount: 75000 },
+          { akunKeuanganId: "account-2", amount: 50000 },
+        ],
+        diselesaikanAt: "2026-10-04T04:30:00.000Z",
+      },
+      "maintenance-time",
+      "unit-time",
+      "cashout-key",
+    )).resolves.toMatchObject({
+      status: "completed",
+      biaya: 125000,
+      pengeluaran_id: "expense-1",
+      cash_out_recorded: true,
+    });
+
+    expect(rpcMock).toHaveBeenCalledWith("command_complete_maintenance_with_finance_cashout", expect.objectContaining({
+      p_perawatan_id: "maintenance-1",
+      p_biaya: 125000,
+      p_currency_code: "IDR",
+      p_allocations: [
+        { akun_keuangan_id: "account-1", amount: 75000 },
+        { akun_keuangan_id: "account-2", amount: 50000 },
+      ],
+      p_diselesaikan_at: "2026-10-04T04:30:00.000Z",
+      p_idempotency_key: "cashout-key",
+      p_expected_updated_at: "maintenance-time",
+      p_expected_unit_updated_at: "unit-time",
+    }));
+  });
+
+  test("maintenance cash-out rejects incomplete account allocation before RPC", async () => {
+    await expect(completeMaintenanceWithFinanceCashout(
+      "usaha-1",
+      {
+        perawatanId: "maintenance-1",
+        biaya: 100000,
+        currencyCode: "IDR",
+        allocations: [{ akunKeuanganId: "account-1", amount: 50000 }],
+      },
+      "maintenance-time",
+      "unit-time",
+      "cashout-invalid-key",
+    )).rejects.toThrow(/Total alokasi akun harus sama/);
+
+    expect(rpcMock).not.toHaveBeenCalled();
   });
 
   test("verification maps pass/fail and optimistic-lock inputs", async () => {

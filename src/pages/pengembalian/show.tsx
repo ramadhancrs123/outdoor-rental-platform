@@ -1,13 +1,14 @@
+import { createClientId } from "@/lib/client-id";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ArrowRight, Check, QrCode, RefreshCw, ShieldAlert } from "lucide-react";
+import { ArrowLeft, ArrowRight, ChevronDown, Clock3, History, Info, MoreHorizontal, Package, PackageCheck, QrCode, ReceiptText, RefreshCw, ShieldAlert, UsersRound, WalletCards } from "lucide-react";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { RentalTimingSummary } from "@/components/penyewaan/rental-timing";
 import { ToleranceExtensionDialog } from "@/components/penyewaan/tolerance-extension-dialog";
+import { RentalConsequenceList } from "@/components/keuangan/rental-consequence-list";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   ReturnConfirmationDialog,
@@ -17,13 +18,11 @@ import {
   ReturnQrDialog,
   ReturnStateNotice,
   ReturnUnitCard,
-  ReturnWorkspaceHeader,
   SuccessReturnPanel,
 } from "@/components/pengembalian/return-ui";
 import {
   formatReturnDateTime,
   getPengembalianContext,
-  getReturnCapabilities,
   getReturnWorkspace,
   lookupReturnRentalByQr,
   processUnitReturn,
@@ -31,6 +30,7 @@ import {
   semanticReturnLabel,
 } from "@/features/pengembalian";
 import { listRentalToleranceHistory } from "@/features/penyewaan";
+import { listRentalConsequenceReviews } from "@/features/keuangan";
 import type { ReturnWorkspace as ReturnWorkspaceData } from "@/features/pengembalian";
 import { deriveReturnDueState } from "@/features/pengembalian/utils";
 import { paths } from "@/routes/paths";
@@ -133,24 +133,42 @@ export function ReturnShow() {
     queryFn: () => listRentalToleranceHistory(context.data!.usahaId, id!),
     enabled: Boolean(context.data?.usahaId && id),
   });
+  const consequenceReviews = useQuery({
+    queryKey: ["keuangan", "rental-consequence", context.data?.usahaId, id],
+    queryFn: () => listRentalConsequenceReviews(context.data!.usahaId, id!),
+    enabled: Boolean(context.data?.usahaId && id),
+    staleTime: 5_000,
+  });
 
   const item = workspace.data;
-  const outstandingUnits = useMemo(
-    () => item?.units.filter((unit) => !unit.returned && unit.unit_status === "rented") ?? [],
-    [item?.units],
-  );
   const selectedUnits = useMemo(
     () => item?.units.filter((unit) => selectedUnitIds.includes(unit.unit_barang_id)) ?? [],
     [item?.units, selectedUnitIds],
   );
+
+  const packageProgress = useMemo(() => {
+    const groups = new Map<string, { name: string; total: number; returned: number }>();
+    for (const unit of item?.units ?? []) {
+      if (!unit.paket_sewa_id) continue;
+      const current = groups.get(unit.paket_sewa_id) ?? {
+        name: unit.paket_nama ?? "Paket",
+        total: 0,
+        returned: 0,
+      };
+      current.total += 1;
+      if (unit.returned) current.returned += 1;
+      groups.set(unit.paket_sewa_id, current);
+    }
+    return Array.from(groups.values());
+  }, [item?.units]);
 
   const returnMutation = useMutation({
     mutationFn: async () => {
       if (!context.data || !id || !item) throw new Error("Workspace pengembalian belum siap.");
       if (!commandRef.current) {
         commandRef.current = {
-          key: crypto.randomUUID(),
-          requestId: crypto.randomUUID(),
+          key: createClientId(),
+          requestId: createClientId(),
         };
       }
       return processUnitReturn(
@@ -263,7 +281,9 @@ export function ReturnShow() {
       <div className="mx-auto w-full max-w-7xl space-y-4" aria-busy="true">
         <Skeleton className="h-8 w-32 rounded-xl" />
         <Skeleton className="h-28 rounded-3xl" />
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
+        <RentalConsequenceList items={consequenceReviews.data ?? []} />
+
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
           <Skeleton className="h-48 rounded-2xl" />
           <Skeleton className="h-48 rounded-2xl" />
         </div>
@@ -312,7 +332,6 @@ export function ReturnShow() {
   const returnedCount = item.units.filter((unit) => unit.returned).length;
   const totalCount = item.units.length;
   const dueState = workspaceDueState(item);
-  const capabilities = getReturnCapabilities();
 
   const toggleUnit = (unitId: string, checked: boolean) => {
     setSelectedUnitIds((current) => checked ? (current.includes(unitId) ? current : [...current, unitId]) : current.filter((idValue) => idValue !== unitId));
@@ -330,12 +349,51 @@ export function ReturnShow() {
     : null;
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-4 pb-28 sm:space-y-5 md:pb-10">
-      <Button asChild variant="ghost" className="-ml-3 rounded-xl">
-        <Link to={paths.pengembalian}><ArrowLeft />Kembali ke antrian</Link>
-      </Button>
+    <div data-testid="return-detail-root" className="mx-auto w-full max-w-3xl space-y-2.5 pb-28 sm:space-y-3.5 lg:pb-10">
+      <section className="relative isolate overflow-hidden rounded-[24px] border border-white/70 shadow-[0_10px_32px_rgba(23,68,55,.10)]">
+        <div aria-hidden="true" className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: "url('/login-bg.webp')" }} />
+        <div aria-hidden="true" className="absolute inset-0 bg-gradient-to-br from-[#0b5c4b]/76 via-[#0d4f43]/46 to-black/18" />
+        <div aria-hidden="true" className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/28 to-transparent" />
+        <div className="relative px-4 pb-4 pt-3.5 text-white sm:px-5">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex min-w-0 items-start gap-2.5">
+              <Button asChild variant="ghost" size="icon" className="size-8 shrink-0 rounded-xl bg-white/12 text-white hover:bg-white/20 hover:text-white" aria-label="Kembali ke penyewaan">
+                <Link to={paths.penyewaan}><ArrowLeft className="size-4" /></Link>
+              </Button>
+              <div className="min-w-0">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/78">Selesaikan Sewa</p>
+                <h1 className="mt-1 truncate text-[21px] font-bold leading-6 tracking-[-0.03em]">{item.rental.nomor_penyewaan}</h1>
+                <p className="mt-0.5 truncate text-[11px] text-white/82">{item.renter?.nama_lengkap ?? "Penyewa tidak ditemukan"}</p>
+              </div>
+            </div>
+            <ReturnDueBadge state={dueState} />
+          </div>
+          <div className="mt-5 flex items-center gap-2.5">
+            <span className="grid size-9 place-items-center rounded-xl bg-white/86 text-[#0d5e4b] shadow-sm backdrop-blur">
+              <PackageCheck className="size-4.5" />
+            </span>
+            <div>
+              <p className="text-[20px] font-bold leading-5 tracking-[-0.03em]">Pengembalian</p>
+              <p className="mt-0.5 text-[10px] text-white/82">Terima unit yang benar-benar kembali, lalu lanjutkan ke pemeriksaan.</p>
+            </div>
+          </div>
+        </div>
+      </section>
 
-      <ReturnWorkspaceHeader workspace={item} dueState={dueState} />
+      <nav aria-label="Detail pengembalian" className="grid grid-cols-4 gap-1.5 rounded-2xl border border-border/60 bg-card p-1.5 shadow-[0_4px_16px_rgba(30,68,57,.05)]">
+        <button type="button" className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-xl bg-[#0a6b55] px-2 text-[10px] font-semibold text-white shadow-sm">
+          <PackageCheck className="size-3.5" />Pengembalian
+        </button>
+        <button type="button" onClick={() => setQrOpen(true)} className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-xl bg-muted/35 px-2 text-[10px] font-semibold text-foreground hover:bg-muted">
+          <QrCode className="size-3.5" />QR
+        </button>
+        <button type="button" onClick={() => document.getElementById("return-history")?.scrollIntoView({ behavior: "smooth", block: "start" })} className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-xl bg-muted/35 px-2 text-[10px] font-semibold text-foreground hover:bg-muted">
+          <History className="size-3.5" />Riwayat
+        </button>
+        <button type="button" onClick={() => document.getElementById("return-related")?.scrollIntoView({ behavior: "smooth", block: "start" })} className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-xl bg-muted/35 px-2 text-[10px] font-semibold text-foreground hover:bg-muted">
+          <MoreHorizontal className="size-3.5" />Lainnya
+        </button>
+      </nav>
 
       {mappedError ? (
         <ReturnStateNotice tone="danger" title={mappedError.title} actionLabel="Muat ulang" onAction={() => void workspace.refetch()}>
@@ -355,277 +413,269 @@ export function ReturnShow() {
         </ReturnStateNotice>
       ) : null}
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
-        <Card className="border-border/80 shadow-sm">
-          <CardHeader>
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <CardTitle className="text-base">Informasi Penyewaan</CardTitle>
-                <p className="mt-1 text-sm text-muted-foreground">Jadwal pengembalian dan pengembalian aktual adalah fakta yang berbeda.</p>
+      <section className="rounded-[22px] border border-border/65 bg-card shadow-[0_4px_18px_rgba(28,67,56,.055)]">
+        <div className="flex items-start justify-between gap-3 px-3.5 pb-2.5 pt-3.5 sm:px-4">
+          <div className="flex min-w-0 items-start gap-2.5">
+            <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300">
+              <Package className="size-4.5" />
+            </span>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-[15px] font-bold tracking-tight">{item.rental.nomor_penyewaan}</p>
+                <Badge variant="secondary" className="rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] text-emerald-700 dark:bg-emerald-950/25 dark:text-emerald-300">{semanticReturnLabel(item.rental.status)}</Badge>
               </div>
-              <ReturnDueBadge state={dueState} />
+              <p className="mt-0.5 text-[10px] text-muted-foreground">Konteks rental untuk proses penerimaan unit.</p>
             </div>
-          </CardHeader>
-          <CardContent className="grid gap-4 sm:grid-cols-2">
-            <div className="rounded-2xl border bg-muted/20 p-4">
-              <p className="text-[11px] text-muted-foreground">Jadwal mulai</p>
-              <p className="mt-1 font-semibold">{formatReturnDateTime(item.rental.jadwal_mulai)}</p>
-            </div>
-            <div className="rounded-2xl border bg-muted/20 p-4">
-              <p className="text-[11px] text-muted-foreground">Jadwal kembali</p>
-              <p className="mt-1 font-semibold">{formatReturnDateTime(item.rental.jadwal_kembali)}</p>
-            </div>
-            <div className="rounded-2xl border bg-muted/20 p-4">
-              <p className="text-[11px] text-muted-foreground">Batas toleransi</p>
-              <p className="mt-1 font-semibold">{formatReturnDateTime(item.rental.tolerance_deadline)}</p>
-            </div>
-            <div className="rounded-2xl border bg-muted/20 p-4">
-              <p className="text-[11px] text-muted-foreground">Pengambilan Aktual</p>
-              <p className="mt-1 font-semibold">{formatReturnDateTime(item.rental.actual_pickup_at)}</p>
-            </div>
-            <div className="rounded-2xl border bg-primary/[0.03] p-4">
-              <p className="text-[11px] text-muted-foreground">Pengembalian aktual dimulai</p>
-              <p className="mt-1 font-semibold">{formatReturnDateTime(item.rental.actual_return_started_at)}</p>
-            </div>
-            <div className="rounded-2xl border bg-primary/[0.03] p-4">
-              <p className="text-[11px] text-muted-foreground">Pengembalian aktual selesai</p>
-              <p className="mt-1 font-semibold">{formatReturnDateTime(item.rental.actual_return_completed_at)}</p>
-            </div>
-          </CardContent>
-        </Card>
+          </div>
+          <Button type="button" variant="outline" size="icon" className="size-8 rounded-xl" onClick={() => setQrOpen(true)} aria-label="Pindai QR Unit">
+            <QrCode className="size-3.5" />
+          </Button>
+        </div>
 
-        <Card className="border-border/80 shadow-sm">
-          <CardHeader><CardTitle className="text-base">Informasi Penyewa</CardTitle></CardHeader>
-          <CardContent className="space-y-4">
-            <div className="rounded-2xl border bg-muted/20 p-4">
-              <p className="text-[11px] text-muted-foreground">Nama renter</p>
-              <p className="mt-1 text-lg font-semibold">{item.renter?.nama_lengkap ?? "Tidak ditemukan"}</p>
-              <p className="mt-1 text-sm text-muted-foreground">{item.renter?.nomor_telepon ?? "Nomor telepon tidak tersedia"}</p>
+        <div className="mx-3.5 mb-3.5 grid grid-cols-3 divide-x overflow-hidden rounded-2xl border border-border/60 bg-muted/10 sm:mx-4">
+          <div className="min-w-0 px-2.5 py-2.5">
+            <p className="text-[8px] text-muted-foreground">Kembali</p>
+            <p className="mt-1 truncate text-[10px] font-semibold">{formatReturnDateTime(item.rental.jadwal_kembali)}</p>
+          </div>
+          <div className="min-w-0 px-2.5 py-2.5">
+            <p className="text-[8px] text-muted-foreground">Toleransi</p>
+            <p className="mt-1 truncate text-[10px] font-semibold">{formatReturnDateTime(item.rental.tolerance_deadline)}</p>
+          </div>
+          <div className="min-w-0 px-2.5 py-2.5">
+            <p className="text-[8px] text-muted-foreground">Unit</p>
+            <p className="mt-1 truncate text-[10px] font-semibold">{returnedCount}/{totalCount} diterima</p>
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-[22px] border border-border/65 bg-card p-3.5 shadow-[0_4px_18px_rgba(28,67,56,.04)] sm:p-4">
+        <div className="flex items-start gap-2.5">
+          <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300"><UsersRound className="size-4.5" /></span>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-[15px] font-bold">Informasi Penyewa</h2>
+            <p className="mt-0.5 text-[10px] text-muted-foreground">Konteks penyewa tersedia pada header.</p>
+          </div>
+          <Button asChild variant="ghost" size="icon" className="size-8 rounded-xl text-muted-foreground" aria-label="Menu penyewa">
+            <Link to={paths.penyewaan + "/" + item.rental.penyewaan_id}><MoreHorizontal className="size-4" /></Link>
+          </Button>
+        </div>
+        <div className="mt-3 grid grid-cols-2 divide-x rounded-2xl bg-muted/15">
+          <div className="px-3 py-2.5"><p className="text-[9px] text-muted-foreground">Pengambilan aktual</p><p className="mt-1 truncate text-[10px] font-semibold">{formatReturnDateTime(item.rental.actual_pickup_at)}</p></div>
+          <div className="px-3 py-2.5"><p className="text-[9px] text-muted-foreground">Nomor telepon</p><p className="mt-1 truncate text-[10px] font-semibold">{item.renter?.nomor_telepon ?? "Tidak tersedia"}</p></div>
+        </div>
+      </section>
+
+      <section className="rounded-[22px] border border-border/65 bg-card p-3.5 shadow-[0_4px_18px_rgba(28,67,56,.04)] sm:p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-2.5">
+            <span className="grid size-9 place-items-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300"><PackageCheck className="size-4.5" /></span>
+            <div>
+              <h2 className="text-[15px] font-bold">Progress Pengembalian</h2>
+              <p className="mt-0.5 text-[10px] text-muted-foreground">{returnedCount} dari {totalCount} unit sudah diterima.</p>
             </div>
-            <div className="rounded-2xl border bg-muted/20 p-4">
-              <p className="text-[11px] text-muted-foreground">Nomor Penyewaan</p>
-              <p className="mt-1 font-semibold">{item.rental.nomor_penyewaan}</p>
+          </div>
+          <span className="text-[15px] font-bold text-primary">{totalCount ? Math.round((returnedCount / totalCount) * 100) : 0}%</span>
+        </div>
+        <div className="mt-3"><ReturnProgress returned={returnedCount} total={totalCount} outstanding={Math.max(0, totalCount - returnedCount)} /></div>
+      </section>
+
+      <section className="rounded-[22px] border border-border/65 bg-card p-3.5 shadow-[0_4px_18px_rgba(28,67,56,.04)] sm:p-4">
+        <div className="flex items-start gap-2.5">
+          <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-muted/40 text-primary"><Clock3 className="size-4.5" /></span>
+          <div>
+            <h2 className="text-[15px] font-bold">Status Pengembalian</h2>
+            <p className="mt-0.5 text-[10px] text-muted-foreground">Jadwal kembali dan batas toleransi.</p>
+          </div>
+        </div>
+        <RentalTimingSummary
+          scheduleAt={item.rental.jadwal_kembali}
+          toleranceDeadline={item.rental.tolerance_deadline}
+          actualReturnAt={item.rental.actual_return_completed_at}
+          compact
+          className="mt-3"
+        />
+        <div className="mt-2.5 rounded-xl border border-border/60 bg-muted/10 px-3 py-2.5 text-[9px] leading-4 text-muted-foreground">
+          Jadwal pengembalian dan pengembalian aktual adalah fakta yang berbeda.
+        </div>
+      </section>
+
+      {(item.rental.status === "active" || item.rental.status === "return_in_progress") ? (
+        <section id="return-tolerance" className="rounded-[22px] border border-border/65 bg-card p-3.5 shadow-[0_4px_18px_rgba(28,67,56,.04)] sm:p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-amber-50 text-amber-700 dark:bg-amber-950/25 dark:text-amber-300"><Clock3 className="size-4.5" /></span>
+              <div className="min-w-0">
+                <h2 className="text-[13px] font-bold">Batas toleransi</h2>
+                <p className="truncate text-[9px] text-muted-foreground">{formatReturnDateTime(item.rental.tolerance_deadline)}</p>
+              </div>
             </div>
-            <Button type="button" variant="outline" className="h-11 w-full rounded-xl" onClick={() => setQrOpen(true)}>
-              <QrCode /> Scan QR Unit
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
-
-      <Card className="border-border/80 shadow-sm">
-        <CardHeader>
-          <CardTitle className="text-base">Progress Pengembalian</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <ReturnProgress returned={returnedCount} total={totalCount} outstanding={Math.max(0, totalCount - returnedCount)} />
-        </CardContent>
-      </Card>
-
-      <RentalTimingSummary
-        scheduleAt={item.rental.jadwal_kembali}
-        toleranceDeadline={item.rental.tolerance_deadline}
-        actualReturnAt={item.rental.actual_return_completed_at}
-      />
-
-      <div className="flex flex-wrap gap-2">
-        {item.rental.status === "active" || item.rental.status === "return_in_progress" ? (
-          <ToleranceExtensionDialog
-            usahaId={context.data.usahaId}
-            penyewaanId={item.rental.penyewaan_id}
-            currentDeadline={item.rental.tolerance_deadline}
-            history={toleranceHistory.data ?? []}
-            onSaved={async () => {
-              await Promise.all([workspace.refetch(), toleranceHistory.refetch()]);
-            }}
-          />
-        ) : null}
-      </div>
+            <ToleranceExtensionDialog
+              usahaId={context.data.usahaId}
+              penyewaanId={item.rental.penyewaan_id}
+              currentDeadline={item.rental.tolerance_deadline}
+              history={toleranceHistory.data ?? []}
+              onSaved={async () => { await Promise.all([workspace.refetch(), toleranceHistory.refetch()]); }}
+            />
+          </div>
+        </section>
+      ) : null}
 
       <ReturnStateNotice tone="info" title="Batas toleransi pengembalian">
         {"Pengembalian pada penyewaan ini memiliki batas toleransi sampai " + formatReturnDateTime(item.rental.tolerance_deadline) + ". Batas ini hanya menjelaskan waktu toleransi; penerimaan tetap mencatat waktu aktual saat unit diterima."}
       </ReturnStateNotice>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
-        <Card className="border-border/80 shadow-sm">
-          <CardHeader>
-            <CardTitle className="text-base">Pilih Unit yang Dikembalikan</CardTitle>
-            <p className="text-sm text-muted-foreground">
-              Pilih hanya unit yang benar-benar sudah diterima. Pemilihan unit bukan izin otomatis; sistem tetap memvalidasi konteks penyewaan.
-            </p>
-          </CardHeader>
-          <CardContent>
-            <div className="hidden overflow-x-auto md:block">
-              <table className="w-full min-w-[920px] text-sm">
-                <thead className="border-b bg-muted/40 text-left">
-                  <tr>
-                    <th className="px-4 py-3 font-medium"><span className="sr-only">Pilih</span></th>
-                    <th className="px-4 py-3 font-medium">Kode Unit</th>
-                    <th className="px-4 py-3 font-medium">Barang</th>
-                    <th className="px-4 py-3 font-medium">Varian</th>
-                    <th className="px-4 py-3 font-medium">Status Unit</th>
-                    <th className="px-4 py-3 font-medium">Status Pengembalian</th>
-                    <th className="px-4 py-3 font-medium">Status Pemeriksaan</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {item.units.map((unit) => {
-                    const canSelect = !unit.returned && unit.unit_status === "rented";
-                    return (
-                      <tr key={unit.unit_barang_id} className={["border-b last:border-0", canSelect ? "hover:bg-accent/20" : "opacity-70"].join(" ")}>
-                        <td className="px-4 py-4">
-                          <input
-                            type="checkbox"
-                            checked={selectedUnitIds.includes(unit.unit_barang_id)}
-                            disabled={!canSelect || Boolean(returnMutation.isPending) || Boolean(unknownFeedback)}
-                            onChange={(event) => toggleUnit(unit.unit_barang_id, event.target.checked)}
-                            aria-label={"Pilih unit " + unit.kode_unit}
-                            className="size-4 accent-primary"
-                          />
-                        </td>
-                        <td className="px-4 py-4 font-semibold">{unit.kode_unit}</td>
-                        <td className="px-4 py-4">{unit.barang_nama ?? "—"}</td>
-                        <td className="px-4 py-4">{unit.varian_nama ?? "—"}</td>
-                        <td className="px-4 py-4"><Badge variant="secondary" className="rounded-full">{semanticReturnLabel(unit.unit_status)}</Badge></td>
-                        <td className="px-4 py-4"><Badge variant={unit.returned ? "outline" : "secondary"} className="rounded-full">{unit.returned ? "Sudah diterima" : "Belum diterima"}</Badge></td>
-                        <td className="px-4 py-4"><Badge variant="outline" className="rounded-full">{unit.inspection_status ? semanticReturnLabel(unit.inspection_status) : "Menunggu pengembalian"}</Badge></td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+      {packageProgress.length ? (
+        <details className="group rounded-[22px] border border-border/65 bg-card shadow-[0_4px_18px_rgba(28,67,56,.04)]">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3.5 py-3.5 marker:hidden">
+            <span className="flex min-w-0 items-center gap-2.5">
+              <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/25 dark:text-emerald-300"><PackageCheck className="size-4.5" /></span>
+              <span className="min-w-0"><span className="block text-[13px] font-bold">Progress Paket</span><span className="mt-0.5 block text-[9px] text-muted-foreground">Penerimaan tetap dicatat per unit fisik.</span></span>
+            </span>
+            <ChevronDown className="size-4 text-muted-foreground transition-transform group-open:rotate-180" />
+          </summary>
+          <div className="grid gap-2 border-t border-border/60 px-3.5 py-3.5 sm:grid-cols-2">
+            {packageProgress.map((group) => (
+              <div key={group.name} className="rounded-2xl border border-border/60 bg-muted/[0.02] p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0"><p className="truncate text-[11px] font-semibold">{group.name}</p><p className="mt-1 text-[9px] text-muted-foreground">{group.returned} dari {group.total} unit diterima</p></div>
+                  <Badge variant={group.returned === group.total ? "secondary" : "outline"} className="rounded-full text-[9px]">{group.returned}/{group.total}</Badge>
+                </div>
+              </div>
+            ))}
+          </div>
+        </details>
+      ) : null}
 
-            <div className="grid gap-3 md:hidden">
-              {item.units.map((unit) => (
-                <ReturnUnitCard
-                  key={unit.unit_barang_id}
-                  unit={unit}
-                  selected={selectedUnitIds.includes(unit.unit_barang_id)}
-                  disabled={Boolean(returnMutation.isPending) || Boolean(unknownFeedback)}
-                  onChange={(checked) => toggleUnit(unit.unit_barang_id, checked)}
-                />
+      <section className="rounded-[22px] border border-border/65 bg-card p-3.5 shadow-[0_4px_18px_rgba(28,67,56,.04)] sm:p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 items-start gap-2.5">
+            <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/25 dark:text-emerald-300"><Package className="size-4.5" /></span>
+            <div className="min-w-0">
+              <h2 className="text-[15px] font-bold">Unit yang dikembalikan</h2>
+              <p className="mt-0.5 text-[10px] text-muted-foreground">Pilih hanya unit yang benar-benar sudah diterima.</p>
+            </div>
+          </div>
+          <Button type="button" variant="ghost" size="icon" className="size-8 rounded-xl text-muted-foreground" onClick={() => setQrOpen(true)} aria-label="Pindai QR Unit">
+            <QrCode className="size-4" />
+          </Button>
+        </div>
+        <div className="mt-3 grid gap-2.5">
+          {item.units.map((unit) => (
+            <ReturnUnitCard
+              key={unit.unit_barang_id}
+              unit={unit}
+              selected={selectedUnitIds.includes(unit.unit_barang_id)}
+              disabled={Boolean(returnMutation.isPending) || Boolean(unknownFeedback)}
+              onChange={(checked) => toggleUnit(unit.unit_barang_id, checked)}
+            />
+          ))}
+          {!item.units.length ? (
+            <div className="flex min-h-32 flex-col items-center justify-center rounded-2xl border border-dashed text-center">
+              <p className="font-medium">Belum ada unit pada penyewaan ini</p>
+              <p className="mt-1 text-sm text-muted-foreground">Tidak ada unit fisik yang dapat diproses di workspace ini.</p>
+            </div>
+          ) : null}
+        </div>
+      </section>
+
+      {selectedUnitIds.length ? (
+        <section className="rounded-[20px] border border-emerald-200/80 bg-emerald-50/60 p-3.5 dark:border-emerald-900/40 dark:bg-emerald-950/20">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0"><p className="text-[12px] font-bold text-emerald-900 dark:text-emerald-100">{selectedUnitIds.length} unit dipilih</p><p className="mt-0.5 text-[9px] text-emerald-900/65 dark:text-emerald-100/65">Tinjau unit sebelum menyimpan pengembalian.</p></div>
+            <Button type="button" className="h-10 shrink-0 rounded-xl bg-[#0a6b55] px-3 text-[10px] font-semibold hover:bg-[#075944]" disabled={returnMutation.isPending || Boolean(unknownFeedback)} onClick={() => setConfirmOpen(true)}>Lanjut ke Konfirmasi<ArrowRight className="size-3.5" /></Button>
+          </div>
+        </section>
+      ) : null}
+
+      <details className="group rounded-[22px] border border-border/65 bg-card shadow-[0_4px_18px_rgba(28,67,56,.04)]">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3.5 py-3.5 marker:hidden">
+          <span className="flex min-w-0 items-center gap-2.5">
+            <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-muted/50 text-primary"><ReceiptText className="size-4.5" /></span>
+            <span className="min-w-0"><span className="block text-[13px] font-bold">Catatan Penerimaan</span><span className="mt-0.5 block text-[9px] text-muted-foreground">Catatan penerimaan, bukan temuan kerusakan.</span></span>
+          </span>
+          <ChevronDown className="size-4 text-muted-foreground transition-transform group-open:rotate-180" />
+        </summary>
+        <div className="border-t border-border/60 px-3.5 py-3.5">
+          <textarea
+            value={note}
+            onChange={(event) => setNote(event.target.value)}
+            placeholder="Catatan penerimaan unit…"
+            disabled={returnMutation.isPending || Boolean(unknownFeedback)}
+            className="min-h-24 w-full resize-y rounded-2xl border bg-background px-3 py-3 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+            aria-label="Catatan penerimaan"
+          />
+        </div>
+      </details>
+
+      <details id="return-inspection" className="group rounded-[22px] border border-border/65 bg-card shadow-[0_4px_18px_rgba(28,67,56,.04)]" open>
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3.5 py-3.5 marker:hidden">
+          <span className="flex min-w-0 items-center gap-2.5">
+            <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-blue-50 text-blue-700 dark:bg-blue-950/25 dark:text-blue-300"><ShieldAlert className="size-4.5" /></span>
+            <span className="min-w-0"><span className="block text-[13px] font-bold">Diserahkan ke Pemeriksaan</span><span className="mt-0.5 block text-[9px] text-muted-foreground">Unit yang diterima masuk ke tahap pemeriksaan.</span></span>
+          </span>
+          <ChevronDown className="size-4 text-muted-foreground transition-transform group-open:rotate-180" />
+        </summary>
+        <div className="space-y-2.5 border-t border-border/60 px-3.5 py-3.5">
+          <ReturnStateNotice tone="info" title="Setelah Pengembalian">
+            Unit yang diterima masuk ke tahap pemeriksaan. Pengembalian menyediakan konteks awal; Pemeriksaan dilanjutkan langsung dari halaman ini.
+          </ReturnStateNotice>
+          {item.units.filter((unit) => unit.returned && unit.detail_pengembalian_id).length ? (
+            <div className="space-y-1.5">
+              {item.units.filter((unit) => unit.returned && unit.detail_pengembalian_id).map((unit) => (
+                <Link
+                  key={unit.detail_pengembalian_id}
+                  to={paths.pemeriksaan + "/" + unit.detail_pengembalian_id}
+                  className="flex min-h-11 items-center justify-between gap-3 rounded-xl border border-border/60 bg-background px-3 py-2.5 transition-colors hover:bg-accent/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <div className="min-w-0"><p className="text-[10px] font-semibold">{unit.kode_unit}</p><p className="truncate text-[9px] text-muted-foreground">{unit.barang_nama ?? "Barang"}{unit.varian_nama ? " · " + unit.varian_nama : ""}</p></div>
+                  <span className="inline-flex shrink-0 items-center gap-1 text-[9px] font-semibold text-primary">{unit.inspection_status === "in_progress" ? "Lanjutkan" : "Periksa"}<ArrowRight className="size-3.5" /></span>
+                </Link>
               ))}
             </div>
+          ) : null}
+        </div>
+      </details>
 
-            {!item.units.length ? (
-              <div className="flex min-h-40 flex-col items-center justify-center rounded-2xl border border-dashed text-center">
-                <p className="font-medium">Belum ada unit pada penyewaan ini</p>
-                <p className="mt-1 text-sm text-muted-foreground">Tidak ada unit fisik yang dapat diproses di workspace ini.</p>
-              </div>
-            ) : null}
-          </CardContent>
-        </Card>
+      <details id="return-history" className="group rounded-[22px] border border-border/65 bg-card shadow-[0_4px_18px_rgba(28,67,56,.04)]">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3.5 py-3.5 marker:hidden">
+          <span className="flex min-w-0 items-center gap-2.5">
+            <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-muted/50 text-primary"><History className="size-4.5" /></span>
+            <span className="min-w-0"><span className="block text-[13px] font-bold">Riwayat Pengembalian</span><span className="mt-0.5 block text-[9px] text-muted-foreground">Timeline penerimaan dan proses lanjutan.</span></span>
+          </span>
+          <ChevronDown className="size-4 text-muted-foreground transition-transform group-open:rotate-180" />
+        </summary>
+        <div className="border-t border-border/60 px-3.5 py-3.5"><ReturnHistoryTimeline workspace={item} /></div>
+      </details>
 
-        <Card className="hidden border-border/80 shadow-sm lg:block lg:sticky lg:top-4 lg:self-start">
-          <CardHeader>
-            <CardTitle className="text-base">Konfirmasi Pengembalian</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="rounded-2xl border bg-muted/20 p-4">
-              <p className="text-[11px] text-muted-foreground">Unit dipilih</p>
-              <p className="mt-1 text-2xl font-bold tracking-tight">{selectedUnitIds.length} unit</p>
-            </div>
-            <div className="text-sm">
-              <p className="font-medium">{outstandingUnits.length} unit masih outstanding</p>
-              <p className="mt-1 text-xs text-muted-foreground">Hanya unit yang dipilih yang akan diproses oleh sistem.</p>
-            </div>
-            <Button
-              type="button"
-              className="h-12 w-full rounded-xl"
-              disabled={selectedUnitIds.length === 0 || returnMutation.isPending || Boolean(unknownFeedback)}
-              onClick={() => setConfirmOpen(true)}
-            >
-              Lanjut ke Konfirmasi
-              <ArrowRight />
-            </Button>
-            <ReturnStateNotice tone="info" title="Waktu server">
-              Waktu pengembalian aktual dicatat otomatis oleh sistem. Pengembalian tidak memperpanjang penyewaan dan tidak menetapkan unit menjadi Siap Disewakan.
-            </ReturnStateNotice>
-            <p className="text-[11px] leading-5 text-muted-foreground">{capabilities.reason}</p>
-          </CardContent>
-        </Card>
-      </div>
+      {consequenceReviews.data?.length ? (
+        <details id="return-related" className="group rounded-[22px] border border-border/65 bg-card shadow-[0_4px_18px_rgba(28,67,56,.035)]">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3.5 py-3.5 marker:hidden">
+            <span className="flex min-w-0 items-center gap-2.5">
+              <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-amber-50 text-amber-700 dark:bg-amber-950/25 dark:text-amber-300"><WalletCards className="size-4.5" /></span>
+              <span className="min-w-0"><span className="block text-[13px] font-bold">Tindak Lanjut Keuangan</span><span className="mt-0.5 block text-[9px] text-muted-foreground">Konsekuensi yang diteruskan ke Keuangan.</span></span>
+            </span>
+            <ChevronDown className="size-4 text-muted-foreground transition-transform group-open:rotate-180" />
+          </summary>
+          <div className="border-t border-border/60 px-3.5 py-3.5"><RentalConsequenceList items={consequenceReviews.data} /></div>
+        </details>
+      ) : null}
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
-        <Card className="border-border/80 shadow-sm">
-          <CardHeader><CardTitle className="text-base">Catatan Penerimaan</CardTitle></CardHeader>
-          <CardContent>
-            <p className="mb-2 text-sm text-muted-foreground">Catatan serah-terima / penerimaan, bukan temuan kerusakan atau keputusan perawatan.</p>
-            <textarea
-              value={note}
-              onChange={(event) => setNote(event.target.value)}
-              placeholder="Catatan penerimaan unit…"
-              disabled={returnMutation.isPending || Boolean(unknownFeedback)}
-              className="min-h-28 w-full resize-y rounded-2xl border bg-background px-3 py-3 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-              aria-label="Catatan penerimaan"
-            />
-          </CardContent>
-        </Card>
-
-        <Card id="return-history" className="border-border/80 shadow-sm">
-          <CardHeader><CardTitle className="text-base">Diserahkan ke Pemeriksaan</CardTitle></CardHeader>
-          <CardContent className="space-y-3">
-            <ReturnStateNotice tone="info" title="Setelah Pengembalian">
-              Unit yang diterima masuk ke tahap pemeriksaan. Pengembalian menyediakan konteks awal; Pemeriksaan dilanjutkan langsung dari halaman ini.
-            </ReturnStateNotice>
-            {item.units.filter((unit) => unit.returned && unit.detail_pengembalian_id).length ? (
-              <div className="space-y-2">
-                {item.units
-                  .filter((unit) => unit.returned && unit.detail_pengembalian_id)
-                  .map((unit) => (
-                    <Link
-                      key={unit.detail_pengembalian_id}
-                      to={paths.pemeriksaan + "/" + unit.detail_pengembalian_id}
-                      className="flex items-center justify-between gap-3 rounded-2xl border p-3 transition-colors hover:bg-accent/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    >
-                      <div className="min-w-0">
-                        <p className="font-semibold">{unit.kode_unit}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {unit.barang_nama ?? "Barang"}{unit.varian_nama ? " · " + unit.varian_nama : ""}
-                        </p>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {unit.inspection_status === "in_progress" ? "Pemeriksaan sedang dikerjakan" : "Siap diperiksa"}
-                        </p>
-                      </div>
-                      <span className="inline-flex shrink-0 items-center gap-1 text-sm font-semibold text-primary">
-                        {unit.inspection_status === "in_progress" ? "Lanjutkan" : "Periksa"}
-                        <ArrowRight className="size-4" />
-                      </span>
-                    </Link>
-                  ))}
-              </div>
-            ) : null}
-          </CardContent>
-        </Card>
-      </div>
-
-      <Card className="border-border/80 shadow-sm">
-        <CardHeader>
-          <CardTitle className="text-base">Riwayat Pengembalian</CardTitle>
-          <p className="text-sm text-muted-foreground">Riwayat bersifat append-oriented dan tidak diedit dari surface ini.</p>
-        </CardHeader>
-        <CardContent>
-          <ReturnHistoryTimeline workspace={item} />
-        </CardContent>
-      </Card>
+      <section className="rounded-[20px] border border-primary/10 bg-primary/[0.025]">
+        <div className="flex items-start gap-2.5 px-3.5 py-3">
+          <Info className="mt-0.5 size-4 shrink-0 text-primary" />
+          <p className="text-[9px] leading-4 text-muted-foreground">Waktu pengembalian aktual dicatat otomatis oleh sistem. Pengembalian tidak memperpanjang penyewaan dan tidak menetapkan unit menjadi Siap Disewakan.</p>
+        </div>
+      </section>
 
       <div className="fixed inset-x-3 bottom-16 z-40 lg:hidden">
-        <div className="rounded-2xl border bg-background/95 p-2 shadow-[0_18px_50px_rgba(20,40,30,.16)] backdrop-blur">
+        <div className="rounded-2xl border border-white/60 bg-background/92 p-2 shadow-[0_18px_50px_rgba(20,40,30,.16)] backdrop-blur">
           {selectedUnitIds.length ? (
-            <Button
-              type="button"
-              className="h-12 w-full rounded-xl"
-              disabled={returnMutation.isPending || Boolean(unknownFeedback)}
-              onClick={() => setConfirmOpen(true)}
-            >
-              Terima Pengembalian · {selectedUnitIds.length}
-              <Check />
+            <Button type="button" className="h-11 w-full rounded-xl bg-[#0a6b55] text-xs font-semibold hover:bg-[#075944]" disabled={returnMutation.isPending || Boolean(unknownFeedback)} onClick={() => setConfirmOpen(true)}>
+              Lanjut ke Konfirmasi · {selectedUnitIds.length}<ArrowRight className="size-4" />
             </Button>
           ) : (
-            <Button type="button" variant="outline" className="h-12 w-full rounded-xl" onClick={() => setQrOpen(true)}>
-              <QrCode />
-              Scan QR Unit
+            <Button type="button" variant="outline" className="h-11 w-full rounded-xl text-xs font-semibold" onClick={() => setQrOpen(true)}>
+              <QrCode className="size-4" />Pindai QR Unit
             </Button>
           )}
         </div>
@@ -641,8 +691,8 @@ export function ReturnShow() {
         pending={returnMutation.isPending}
         onConfirm={() => returnMutation.mutate()}
       />
-
       <ReturnQrDialog open={qrOpen} onOpenChange={setQrOpen} onResolved={(value) => void handleQrResolved(value)} />
     </div>
   );
+
 }

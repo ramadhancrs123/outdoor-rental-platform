@@ -1,3 +1,4 @@
+import { createClientId } from "@/lib/client-id";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Loader2, Plus, RefreshCw, Save } from "lucide-react";
 import { useSearchParams, Link } from "react-router";
@@ -36,7 +37,7 @@ import { catalogErrorMessage, catalogStatusLabel, catalogVariantCapacity, catalo
 import { paths } from "@/routes/paths";
 
 type UnknownCommand = { commandName: string; idempotencyKey: string; message: string };
-const commandKey = (prefix: string) => prefix + "-" + crypto.randomUUID();
+const commandKey = (prefix: string) => prefix + "-" + createClientId();
 const messageOf = (error: unknown) => catalogErrorMessage(error);
 const isUnknown = (error: unknown) => messageOf(error).startsWith("UNKNOWN_OUTCOME:");
 

@@ -35,3 +35,47 @@ export function formatRentalMoney(value: string | number | null | undefined, cur
 export function sanitizeRentalSearch(value: string) {
   return value.trim().replace(/[*,%(),]/g, " ").replace(/\s+/g, " ").slice(0, 120);
 }
+
+
+export function calculateDraftItemProductQuantity(
+  lines: Array<{
+    key: string;
+    kind: "item" | "package";
+    input: { barang_id?: string | null; jumlah?: number | string | null };
+  }>,
+  barangId: string,
+  excludeLineKey?: string,
+) {
+  return lines.reduce((total, line) => {
+    if (line.key === excludeLineKey || line.kind !== "item" || line.input.barang_id !== barangId) return total;
+    const quantity = Number(line.input.jumlah ?? 0);
+    return total + (Number.isFinite(quantity) && quantity > 0 ? quantity : 0);
+  }, 0);
+}
+
+export function calculateRentalPeriodPreview(
+  startAt: string,
+  endAt: string,
+  toleranceHours: number,
+) {
+  const start = new Date(startAt);
+  const end = new Date(endAt);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) return null;
+
+  const elapsedSeconds = Math.max(0, (end.getTime() - start.getTime()) / 1000);
+  const dailyPeriods = Math.max(1, Math.ceil(elapsedSeconds / 86400));
+  const toleranceDeadline = new Date(end.getTime() + Math.max(0, toleranceHours) * 60 * 60 * 1000);
+
+  return {
+    startAt: start.toISOString(),
+    endAt: end.toISOString(),
+    elapsedSeconds,
+    elapsedHours: Math.round((elapsedSeconds / 3600) * 100) / 100,
+    elapsedDays: Math.round((elapsedSeconds / 86400) * 100) / 100,
+    dailyPeriods,
+    isOver24Hours: elapsedSeconds > 86400,
+    excessOver24hSeconds: Math.max(0, elapsedSeconds - 86400),
+    toleranceHours,
+    toleranceDeadline: toleranceDeadline.toISOString(),
+  };
+}

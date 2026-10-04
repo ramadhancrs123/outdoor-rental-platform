@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router";
 import {
+  Download,
   Filter,
   MapPin,
   PackagePlus,
@@ -11,8 +12,8 @@ import {
   SlidersHorizontal,
 } from "lucide-react";
 import { useMemo, useState } from "react";
+import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -24,6 +25,7 @@ import {
   getInventarisContext,
   getInventoryStateCapabilities,
   listInventoryLocations,
+  listInventoryPackageAvailability,
   listInventoryProducts,
   listInventoryUnits,
   listInventoryVariants,
@@ -38,6 +40,8 @@ import {
   UnitIdentity,
 } from "@/components/inventaris/inventory-ui";
 import { paths } from "@/routes/paths";
+import { InventoryPackageAvailabilityView } from "@/components/inventaris/package-availability";
+import { UnitQrBatchPrintDialog } from "@/components/qr-operasional/qr-operasional";
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Inventaris gagal dimuat.";
@@ -46,7 +50,10 @@ function errorMessage(error: unknown) {
 export function InventoryList() {
   const [filters, setFilters] = useState<InventoryListFilters>(DEFAULT_INVENTORY_FILTERS);
   const [qrOpen, setQrOpen] = useState(false);
+  const [batchQrOpen, setBatchQrOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [viewMode, setViewMode] = useState<"units" | "packages">("units");
   const capabilities = getInventoryStateCapabilities();
 
   const context = useQuery({
@@ -78,6 +85,12 @@ export function InventoryList() {
     enabled: Boolean(context.data?.usahaId),
     placeholderData: (previous) => previous,
   });
+  const packages = useQuery({
+    queryKey: ["inventaris", "packages", context.data?.usahaId],
+    queryFn: () => listInventoryPackageAvailability(context.data!.usahaId),
+    enabled: Boolean(context.data?.usahaId),
+    staleTime: 10_000,
+  });
 
   const totalPages = useMemo(
     () => Math.max(1, Math.ceil((units.data?.total ?? 0) / filters.pageSize)),
@@ -87,6 +100,20 @@ export function InventoryList() {
   const selectedVariants = (variants.data ?? []).filter(
     (variant) => filters.barangId === "all" || variant.barang_id === filters.barangId,
   );
+
+  const handleExport = async () => {
+    if (exporting || !context.data) return;
+    setExporting(true);
+    try {
+      const { exportInventoryToExcel } = await import("@/features/inventaris/excel");
+      await exportInventoryToExcel(context.data.usahaId, filters);
+      toast.success("File Excel Inventaris berhasil diunduh.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Ekspor Excel Inventaris gagal.");
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const updateFilter = <K extends keyof InventoryListFilters>(
     key: K,
@@ -131,27 +158,28 @@ export function InventoryList() {
 
   return (
     <div className="mx-auto w-full max-w-7xl space-y-4 pb-10 sm:space-y-5">
-      <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div className="space-y-1">
+      <header className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-3">
+        <div className="min-w-0">
           <p className="text-sm font-medium text-muted-foreground">Inventaris</p>
-          <h1 className="text-2xl font-bold tracking-tight sm:text-[28px]">Unit Barang</h1>
-          <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-            Kondisi dan informasi fisik setiap unit dalam konteks Usaha yang dipilih.
-          </p>
+          <h1 className="mt-0.5 text-[25px] font-bold leading-tight tracking-tight sm:text-[28px]">
+            Unit Barang
+          </h1>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button asChild variant="outline" className="h-10 rounded-xl">
-            <Link to={paths.inventarisLocations}>
-              <MapPin />
-              Kelola Lokasi
-            </Link>
-          </Button>
-          <Button variant="outline" className="h-10 rounded-xl" onClick={() => setQrOpen(true)}>
-            <QrCode />
-            Pindai QR
+
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            className="h-10 shrink-0 rounded-xl px-4"
+            onClick={() => void handleExport()}
+            disabled={exporting}
+            title="Ekspor Inventaris ke Excel"
+          >
+            <Download />
+            {exporting ? "Menyiapkan…" : "Ekspor Excel"}
           </Button>
           {capabilities.mutation ? (
-            <Button asChild className="h-10 rounded-xl">
+            <Button asChild className="h-10 shrink-0 rounded-xl px-4">
               <Link to={paths.inventarisCreate}>
                 <PackagePlus />
                 Daftarkan Unit
@@ -159,10 +187,61 @@ export function InventoryList() {
             </Button>
           ) : null}
         </div>
+
+        <p className="col-span-2 max-w-2xl text-sm leading-5 text-muted-foreground">
+          Kondisi dan informasi fisik setiap unit dalam konteks Usaha yang dipilih.
+        </p>
       </header>
 
-      <Card className="border-border/80 shadow-sm">
-        <CardContent className="space-y-3 p-3 sm:p-4">
+      <div className="flex flex-wrap gap-2" aria-label="Aksi inventaris">
+        <Button asChild variant="outline" className="h-10 rounded-xl px-4">
+          <Link to={paths.inventarisLocations}>
+            <MapPin />
+            Kelola Lokasi
+          </Link>
+        </Button>
+        <Button variant="outline" className="h-10 rounded-xl px-4" onClick={() => setQrOpen(true)}>
+          <QrCode />
+          Pindai QR
+        </Button>
+        {units.data?.units.length ? (
+          <Button variant="outline" className="h-10 rounded-xl px-4" onClick={() => setBatchQrOpen(true)}>
+            <QrCode />
+            Cetak QR Unit
+          </Button>
+        ) : null}
+      </div>
+
+      <div
+        className="grid w-full max-w-[240px] grid-cols-2 gap-1 rounded-2xl bg-muted/45 p-1"
+        role="tablist"
+        aria-label="Mode inventaris"
+      >
+        <Button
+          type="button"
+          role="tab"
+          aria-selected={viewMode === "units"}
+          variant={viewMode === "units" ? "default" : "ghost"}
+          className="h-9 rounded-xl px-4"
+          onClick={() => setViewMode("units")}
+        >
+          Unit
+        </Button>
+        <Button
+          type="button"
+          role="tab"
+          aria-selected={viewMode === "packages"}
+          variant={viewMode === "packages" ? "default" : "ghost"}
+          className="h-9 rounded-xl px-4"
+          onClick={() => setViewMode("packages")}
+        >
+          Paket
+        </Button>
+      </div>
+
+      {viewMode === "units" ? (
+      <section className="space-y-3" aria-label="Pencarian dan filter inventaris">
+        <div className="space-y-3">
           <div className="relative">
             <Search
               className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
@@ -175,16 +254,16 @@ export function InventoryList() {
               id="inventory-search"
               value={filters.search}
               onChange={(event) => updateFilter("search", event.target.value)}
-              placeholder="Cari kode unit, serial, barang, varian, lokasi…"
+              placeholder="Cari kode unit, serial, barang, varian, ..."
               className="h-11 rounded-xl bg-background pl-9"
               autoComplete="off"
             />
           </div>
 
-          <div className="max-md:flex flex gap-2 overflow-x-auto pb-1" aria-label="Filter cepat inventaris">
+          <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 overscroll-contain" aria-label="Filter cepat inventaris">
             {([
-              ["all", "Semua"],
-              ["ready_now", "Siap Disewakan"],
+              ["all", "Semua unit"],
+              ["ready_now", "Sewakan"],
               ["rental_active", "Sedang Disewa"],
               ["attention", "Perhatian"],
             ] as const).map(([value, label]) => (
@@ -206,28 +285,7 @@ export function InventoryList() {
             ))}
           </div>
 
-          <div className="max-md:flex flex items-center justify-between gap-2">
-            <p className="text-xs text-muted-foreground">
-              {filters.availabilityContext === "ready_now"
-                ? "Unit siap secara fisik"
-                : filters.availabilityContext === "rental_active"
-                  ? "Unit sedang disewa"
-                  : filters.availabilityContext === "attention"
-                    ? "Unit yang perlu perhatian"
-                    : "Semua unit"}
-            </p>
-            <Button
-              type="button"
-              variant="outline"
-              className="h-10 shrink-0 rounded-xl"
-              onClick={() => setFilterOpen(true)}
-            >
-              <Filter />
-              Filter
-            </Button>
-          </div>
-
-          <div className="hidden flex-wrap gap-2 md:flex">
+          <div className="hidden flex-wrap gap-2 pt-1 lg:flex">
             <Select value={filters.status} onValueChange={(value) => updateFilter("status", value)}>
               <SelectTrigger aria-label="Filter status" className="h-10 w-full rounded-xl sm:w-44">
                 <SelectValue placeholder="Status" />
@@ -326,8 +384,9 @@ export function InventoryList() {
               </SelectContent>
             </Select>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </section>
+      ) : null}
 
       <Sheet open={filterOpen} onOpenChange={setFilterOpen}>
         <SheetContent side="right" className="w-full p-0 sm:max-w-md">
@@ -468,15 +527,23 @@ export function InventoryList() {
         </SheetContent>
       </Sheet>
 
+      {viewMode === "units" ? (
+      <>
       {!units.isPending && !units.error ? (
-        <div className="flex items-center justify-between gap-3 px-1">
+        <div className="flex items-center justify-between gap-2 px-0.5">
           <InventoryListSummary
             count={units.data?.total ?? 0}
             availabilityContext={filters.availabilityContext}
           />
-          <Badge variant="secondary" className="rounded-full">
-            {context.data.usahaNama}
-          </Badge>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-9 shrink-0 rounded-xl px-3 lg:hidden"
+            onClick={() => setFilterOpen(true)}
+          >
+            <Filter />
+            Filter
+          </Button>
         </div>
       ) : null}
 
@@ -518,7 +585,7 @@ export function InventoryList() {
         </Card>
       ) : (
         <>
-          <div className="grid gap-3 md:hidden">
+          <div className="grid gap-3 lg:hidden">
             {units.data!.units.map((unit) => (
               <UnitCard
                 key={unit.unit_barang_id}
@@ -528,9 +595,9 @@ export function InventoryList() {
             ))}
           </div>
 
-          <Card className="hidden overflow-hidden md:block">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+          <Card className="hidden min-w-0 overflow-hidden lg:block">
+            <div className="min-w-0 overflow-x-auto">
+              <table className="min-w-[1040px] w-full text-sm">
                 <thead className="border-b bg-muted/35 text-left">
                   <tr>
                     <th className="px-5 py-3 font-medium">Kode Unit</th>
@@ -587,14 +654,14 @@ export function InventoryList() {
             </div>
           </Card>
 
-          <div className="flex flex-col gap-3 border-t pt-3 text-sm sm:flex-row sm:items-center sm:justify-between">
-            <span className="text-muted-foreground">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-3 text-sm">
+            <span className="whitespace-nowrap text-muted-foreground">
               {units.data!.total} unit · Halaman {filters.page} dari {totalPages}
             </span>
-            <div className="flex gap-2">
+            <div className="flex shrink-0 gap-1.5">
               <Button
                 variant="outline"
-                className="rounded-xl"
+                className="h-9 rounded-xl px-3 text-xs"
                 disabled={filters.page <= 1}
                 onClick={() => updateFilter("page", filters.page - 1)}
               >
@@ -602,7 +669,7 @@ export function InventoryList() {
               </Button>
               <Button
                 variant="outline"
-                className="rounded-xl"
+                className="h-9 rounded-xl px-3 text-xs"
                 disabled={filters.page >= totalPages}
                 onClick={() => updateFilter("page", filters.page + 1)}
               >
@@ -612,8 +679,33 @@ export function InventoryList() {
           </div>
         </>
       )}
+      </>
+      ) : null}
+
+      {viewMode === "packages" ? (
+        packages.isPending ? (
+          <div className="grid gap-4 lg:grid-cols-2" aria-busy="true">
+            {Array.from({ length: 4 }).map((_, index) => (
+              <Skeleton key={index} className="h-56 rounded-2xl" />
+            ))}
+          </div>
+        ) : packages.error ? (
+          <Alert variant="destructive">
+            <AlertTitle>Ringkasan paket belum dapat dimuat</AlertTitle>
+            <AlertDescription>{errorMessage(packages.error)}</AlertDescription>
+          </Alert>
+        ) : (
+          <InventoryPackageAvailabilityView packages={packages.data ?? []} usahaId={context.data.usahaId} />
+        )
+      ) : null}
 
       <QrLookupDialog open={qrOpen} onOpenChange={setQrOpen} context={context.data} />
+      <UnitQrBatchPrintDialog
+        open={batchQrOpen}
+        onOpenChange={setBatchQrOpen}
+        context={context.data}
+        units={units.data?.units ?? []}
+      />
     </div>
   );
 }

@@ -116,6 +116,60 @@ export function formatFinancePeriodLabel(startDate: string, endDateExclusive: st
   return formatFinanceDate(startDate + "T00:00:00Z", timezone) + " – " + formatFinanceDate(endInclusive + "T00:00:00Z", timezone);
 }
 
+export function localDateTimeToUtcIso(value: string, timezone: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(value);
+  if (!match) throw new Error("Waktu pembayaran tidak valid.");
+
+  const [, year, month, day, hour, minute, second = "00"] = match;
+  const wallClockAsUtc = Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second));
+
+  function timezoneOffsetMs(instant: number) {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(new Date(instant));
+
+    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    const zoneAsUtc = Date.UTC(
+      Number(values.year),
+      Number(values.month) - 1,
+      Number(values.day),
+      Number(values.hour),
+      Number(values.minute),
+      Number(values.second),
+    );
+    return zoneAsUtc - instant;
+  }
+
+  let instant = wallClockAsUtc;
+  for (let i = 0; i < 4; i += 1) {
+    const corrected = wallClockAsUtc - timezoneOffsetMs(instant);
+    if (corrected === instant) break;
+    instant = corrected;
+  }
+  return new Date(instant).toISOString();
+}
+
+export function formatDateTimeLocalInTimezone(date: Date, timezone: string) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}T${values.hour}:${values.minute}`;
+}
+
 export function formatFinanceTimezone(timezone: string) {
   try {
     const label = new Intl.DateTimeFormat("id-ID", { timeZone: timezone, timeZoneName: "short" })

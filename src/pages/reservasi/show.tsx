@@ -1,3 +1,4 @@
+import { createClientId } from "@/lib/client-id";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircle,
@@ -129,8 +130,8 @@ export function ReservationShow() {
       if (!rentalStart || !rentalEnd) throw new Error("Jadwal mulai dan jadwal kembali wajib diisi.");
       if (!rentalCommandContext.current) {
         rentalCommandContext.current = {
-          idempotencyKey: `create-rental-${id}-${crypto.randomUUID()}`,
-          requestId: crypto.randomUUID(),
+          idempotencyKey: `create-rental-${id}-${createClientId()}`,
+          requestId: createClientId(),
         };
       }
       return createRentalFromReservation(rentalContext.data.usahaId, {
@@ -179,8 +180,8 @@ export function ReservationShow() {
       if (!context.data || !id) throw new Error("Konteks reservasi belum siap.");
       if (!confirmCommandContext.current) {
         confirmCommandContext.current = {
-          idempotencyKey: `confirm-reservation-${id}-${crypto.randomUUID()}`,
-          requestId: crypto.randomUUID(),
+          idempotencyKey: `confirm-reservation-${id}-${createClientId()}`,
+          requestId: createClientId(),
         };
       }
       return confirmReservation(context.data.usahaId, id, confirmCommandContext.current);
@@ -215,8 +216,8 @@ export function ReservationShow() {
       if (!context.data || !id) throw new Error("Konteks reservasi belum siap.");
       if (!cancelCommandContext.current) {
         cancelCommandContext.current = {
-          idempotencyKey: `cancel-reservation-${id}-${crypto.randomUUID()}`,
-          requestId: crypto.randomUUID(),
+          idempotencyKey: `cancel-reservation-${id}-${createClientId()}`,
+          requestId: createClientId(),
         };
       }
       return cancelReservation(context.data.usahaId, id, cancelReason, cancelCommandContext.current);

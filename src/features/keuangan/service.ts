@@ -1,3 +1,4 @@
+import { createClientId } from "@/lib/client-id";
 import { supabase } from "@/app/providers/supabase/client";
 import type {
   FinanceCapabilities,
@@ -16,13 +17,17 @@ import type {
   FinanceListFilters,
   FinancePeriod,
   FinancePayment,
+  FinanceRentalPaymentSummary,
   FinanceReconciliationResult,
+  FinanceAccount,
+  FinanceAccountSummary,
+  FinanceAccountMovement,
   FinanceSummaryCounts,
   FinanceTenantContext,
   RecordExpenseInput,
   RecordPaymentInput,
 } from "./types";
-import { sanitizeFinanceSearch } from "./utils";
+import { localDateTimeToUtcIso, sanitizeFinanceSearch } from "./utils";
 
 type MembershipRow = { usaha_id: string; status: string; revoked_at: string | null };
 
@@ -214,6 +219,30 @@ export async function listPayments(usahaId: string, filters: FinanceListFilters)
   return { payments: await resolvePaymentSourceLabels(usahaId, rows), total: count ?? 0 };
 }
 
+export async function getRentalPaymentSummary(
+  usahaId: string,
+  penyewaanId: string,
+  rentalTotal: number,
+): Promise<FinanceRentalPaymentSummary> {
+  const { data, error } = await supabase
+    .from("pembayaran")
+    .select(PAYMENT_SELECT)
+    .eq("usaha_id", usahaId)
+    .eq("penyewaan_id", penyewaanId)
+    .eq("status", "recorded")
+    .order("dibayar_at", { ascending: false });
+  if (error) throw error;
+
+  const payments = (data ?? []) as FinancePayment[];
+  const recordedPaymentTotal = payments.reduce((sum, payment) => sum + Number(payment.amount ?? 0), 0);
+  return {
+    totalRental: Math.max(0, Number(rentalTotal) || 0),
+    recordedPaymentTotal,
+    paymentCount: payments.length,
+    payments,
+  };
+}
+
 export async function listExpenses(usahaId: string, filters: FinanceListFilters) {
   const start = Math.max(0, filters.page - 1) * filters.pageSize;
   const end = start + filters.pageSize - 1;
@@ -264,7 +293,7 @@ export function getFinanceCapabilities(): FinanceCapabilities {
 
 
 function newFinanceCommandRequestId() {
-  return crypto.randomUUID();
+  return createClientId();
 }
 
 function assertFinanceRpcResult<T>(data: T | null, error: unknown, label: string): T {
@@ -282,6 +311,128 @@ function normalizeFinancePeriod<T>(data: T): T & FinancePeriod {
   return { ...record, ...record.period };
 }
 
+export async function getFinanceAccountSummary(usahaId: string): Promise<FinanceAccountSummary> {
+  const { data, error } = await supabase.rpc("finance_account_summary", { p_usaha_id: usahaId });
+  if (error) throw error;
+  const payload = (data ?? {}) as Partial<FinanceAccountSummary>;
+  return {
+    accounts: (payload.accounts ?? []) as FinanceAccount[],
+    totals: {
+      saldo: Number(payload.totals?.saldo ?? 0),
+      saldo_awal: Number(payload.totals?.saldo_awal ?? 0),
+      uang_masuk: Number(payload.totals?.uang_masuk ?? 0),
+      uang_keluar: Number(payload.totals?.uang_keluar ?? 0),
+    },
+  };
+}
+
+export async function listFinanceAccounts(usahaId: string): Promise<FinanceAccount[]> {
+  const summary = await getFinanceAccountSummary(usahaId);
+  return summary.accounts
+    .filter((account) => account.status === "active" && account.mata_uang === "IDR")
+    .sort((a, b) => a.nama_akun.localeCompare(b.nama_akun, "id"));
+}
+
+export async function getFinanceAccountDetail(
+  usahaId: string,
+  akunKeuanganId: string,
+): Promise<{ account: FinanceAccount; movements: FinanceAccountMovement[] }> {
+  const summary = await getFinanceAccountSummary(usahaId);
+  const account = summary.accounts.find((item) => item.akun_keuangan_id === akunKeuanganId);
+  if (!account) throw new Error("Akun keuangan tidak ditemukan dalam Usaha aktif.");
+
+  const { data: movementRows, error: movementError } = await supabase
+    .from("pergerakan_akun_keuangan")
+    .select("pergerakan_akun_keuangan_id,akun_keuangan_id,transaksi_keuangan_id,arah,amount,mata_uang,terjadi_at,sumber_type,sumber_id,status,dicatat_by_admin_id,request_id,catatan")
+    .eq("usaha_id", usahaId)
+    .eq("akun_keuangan_id", akunKeuanganId)
+    .order("terjadi_at", { ascending: false })
+    .limit(100);
+  if (movementError) throw movementError;
+
+  const movements = (movementRows ?? []) as FinanceAccountMovement[];
+  const transactionIds = Array.from(new Set(movements.map((movement) => movement.transaksi_keuangan_id)));
+  const [transactionsResult, paymentsResult, expensesResult] = await Promise.all([
+    transactionIds.length
+      ? supabase.from("transaksi_keuangan")
+        .select("transaksi_keuangan_id,nomor_transaksi,jenis,status")
+        .eq("usaha_id", usahaId)
+        .in("transaksi_keuangan_id", transactionIds)
+      : Promise.resolve({ data: [], error: null }),
+    transactionIds.length
+      ? supabase.from("pembayaran")
+        .select("pembayaran_id,transaksi_keuangan_id,nomor_pembayaran,jenis,metode,penyewaan_id")
+        .eq("usaha_id", usahaId)
+        .in("transaksi_keuangan_id", transactionIds)
+      : Promise.resolve({ data: [], error: null }),
+    transactionIds.length
+      ? supabase.from("pengeluaran")
+        .select("pengeluaran_id,transaksi_keuangan_id,kategori_biaya,deskripsi")
+        .eq("usaha_id", usahaId)
+        .in("transaksi_keuangan_id", transactionIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (transactionsResult.error) throw transactionsResult.error;
+  if (paymentsResult.error) throw paymentsResult.error;
+  if (expensesResult.error) throw expensesResult.error;
+
+  const transactionMap = new Map((transactionsResult.data ?? []).map((row) => [String(row.transaksi_keuangan_id), row]));
+  const paymentRows = (paymentsResult.data ?? []) as Array<Record<string, unknown>>;
+  const paymentMap = new Map(paymentRows.map((row) => [String(row.transaksi_keuangan_id), row]));
+  const expenseRows = (expensesResult.data ?? []) as Array<Record<string, unknown>>;
+  const expenseMap = new Map(expenseRows.map((row) => [String(row.transaksi_keuangan_id), row]));
+
+  const rentalIds = Array.from(new Set(paymentRows.map((row) => row.penyewaan_id).filter((id): id is string => typeof id === "string")));
+  const rentalsResult = rentalIds.length
+    ? await supabase.from("penyewaan").select("penyewaan_id,nomor_penyewaan").eq("usaha_id", usahaId).in("penyewaan_id", rentalIds)
+    : { data: [], error: null };
+  if (rentalsResult.error) throw rentalsResult.error;
+  const rentalMap = new Map((rentalsResult.data ?? []).map((row) => [String(row.penyewaan_id), String(row.nomor_penyewaan)]));
+
+  return {
+    account,
+    movements: movements.map((movement) => {
+      const transaction = transactionMap.get(movement.transaksi_keuangan_id);
+      const payment = paymentMap.get(movement.transaksi_keuangan_id);
+      const expense = expenseMap.get(movement.transaksi_keuangan_id);
+      return {
+        ...movement,
+        transaksi_nomor: transaction ? String(transaction.nomor_transaksi) : null,
+        transaksi_jenis: transaction ? String(transaction.jenis) : null,
+        transaksi_status: transaction ? String(transaction.status) : null,
+        payment_id: payment ? String(payment.pembayaran_id) : null,
+        payment_number: payment ? String(payment.nomor_pembayaran) : null,
+        payment_type: payment ? String(payment.jenis) : null,
+        payment_method: payment ? String(payment.metode) : null,
+        rental_id: payment?.penyewaan_id ? String(payment.penyewaan_id) : null,
+        rental_number: payment?.penyewaan_id ? rentalMap.get(String(payment.penyewaan_id)) ?? null : null,
+        expense_id: expense ? String(expense.pengeluaran_id) : null,
+        expense_category: expense ? String(expense.kategori_biaya) : null,
+        expense_description: expense ? String(expense.deskripsi) : null,
+      };
+    }),
+  };
+}
+
+export async function createFinanceAccount(
+  usahaId: string,
+  input: { kodeAkun: string; namaAkun: string; jenisAkun: FinanceAccount["jenis_akun"]; mataUang?: string; catatan?: string | null },
+): Promise<Record<string, unknown>> {
+  if (!input.kodeAkun.trim()) throw new Error("Kode akun wajib diisi.");
+  if (!input.namaAkun.trim()) throw new Error("Nama akun wajib diisi.");
+  const { data, error } = await supabase.rpc("command_create_akun_keuangan", {
+    p_usaha_id: usahaId,
+    p_kode_akun: input.kodeAkun.trim(),
+    p_nama_akun: input.namaAkun.trim(),
+    p_jenis_akun: input.jenisAkun,
+    p_mata_uang: (input.mataUang ?? "IDR").trim().toUpperCase(),
+    p_catatan: input.catatan?.trim() || null,
+    p_idempotency_key: `create-finance-account-${createClientId()}`,
+    p_request_id: createClientId(),
+  });
+  return assertFinanceRpcResult(data as Record<string, unknown> | null, error, "Pembuatan akun keuangan");
+}
+
 export async function recordPayment(
   usahaId: string,
   input: RecordPaymentInput,
@@ -291,19 +442,23 @@ export async function recordPayment(
   const penyewaanId = input.penyewaanId?.trim() || null;
   if (!reservasiId && !penyewaanId) throw new Error("Pembayaran harus terhubung ke reservasi atau penyewaan.");
   if (reservasiId && penyewaanId) throw new Error("Pilih satu sumber pembayaran: reservasi atau penyewaan.");
+  if (!input.akunKeuanganId?.trim()) throw new Error("Akun penerima pembayaran wajib dipilih.");
   if (!Number.isFinite(input.amount) || input.amount <= 0) throw new Error("Nominal pembayaran harus lebih dari 0.");
+  if (input.dibayarAt && !options.businessTimezone) throw new Error("Timezone Usaha wajib disertakan untuk waktu pembayaran.");
+  const paidAt = input.dibayarAt ? localDateTimeToUtcIso(input.dibayarAt, options.businessTimezone!) : null;
 
-  const { data, error } = await supabase.rpc("command_record_payment", {
+  const { data, error } = await supabase.rpc("command_record_payment_with_account", {
     p_usaha_id: usahaId,
     p_reservasi_id: reservasiId,
     p_penyewaan_id: penyewaanId,
+    p_akun_keuangan_id: input.akunKeuanganId,
     p_jenis: input.jenis,
     p_metode: input.metode,
     p_amount: input.amount,
-    p_dibayar_at: input.dibayarAt ?? null,
+    p_dibayar_at: paidAt,
     p_reference_text: input.referenceText?.trim() || null,
     p_catatan: input.catatan?.trim() || null,
-    p_idempotency_key: options.idempotencyKey ?? `record-payment-${crypto.randomUUID()}`,
+    p_idempotency_key: options.idempotencyKey ?? `record-payment-${createClientId()}`,
     p_request_id: options.requestId ?? newFinanceCommandRequestId(),
   });
   return assertFinanceRpcResult(data as FinanceCommandResult | null, error, "Pencatatan pembayaran");
@@ -313,9 +468,10 @@ export async function reconcilePaymentCommand(
   usahaId: string,
   idempotencyKey: string,
 ): Promise<FinanceReconciliationResult> {
-  const { data, error } = await supabase.rpc("command_reconcile_payment", {
+  const { data, error } = await supabase.rpc("reconcile_finance_command", {
     p_usaha_id: usahaId,
     p_idempotency_key: idempotencyKey,
+    p_command_name: "record_payment_with_account",
   });
   return assertFinanceRpcResult(data as FinanceReconciliationResult | null, error, "Rekonsiliasi pembayaran");
 }
@@ -348,10 +504,71 @@ export async function recordExpense(
     p_tanggal_pengeluaran: input.tanggalPengeluaran ?? null,
     p_bukti_storage_path: input.buktiStoragePath?.trim() || null,
     p_catatan: input.catatan?.trim() || null,
-    p_idempotency_key: options.idempotencyKey ?? `record-expense-${crypto.randomUUID()}`,
+    p_idempotency_key: options.idempotencyKey ?? `record-expense-${createClientId()}`,
     p_request_id: options.requestId ?? newFinanceCommandRequestId(),
   });
   return assertFinanceRpcResult(data as FinanceCommandResult | null, error, "Pencatatan pengeluaran");
+}
+
+export async function recordExpenseWithFinanceCashout(
+  usahaId: string,
+  input: RecordExpenseInput,
+  options: FinanceCommandOptions = {},
+): Promise<FinanceCommandResult> {
+  if (!["operational", "other", "manual"].includes(input.sourceType)) {
+    throw new Error("Cash out satu-langkah hanya digunakan untuk pengeluaran Operasional, Lainnya, atau Manual.");
+  }
+
+  const sourceId = input.sourceId?.trim() || null;
+  if (sourceId) throw new Error("Source ID tidak digunakan untuk pengeluaran manual/operasional.");
+  if (!input.kategoriBiaya.trim()) throw new Error("Kategori biaya wajib diisi.");
+  if (!input.deskripsi.trim()) throw new Error("Deskripsi pengeluaran wajib diisi.");
+  if (!Number.isFinite(input.amount) || input.amount <= 0) throw new Error("Nominal pengeluaran harus lebih dari 0.");
+
+  const allocations = (input.allocations ?? []).map((item) => ({
+    akun_keuangan_id: item.akunKeuanganId.trim(),
+    amount: Number(item.amount),
+  }));
+  if (allocations.length === 0) throw new Error("Pilih minimal satu akun uang untuk cash out pengeluaran.");
+  if (allocations.some((item) => !item.akun_keuangan_id || !Number.isFinite(item.amount) || item.amount <= 0)) {
+    throw new Error("Setiap alokasi akun harus memiliki akun dan nominal lebih dari 0.");
+  }
+  if (new Set(allocations.map((item) => item.akun_keuangan_id)).size !== allocations.length) {
+    throw new Error("Akun uang tidak boleh dipilih lebih dari satu kali dalam satu pengeluaran.");
+  }
+  const allocationTotal = allocations.reduce((sum, item) => sum + item.amount, 0);
+  if (Math.abs(allocationTotal - input.amount) > 0.000001) {
+    throw new Error("Total alokasi akun harus sama dengan nominal pengeluaran.");
+  }
+
+  const { data, error } = await supabase.rpc("command_record_expense_with_finance_cashout", {
+    p_usaha_id: usahaId,
+    p_source_type: input.sourceType,
+    p_source_id: null,
+    p_pemasok_id: input.pemasokId?.trim() || null,
+    p_kategori_biaya: input.kategoriBiaya.trim(),
+    p_deskripsi: input.deskripsi.trim(),
+    p_amount: input.amount,
+    p_tanggal_pengeluaran: input.tanggalPengeluaran ?? null,
+    p_bukti_storage_path: input.buktiStoragePath?.trim() || null,
+    p_catatan: input.catatan?.trim() || null,
+    p_allocations: allocations,
+    p_idempotency_key: options.idempotencyKey ?? `record-expense-cashout-${createClientId()}`,
+    p_request_id: options.requestId ?? newFinanceCommandRequestId(),
+  });
+
+  return assertFinanceRpcResult(data as FinanceCommandResult | null, error, "Pencatatan pengeluaran & cash out");
+}
+
+export async function reconcileExpenseCashoutCommand(
+  usahaId: string,
+  idempotencyKey: string,
+): Promise<FinanceReconciliationResult> {
+  const { data, error } = await supabase.rpc("command_reconcile_expense_with_finance_cashout", {
+    p_usaha_id: usahaId,
+    p_idempotency_key: idempotencyKey,
+  });
+  return assertFinanceRpcResult(data as FinanceReconciliationResult | null, error, "Rekonsiliasi pengeluaran & cash out");
 }
 
 export async function reconcileExpenseCommand(
@@ -563,7 +780,7 @@ export async function correctPayment(
     p_pembayaran_id: paymentId,
     p_action_type: action,
     p_reason: reason.trim(),
-    p_idempotency_key: options.idempotencyKey ?? `correct-payment-${crypto.randomUUID()}`,
+    p_idempotency_key: options.idempotencyKey ?? `correct-payment-${createClientId()}`,
     p_request_id: options.requestId ?? newFinanceCommandRequestId(),
   });
   return assertFinanceRpcResult(data as FinanceCorrectionResult | null, error, "Koreksi pembayaran");
@@ -582,8 +799,24 @@ export async function correctExpense(
     p_pengeluaran_id: expenseId,
     p_action_type: action,
     p_reason: reason.trim(),
-    p_idempotency_key: options.idempotencyKey ?? `correct-expense-${crypto.randomUUID()}`,
+    p_idempotency_key: options.idempotencyKey ?? `correct-expense-${createClientId()}`,
     p_request_id: options.requestId ?? newFinanceCommandRequestId(),
   });
   return assertFinanceRpcResult(data as FinanceCorrectionResult | null, error, "Koreksi pengeluaran");
+}
+
+export async function listRentalConsequenceReviews(
+  usahaId: string,
+  penyewaanId: string,
+): Promise<import("./types").RentalConsequenceReview[]> {
+  const { data, error } = await supabase
+    .from("evaluasi_konsekuensi_penyewaan")
+    .select(
+      "evaluasi_konsekuensi_id,usaha_id,penyewaan_id,penyewa_id,unit_barang_id,sumber_type,sumber_id,jenis_konsekuensi,pihak_tanggung_jawab,nominal_kandidat,nominal_disetujui,currency_code,status,alasan,catatan_review,reviewed_by_admin_id,reviewed_at,created_at,updated_at",
+    )
+    .eq("usaha_id", usahaId)
+    .eq("penyewaan_id", penyewaanId)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as import("./types").RentalConsequenceReview[];
 }

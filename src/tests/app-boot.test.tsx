@@ -48,7 +48,7 @@ describe("scenario A — app boot", () => {
     await waitFor(() => expect(window.location.pathname).toBe("/dashboard"));
 
     expect(await screen.findByTestId("dashboard-root")).toBeInTheDocument();
-    expect(await screen.findByText("Perlu Perhatian")).toBeInTheDocument();
+    expect(await screen.findByText("Perlu Tindakan")).toBeInTheDocument();
   });
 
   test("router boot — unknown route renders the error component", async () => {

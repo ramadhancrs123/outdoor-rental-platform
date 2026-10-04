@@ -1,3 +1,4 @@
+import { createClientId } from "@/lib/client-id";
 import { useMutation } from "@tanstack/react-query";
 import { ArrowLeft, Check, RefreshCw, UserPlus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -21,7 +22,7 @@ import { maskPhone } from "@/features/penyewa/service";
 import { paths } from "@/routes/paths";
 
 function createIdempotencyKey() {
-  return "create-renter-" + crypto.randomUUID();
+  return "create-renter-" + createClientId();
 }
 
 export function RenterCreate() {

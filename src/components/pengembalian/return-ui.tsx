@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router";
 import {
   AlertCircle,
   ArrowRight,
@@ -103,63 +104,95 @@ export function ReturnQueueCard({
   item,
   href,
   onOpen,
+  tone = "bg-card",
 }: {
   item: ReturnQueueItem;
   href: string;
   onOpen?: () => void;
+  tone?: string;
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const initials = (item.penyewa_nama ?? "P").trim().slice(0, 2).toUpperCase();
+  const isCompleted = item.rental_status === "completed";
+
   return (
-    <Card className="overflow-hidden border-border/80 shadow-sm transition hover:-translate-y-px hover:bg-accent/20">
-      <CardContent className="space-y-4 p-4">
-        <div className="flex items-start gap-3">
-          <div className="grid size-12 shrink-0 place-items-center rounded-full border bg-primary/5 text-sm font-bold text-primary">
-            {(item.penyewa_nama ?? "P").trim().slice(0, 2).toUpperCase()}
+    <Card className={`overflow-hidden rounded-[20px] border-border/75 ${tone} shadow-[0_1px_3px_rgba(0,0,0,0.05)] transition hover:-translate-y-px`}>
+      <CardContent className="p-0">
+        <div className="grid grid-cols-[44px_minmax(0,1fr)_36px] items-start gap-3 p-3.5">
+          <div className="grid size-11 shrink-0 place-items-center rounded-2xl bg-primary/[0.08] text-sm font-bold text-primary">
+            {initials}
           </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <p className="truncate font-semibold">{item.nomor_penyewaan}</p>
-                <p className="truncate text-sm text-muted-foreground">{item.penyewa_nama ?? "Penyewa tidak ditemukan"}</p>
-              </div>
-              <Badge variant="secondary" className="shrink-0 rounded-full">{semanticReturnLabel(item.rental_status)}</Badge>
+
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="truncate text-[16px] font-semibold leading-5">{item.penyewa_nama ?? "Penyewa tidak ditemukan"}</p>
+              <Badge variant="secondary" className="shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium">
+                {semanticReturnLabel(item.rental_status)}
+              </Badge>
             </div>
+            <p className="mt-1 text-xs text-muted-foreground">{item.nomor_penyewaan}</p>
           </div>
-        </div>
 
-        <ReturnProgress
-          returned={item.returned_unit_count}
-          total={item.total_unit_count}
-          outstanding={item.outstanding_unit_count}
-          compact
-        />
-
-        <div className="grid gap-2 text-sm sm:grid-cols-2">
-          <div className="rounded-xl border bg-muted/20 p-3">
-            <p className="text-[11px] text-muted-foreground">Jadwal kembali</p>
-            <p className="mt-1 font-medium">{formatReturnDateTime(item.jadwal_kembali)}</p>
-          </div>
-          <div className="rounded-xl border bg-muted/20 p-3">
-            <p className="text-[11px] text-muted-foreground">Batas toleransi</p>
-            <p className="mt-1 font-medium">{formatReturnDateTime(item.tolerance_deadline)}</p>
-          </div>
-        </div>
-
-        <RentalTimingSummary
-          scheduleAt={item.jadwal_kembali}
-          toleranceDeadline={item.tolerance_deadline}
-          compact
-          refreshMs={30_000}
-        />
-
-        <div className="flex items-center justify-between gap-2">
-          <ReturnDueBadge state={item.due_state} />
-          <Button asChild className="min-h-10 rounded-xl px-4">
-            <a href={href} onClick={() => onOpen?.()}>
-              Proses Pengembalian
-              <ArrowRight />
-            </a>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-9 rounded-full bg-muted/70"
+            aria-label={expanded ? "Tutup detail pengembalian" : "Buka detail pengembalian"}
+            onClick={() => setExpanded((value) => !value)}
+          >
+            <ArrowRight className={expanded ? "size-4 rotate-90 transition-transform" : "size-4 -rotate-45 transition-transform"} />
           </Button>
         </div>
+
+        <div className="grid grid-cols-3 divide-x border-y border-border/60 bg-background/70">
+          <div className="min-w-0 px-2.5 py-2.5">
+            <p className="text-[11px] text-muted-foreground">Jadwal kembali</p>
+            <p className="mt-1 truncate text-[13px] font-semibold">{formatReturnDateTime(item.jadwal_kembali)}</p>
+          </div>
+          <div className="min-w-0 px-2.5 py-2.5">
+            <p className="text-[11px] text-muted-foreground">Progress</p>
+            <p className="mt-1 truncate text-[13px] font-semibold">{item.returned_unit_count}/{item.total_unit_count} unit</p>
+            <p className="truncate text-[11px] text-muted-foreground">{item.outstanding_unit_count} outstanding</p>
+          </div>
+          <div className="min-w-0 px-2.5 py-2.5">
+            <p className="text-[11px] text-muted-foreground">Toleransi</p>
+            <p className="mt-1 truncate text-[13px] font-semibold">{formatReturnDateTime(item.tolerance_deadline)}</p>
+          </div>
+        </div>
+
+        {expanded ? (
+          <div className="space-y-3 border-t border-border/60 p-3.5">
+            <ReturnProgress
+              returned={item.returned_unit_count}
+              total={item.total_unit_count}
+              outstanding={item.outstanding_unit_count}
+              compact
+            />
+
+            <RentalTimingSummary
+              scheduleAt={item.jadwal_kembali}
+              toleranceDeadline={item.tolerance_deadline}
+              compact
+              refreshMs={30_000}
+            />
+
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <ReturnDueBadge state={item.due_state} />
+              <Button asChild className="min-h-10 rounded-xl px-4">
+                <a href={href} onClick={() => onOpen?.()}>
+                  {isCompleted ? "Lihat Pengembalian" : "Proses Pengembalian"}
+                  <ArrowRight />
+                </a>
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between gap-2 px-3.5 py-2.5">
+            <ReturnDueBadge state={item.due_state} />
+            <span className="text-xs text-muted-foreground">Buka untuk detail</span>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -180,7 +213,7 @@ export function ReturnUnitCard({
   return (
     <label
       className={[
-        "flex items-start gap-3 rounded-2xl border p-4 outline-none transition",
+        "flex w-full min-w-0 box-border items-start gap-3 rounded-2xl border p-4 outline-none transition overflow-hidden",
         canSelect ? "cursor-pointer hover:bg-accent/30 focus-within:ring-2 focus-within:ring-ring" : "opacity-70",
         selected ? "border-primary/50 bg-primary/[0.03]" : "border-border/80 bg-card",
       ].join(" ")}
@@ -595,8 +628,25 @@ export function SuccessReturnPanel({
             </div>
           </div>
           <ReturnStateNotice tone="info" title="Langkah berikutnya">
-            Mulai Pemeriksaan menjadi proses berikutnya. Pengembalian tidak otomatis membuat unit menjadi Siap Disewakan.
+            Pengembalian sudah tercatat. Periksa unit sekarang agar alur berlanjut tanpa menunggu jadwal atau timer.
           </ReturnStateNotice>
+          <div className="w-full max-w-md space-y-2 text-left">
+            {workspace.units
+              .filter((unit) => unit.returned && unit.detail_pengembalian_id)
+              .map((unit) => (
+                <Link
+                  key={unit.detail_pengembalian_id}
+                  to={"/pemeriksaan/" + unit.detail_pengembalian_id}
+                  className="flex min-h-12 items-center justify-between gap-3 rounded-xl border px-4 py-3 transition-colors hover:bg-accent/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <span>
+                    <span className="block font-semibold">{unit.kode_unit}</span>
+                    <span className="block text-xs text-muted-foreground">Periksa Kondisi</span>
+                  </span>
+                  <ArrowRight className="size-4" aria-hidden="true" />
+                </Link>
+              ))}
+          </div>
           <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
             <Button className="h-11 min-w-44 rounded-xl" onClick={onOpenDetail}>Lihat Detail Pengembalian</Button>
             <Button variant="outline" className="h-11 rounded-xl" onClick={onBack}>Kembali ke Daftar</Button>

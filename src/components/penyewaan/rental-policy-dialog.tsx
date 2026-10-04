@@ -14,6 +14,7 @@ type Props = {
   currentLateFeeEnabled: boolean;
   currentLateFeePerHour: number;
   onSaved: () => void;
+  compact?: boolean;
 };
 
 export function RentalPolicyDialog({
@@ -22,6 +23,7 @@ export function RentalPolicyDialog({
   currentLateFeeEnabled,
   currentLateFeePerHour,
   onSaved,
+  compact = false,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [tolerance, setTolerance] = useState(String(currentToleranceHours));
@@ -71,9 +73,14 @@ export function RentalPolicyDialog({
 
   return (
     <>
-      <Button variant="outline" className="min-h-10 rounded-xl" onClick={() => setOpen(true)}>
+      <Button
+        variant="outline"
+        size={compact ? "sm" : "default"}
+        className={compact ? "h-8 shrink-0 rounded-lg px-2.5 text-xs" : "min-h-10 rounded-xl"}
+        onClick={() => setOpen(true)}
+      >
         <Settings2 className="size-4" />
-        Aturan Penyewaan
+        {compact ? "Ubah" : "Aturan Penyewaan"}
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-h-[88vh] overflow-y-auto rounded-3xl sm:max-w-lg">

@@ -27,6 +27,7 @@ type Props = {
   currentDeadline: string | null;
   history: ToleranceHistoryItem[];
   onSaved: () => void;
+  buttonLabel?: string;
 };
 
 const presets = [
@@ -42,6 +43,7 @@ export function ToleranceExtensionDialog({
   currentDeadline,
   history,
   onSaved,
+  buttonLabel = "Tambah Toleransi",
 }: Props) {
   const [open, setOpen] = useState(false);
   const [minutes, setMinutes] = useState(60);
@@ -80,7 +82,7 @@ export function ToleranceExtensionDialog({
     <>
       <Button className="min-h-10 rounded-xl" onClick={() => setOpen(true)}>
         <Clock3 className="size-4" />
-        Tambah Toleransi
+        {buttonLabel}
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-h-[90vh] overflow-y-auto rounded-3xl sm:max-w-lg">

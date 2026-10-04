@@ -1,6 +1,7 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 import { AlertTriangle, ArrowUpRight, CalendarDays, CheckCircle2, CircleAlert, Clock3, FileText, LockKeyhole, ShieldCheck, WalletCards } from "lucide-react";
+import { paths } from "@/routes/paths";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,13 +14,23 @@ export function FinanceShell({
   subtitle,
   children,
   action,
+  variant = "default",
 }: {
   eyebrow?: string;
   title: string;
   subtitle?: React.ReactNode;
   children: React.ReactNode;
   action?: React.ReactNode;
+  variant?: "default" | "home";
 }) {
+  if (variant === "home") {
+    return (
+      <div className="mx-auto w-full max-w-6xl space-y-3 pb-24 sm:space-y-4">
+        {children}
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto w-full max-w-6xl space-y-5 pb-24">
       <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -30,8 +41,45 @@ export function FinanceShell({
         </div>
         {action}
       </header>
+      <FinanceSubnav />
       {children}
     </div>
+  );
+}
+
+function FinanceSubnav() {
+  const pathname = typeof window === "undefined" ? "" : window.location.pathname;
+  const items = [
+    ["Ringkasan", paths.keuangan],
+    ["Pembayaran", paths.keuangan + "/pembayaran"],
+    ["Pengeluaran", paths.keuangan + "/pengeluaran"],
+    ["Transaksi", paths.keuangan + "/transaksi"],
+    ["Akun Uang", paths.keuangan + "/akun"],
+  ] as const;
+
+  return (
+    <nav aria-label="Navigasi Keuangan" className="-mx-1 overflow-x-auto px-1 pb-1 [scrollbar-width:none]">
+      <div className="flex min-w-max gap-1 rounded-2xl border bg-muted/25 p-1">
+        {items.map(([label, path]) => {
+          const active = path === paths.keuangan
+            ? pathname === paths.keuangan
+            : pathname === path || pathname.startsWith(path + "/");
+          return (
+            <a
+              key={path}
+              href={path}
+              aria-current={active ? "page" : undefined}
+              className={cn(
+                "min-h-9 rounded-xl px-3 py-2 text-xs font-semibold transition-colors sm:px-4",
+                active ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:bg-background/70 hover:text-foreground",
+              )}
+            >
+              {label}
+            </a>
+          );
+        })}
+      </div>
+    </nav>
   );
 }
 

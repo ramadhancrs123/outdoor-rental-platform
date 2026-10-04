@@ -67,17 +67,16 @@ export function deriveInspectionState(statusPemeriksaan: string, latestResult: s
 export function nextInspectionAction(decision: string | null) {
   switch (decision) {
     case "maintenance_required":
-      return "Diteruskan ke Perawatan";
+      return "Masuk Perawatan untuk perbaikan";
     case "cleaning_required":
-      return "Diteruskan ke tindakan cleaning";
+      return "Masuk Perawatan untuk pembersihan";
     case "unavailable":
-      return "Unit tetap tidak siap sampai state berikutnya ditangani";
     case "follow_up_required":
-      return "Perlu tindak lanjut operasional";
+      return "Masuk Perawatan untuk tindak lanjut";
     case "ready_review":
     case "readiness_review":
     case "no_action":
-      return "Diteruskan ke readiness review Inventaris";
+      return "Masuk Perawatan untuk pembersihan standar";
     default:
       return "Tinjau hasil pemeriksaan";
   }

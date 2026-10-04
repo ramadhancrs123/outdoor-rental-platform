@@ -1,3 +1,4 @@
+import { createClientId } from "@/lib/client-id";
 import { supabase } from "@/app/providers/supabase/client";
 import type {
   ProcurementCapabilities,
@@ -367,7 +368,7 @@ export function getProcurementCapabilities(): ProcurementCapabilities {
 type ProcurementCommandResponse = Record<string, unknown>;
 
 function procurementCommandKey(prefix: string, options: ProcurementCommandOptions) {
-  return options.idempotencyKey ?? `${prefix}-${crypto.randomUUID()}`;
+  return options.idempotencyKey ?? `${prefix}-${createClientId()}`;
 }
 
 async function executeProcurementCommand<T extends ProcurementCommandResponse>(
@@ -440,7 +441,7 @@ export async function createSupplier(
       p_alamat: input.alamat?.trim() || null,
       p_catatan: input.catatan?.trim() || null,
       p_idempotency_key: idempotencyKey,
-      p_request_id: options.requestId ?? crypto.randomUUID(),
+      p_request_id: options.requestId ?? createClientId(),
     },
     "Pembuatan pemasok",
     idempotencyKey,
@@ -468,7 +469,7 @@ export async function updateSupplier(
       p_catatan: input.catatan?.trim() || null,
       p_expected_updated_at: input.expectedUpdatedAt,
       p_idempotency_key: idempotencyKey,
-      p_request_id: options.requestId ?? crypto.randomUUID(),
+      p_request_id: options.requestId ?? createClientId(),
     },
     "Pembaruan pemasok",
     idempotencyKey,
@@ -493,7 +494,7 @@ export async function setSupplierStatus(
       p_status: status,
       p_expected_updated_at: expectedUpdatedAt,
       p_idempotency_key: idempotencyKey,
-      p_request_id: options.requestId ?? crypto.randomUUID(),
+      p_request_id: options.requestId ?? createClientId(),
     },
     "Perubahan status pemasok",
     idempotencyKey,
@@ -518,7 +519,7 @@ export async function createPurchaseDraft(
       p_lines: normalizePurchaseLines(input.lines),
       p_catatan: input.catatan?.trim() || null,
       p_idempotency_key: idempotencyKey,
-      p_request_id: options.requestId ?? crypto.randomUUID(),
+      p_request_id: options.requestId ?? createClientId(),
     },
     "Pembuatan draft pembelian",
     idempotencyKey,
@@ -546,7 +547,7 @@ export async function updatePurchaseDraft(
       p_catatan: input.catatan?.trim() || null,
       p_expected_updated_at: input.expectedUpdatedAt,
       p_idempotency_key: idempotencyKey,
-      p_request_id: options.requestId ?? crypto.randomUUID(),
+      p_request_id: options.requestId ?? createClientId(),
     },
     "Pembaruan draft pembelian",
     idempotencyKey,

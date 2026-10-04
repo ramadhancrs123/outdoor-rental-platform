@@ -67,7 +67,7 @@ export const SignInForm = () => {
         <div
           className="absolute inset-0 hidden bg-center bg-no-repeat md:block"
           style={{
-            backgroundImage: "url('/login-bg.png')",
+            backgroundImage: "url('/login-bg.webp')",
             backgroundPosition: "center center",
             backgroundSize: "cover",
           }}
@@ -79,7 +79,7 @@ export const SignInForm = () => {
             <div className="space-y-8">
               <div className="inline-flex items-center gap-3">
                 <div className="grid size-12 place-items-center overflow-hidden rounded-2xl bg-white/82 shadow-sm backdrop-blur">
-                  <img src="/logo.png" alt="" className="h-full w-full object-contain p-1.5" />
+                  <img src="/logo.webp" alt="" className="h-full w-full object-contain p-1.5" />
                 </div>
                 <div className="leading-tight">
                   <p className="text-[18px] font-semibold tracking-[-0.02em] text-[#0b211e]">AKASHA</p>
@@ -139,30 +139,31 @@ export const SignInForm = () => {
             <div
               className="absolute inset-0 bg-center bg-cover bg-no-repeat md:hidden"
               style={{
-                backgroundImage: "url('/login-bg.png')",
+                backgroundImage: "url('/login-bg.webp')",
                 backgroundPosition: "center center",
               }}
               aria-hidden="true"
             />
             <div className="absolute inset-0 bg-black/5 md:hidden" aria-hidden="true" />
 
-            <div className="relative flex min-h-[56svh] flex-col items-center justify-between px-5 pb-20 pt-10 text-white md:hidden">
-              <div className="flex flex-col items-center">
-                <div className="grid size-20 place-items-center overflow-hidden rounded-[24px] bg-white/86 shadow-[0_10px_30px_rgba(0,0,0,.16)] backdrop-blur">
-                  <img src="/logo.png" alt="Akasha Outdoor Rent" className="h-full w-full object-contain p-2" />
+            <div className="relative flex min-h-[51svh] flex-col items-center justify-between overflow-hidden px-5 pb-14 pt-8 text-white md:hidden">
+              <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-black/28 via-black/8 to-transparent" />
+
+              <div className="relative flex flex-col items-center">
+                <div className="grid size-[72px] place-items-center overflow-hidden rounded-[22px] bg-white/88 shadow-[0_10px_30px_rgba(0,0,0,.16)] backdrop-blur">
+                  <img src="/logo.webp" alt="Akasha Outdoor Rent" className="h-full w-full object-contain p-2" />
                 </div>
-                <p className="mt-2 text-[17px] font-semibold tracking-[-0.02em] drop-shadow-md">AKASHA</p>
-                <p className="text-[9px] font-medium uppercase tracking-[0.28em] text-white/90 drop-shadow-md">Outdoor Rent</p>
+                <p className="mt-2 text-[16px] font-semibold tracking-[-0.02em] drop-shadow-md">AKASHA</p>
+                <p className="text-[8px] font-medium uppercase tracking-[0.3em] text-white/92 drop-shadow-md">Outdoor Rent</p>
               </div>
 
-              <div className="w-full max-w-sm">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/82">Sistem rental outdoor</p>
-                <h1 className="mt-2 max-w-[310px] text-[31px] font-semibold leading-[1.02] tracking-[-0.035em] drop-shadow-[0_3px_18px_rgba(0,0,0,.28)]">
+              <div className="relative w-full max-w-sm">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/88 drop-shadow-md">Sistem rental outdoor</p>
+                <h1 className="mt-2 max-w-[310px] text-[30px] font-semibold leading-[1.04] tracking-[-0.035em] drop-shadow-[0_3px_18px_rgba(0,0,0,.32)]">
                   Kelola Usaha Rental Outdoor
                   <br />
                   <span className="font-normal">dalam Satu Sistem</span>
                 </h1>
-                <p className="mt-3 text-sm leading-6 text-white/88">Lebih rapi, lebih efisien, lebih berkembang.</p>
               </div>
             </div>
 
@@ -170,7 +171,7 @@ export const SignInForm = () => {
               <div className="mb-6 text-center md:text-left">
                 <div className="hidden items-center justify-center md:flex">
                   <div className="grid size-16 place-items-center overflow-hidden rounded-2xl bg-[#f1f5f3]">
-                    <img src="/logo.png" alt="" className="h-full w-full object-contain p-1.5" />
+                    <img src="/logo.webp" alt="" className="h-full w-full object-contain p-1.5" />
                   </div>
                 </div>
                 <h2 className="mt-2 text-[23px] font-semibold tracking-[-0.025em] text-[#16322e] md:text-center">Masuk ke Akasha</h2>

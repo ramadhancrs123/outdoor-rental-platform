@@ -1,5 +1,6 @@
+import { createClientId } from "@/lib/client-id";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ArrowRight, Boxes, Check, CircleAlert, MapPin, PackageCheck, RefreshCw, Wrench } from "lucide-react";
+import { ArrowLeft, ArrowRight, Ban, Boxes, Check, CircleAlert, Clock3, FileText, History, MapPin, PackageCheck, QrCode, RefreshCw, Settings2, Tag, TriangleAlert, Wrench } from "lucide-react";
 import { useRef, useState } from "react";
 import { Link, useParams } from "react-router";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -10,7 +11,6 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   DetailSkeleton,
-  InventoryContextFacts,
   InventoryReadinessBanner,
   InventoryStatusBadge,
   UnitConflictNotice,
@@ -27,10 +27,13 @@ import {
   getInventoryUnit,
   listInventoryLocations,
   markInventoryUnitReady,
+  setInventoryUnitOperationalStatus,
   correctInventoryConditionSummary,
   moveInventoryUnit,
   reconcileInventoryCommand,
 } from "@/features/inventaris";
+import { QrPreviewDialog } from "@/components/qr-operasional/qr-operasional";
+import { getQrUnitRecord, buildUnitQrUrl } from "@/features/qr-operasional";
 import { paths } from "@/routes/paths";
 
 function errorText(error: unknown, fallback: string) {
@@ -49,14 +52,21 @@ export function InventoryShow() {
   const [moveOpen, setMoveOpen] = useState(false);
   const [moveStep, setMoveStep] = useState<MoveStep>(1);
   const [moveTarget, setMoveTarget] = useState("");
+  const [qrOpen, setQrOpen] = useState(false);
   const [conditionCorrectionOpen, setConditionCorrectionOpen] = useState(false);
   const [conditionDraft, setConditionDraft] = useState("");
   const [conditionReason, setConditionReason] = useState("");
   const [conditionNote, setConditionNote] = useState("");
+  const [operationalStatusOpen, setOperationalStatusOpen] = useState(false);
+  const [operationalStatus, setOperationalStatus] = useState<"damaged" | "lost" | "inactive">("damaged");
+  const [operationalStatusReason, setOperationalStatusReason] = useState("");
+  const [operationalStatusNote, setOperationalStatusNote] = useState("");
   const [actionFeedback, setActionFeedback] = useState("");
   const [unknownCommand, setUnknownCommand] = useState<"move" | "ready" | null>(null);
   const [unknownFeedback, setUnknownFeedback] = useState("");
   const [unknownReconciling, setUnknownReconciling] = useState(false);
+  const [detailTab, setDetailTab] = useState<"info" | "actions" | "history">("info");
+  const [historyExpanded, setHistoryExpanded] = useState(false);
   const [conflictReason, setConflictReason] = useState("");
   const moveCommandRef = useRef<string | null>(null);
   const readyCommandRef = useRef<string | null>(null);
@@ -83,11 +93,18 @@ export function InventoryShow() {
     enabled: Boolean(context.data?.usahaId && id),
     staleTime: 15_000,
   });
+  const unitQr = useQuery({
+    queryKey: ["qr-operasional", "unit", context.data?.usahaId, id],
+    queryFn: () => getQrUnitRecord(context.data!.usahaId, id!),
+    enabled: Boolean(context.data?.usahaId && id),
+    staleTime: 5 * 60_000,
+  });
+
 
   const moveMutation = useMutation({
     mutationFn: async () => {
       if (!context.data || !id || !moveTarget) throw new Error("Lokasi tujuan belum dipilih.");
-      if (!moveCommandRef.current) moveCommandRef.current = crypto.randomUUID();
+      if (!moveCommandRef.current) moveCommandRef.current = createClientId();
       return moveInventoryUnit(
         context.data.usahaId,
         id,
@@ -95,7 +112,7 @@ export function InventoryShow() {
         "Perpindahan dari detail unit.",
         {
           idempotencyKey: moveCommandRef.current,
-          requestId: crypto.randomUUID(),
+          requestId: createClientId(),
           expectedUpdatedAt: detail.data?.unit.updated_at,
         },
       );
@@ -130,14 +147,14 @@ export function InventoryShow() {
   const readyMutation = useMutation({
     mutationFn: async () => {
       if (!context.data || !id) throw new Error("Unit tidak ditemukan.");
-      if (!readyCommandRef.current) readyCommandRef.current = crypto.randomUUID();
+      if (!readyCommandRef.current) readyCommandRef.current = createClientId();
       return markInventoryUnitReady(
         context.data.usahaId,
         id,
         "Readiness ditetapkan melalui detail Inventaris setelah verifikasi.",
         {
           idempotencyKey: readyCommandRef.current,
-          requestId: crypto.randomUUID(),
+          requestId: createClientId(),
           expectedUpdatedAt: detail.data?.unit.updated_at,
         },
       );
@@ -166,6 +183,47 @@ export function InventoryShow() {
     },
   });
 
+  const operationalStatusMutation = useMutation({
+    mutationFn: async () => {
+      if (!context.data || !id || !detail.data?.unit.updated_at) throw new Error("Status unit terbaru belum tersedia.");
+      if (unit.status === "rented") throw new Error("Unit sedang disewa dan status operasional tidak dapat diubah dari sini.");
+      return setInventoryUnitOperationalStatus(
+        context.data.usahaId,
+        id,
+        {
+          status: operationalStatus,
+          reason: operationalStatusReason,
+          note: operationalStatusNote,
+          expectedUpdatedAt: detail.data.unit.updated_at,
+        },
+        { requestId: createClientId() },
+      );
+    },
+    onMutate: () => {
+      setActionFeedback("");
+      setConflictReason("");
+    },
+    onSuccess: async (result) => {
+      setOperationalStatusOpen(false);
+      setOperationalStatusReason("");
+      setOperationalStatusNote("");
+      setActionFeedback(
+        result.status === "inactive"
+          ? "Unit dinonaktifkan. Unit tetap tersimpan dalam riwayat dan tidak lagi dapat dipilih untuk penyewaan baru."
+          : result.status === "lost"
+            ? "Unit ditandai Hilang. Unit tidak lagi dapat dipilih untuk penyewaan baru."
+            : "Unit ditandai Rusak. Unit tidak lagi dapat dipilih untuk penyewaan baru dan dapat ditindaklanjuti melalui Perawatan.",
+      );
+      await queryClient.invalidateQueries({ queryKey: ["inventaris", "unit", context.data?.usahaId, id] });
+      await queryClient.invalidateQueries({ queryKey: ["inventaris", "units"] });
+      await queryClient.invalidateQueries({ queryKey: ["penyewaan"] });
+    },
+    onError: (error) => {
+      const message = errorText(error, "Perubahan status unit gagal.");
+      setActionFeedback(message);
+    },
+  });
+
   const conditionCorrectionMutation = useMutation({
     mutationFn: async () => {
       if (!context.data || !id || !detail.data?.unit.updated_at) throw new Error("Status unit terbaru belum tersedia.");
@@ -179,7 +237,7 @@ export function InventoryShow() {
           sourcePemeriksaanId: operational.data?.latestInspection?.pemeriksaan_id ?? null,
           expectedUpdatedAt: detail.data.unit.updated_at,
         },
-        { requestId: crypto.randomUUID() },
+        { requestId: createClientId() },
       );
     },
     onMutate: () => {
@@ -266,53 +324,130 @@ export function InventoryShow() {
   const canMarkReady =
     capabilities.mutation &&
     !["ready", "rented", "lost", "inactive", "inspection_pending", "maintenance", "damaged"].includes(unit.status);
+  const latestMaintenance = operational.data?.latestMaintenance ?? null;
+  const maintenanceActionLabel =
+    latestMaintenance?.status === "completed"
+      ? "Verifikasi Kesiapan"
+      : latestMaintenance
+        ? "Lanjutkan Perawatan"
+        : "Buka Perawatan";
+  const maintenanceActionHref = latestMaintenance
+    ? paths.perawatan + "/" + latestMaintenance.perawatan_id
+    : paths.perawatan + "?unit_id=" + unit.unit_barang_id;
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-4 pb-28 sm:space-y-5 md:pb-10">
-      <div className="flex items-center justify-between gap-3">
-        <Button asChild variant="ghost" className="-ml-3 rounded-xl">
-          <Link to={paths.inventaris}><ArrowLeft />Kembali</Link>
+    <div className="mx-auto w-full max-w-3xl space-y-3 pb-28 sm:space-y-4 lg:pb-10">
+      <header className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-start gap-2">
+          <Button asChild variant="ghost" size="icon" className="-ml-2 size-9 rounded-xl" aria-label="Kembali ke Inventaris">
+            <Link to={paths.inventaris}><ArrowLeft /></Link>
+          </Button>
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-muted-foreground">Detail Unit Barang</p>
+            <h1 className="truncate text-[20px] font-bold leading-6 tracking-tight">{unit.kode_unit}</h1>
+            <p className="truncate text-sm text-muted-foreground">
+              {unit.barang?.nama ?? "Barang tidak ditemukan"}{unit.varian?.nama ? " · " + unit.varian.nama : ""}
+            </p>
+          </div>
+        </div>
+        <Button
+          type="button"
+          variant={detailTab === "actions" ? "default" : "outline"}
+          className="h-9 shrink-0 rounded-xl px-3 text-xs"
+          onClick={() => setDetailTab("actions")}
+        >
+          <Settings2 />
+          Aksi
         </Button>
-        <Badge variant="secondary" className="rounded-full">{context.data.usahaNama}</Badge>
-      </div>
+      </header>
 
-      <section className="rounded-2xl border border-border/80 bg-card p-4 shadow-sm sm:p-5">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex min-w-0 items-center gap-4">
+      <Card className="overflow-hidden rounded-[22px] border-border/70 bg-card shadow-[0_1px_3px_rgba(0,0,0,0.05)]">
+        <CardContent className="p-3.5 sm:p-4">
+          <div className="grid grid-cols-[82px_minmax(0,1fr)] gap-3">
             <div
-              className="grid size-16 shrink-0 place-items-center overflow-hidden rounded-2xl border bg-muted/40 text-primary sm:size-20"
+              className="grid size-[82px] shrink-0 place-items-center overflow-hidden rounded-2xl border border-primary/10 bg-primary/[0.045] text-primary sm:size-24"
               aria-label={"Pratinjau " + (unit.barang?.nama ?? "barang")}
             >
-              <Boxes className="size-7 sm:size-9" aria-hidden="true" />
+              <Boxes className="size-9 sm:size-11" aria-hidden="true" />
             </div>
+
             <div className="min-w-0">
-              <p className="text-sm text-muted-foreground">Unit fisik</p>
-              <div className="mt-1 flex flex-wrap items-center gap-2">
-                <h1 className="truncate text-xl font-bold tracking-tight sm:text-2xl">{unit.kode_unit}</h1>
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-[11px] font-medium text-muted-foreground">Barang</p>
+                  <h2 className="mt-0.5 truncate text-[18px] font-bold leading-6">
+                    {unit.barang?.nama ?? "Barang tidak ditemukan"}
+                  </h2>
+                  <p className="mt-0.5 truncate text-sm text-muted-foreground">{unit.kode_unit}</p>
+                </div>
                 <InventoryStatusBadge status={unit.status} />
               </div>
-              <p className="mt-1 truncate text-sm text-muted-foreground">
-                {unit.barang?.nama ?? "Barang tidak ditemukan"}
-                {unit.varian?.nama ? " · " + unit.varian.nama : ""}
-              </p>
-              {unit.serial_number ? <p className="mt-1 text-xs text-muted-foreground">Serial {unit.serial_number}</p> : null}
+
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                <Badge variant="secondary" className="rounded-full px-2.5 py-1 text-[11px]">
+                  {unit.varian?.nama ?? "Tanpa varian"}
+                </Badge>
+                {unit.serial_number ? (
+                  <Badge variant="outline" className="rounded-full px-2.5 py-1 text-[11px]">
+                    Serial {unit.serial_number}
+                  </Badge>
+                ) : null}
+              </div>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div className="rounded-2xl bg-emerald-50/55 px-3 py-2.5 dark:bg-emerald-950/15">
+              <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                <PackageCheck className="size-3.5" />
+                Status
+              </div>
+              <p className="mt-1 truncate text-sm font-semibold">{unit.status}</p>
+            </div>
+            <div className="rounded-2xl bg-sky-50/55 px-3 py-2.5 dark:bg-sky-950/15">
+              <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                <MapPin className="size-3.5" />
+                Lokasi
+              </div>
+              <p className="mt-1 truncate text-sm font-semibold">{unit.lokasi?.nama ?? "Belum ditentukan"}</p>
+            </div>
+            <div className="rounded-2xl bg-amber-50/55 px-3 py-2.5 dark:bg-amber-950/15">
+              <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                <CircleAlert className="size-3.5" />
+                Kondisi
+              </div>
+              <p className="mt-1 truncate text-sm font-semibold">{unit.kondisi_ringkas ?? "Belum dicatat"}</p>
+            </div>
+            <div className="rounded-2xl bg-violet-50/55 px-3 py-2.5 dark:bg-violet-950/15">
+              <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                <Clock3 className="size-3.5" />
+                Diperoleh
+              </div>
+              <p className="mt-1 truncate text-sm font-semibold">{formatInventoryDate(unit.tanggal_diperoleh)}</p>
+            </div>
+          </div>
+
+          <div className="mt-3 flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-xs text-muted-foreground">Catatan internal</p>
+              <p className="mt-1 truncate text-sm">{unit.catatan_internal ?? "Tidak ada catatan internal."}</p>
+            </div>
             <Button
+              type="button"
               variant="outline"
-              className="rounded-xl"
+              className="h-9 shrink-0 rounded-xl px-3 text-xs"
               onClick={() => {
                 setMoveStep(1);
                 setMoveTarget("");
                 setMoveOpen(true);
               }}
             >
-              <MapPin />Pindahkan Lokasi
+              <MapPin />
+              Pindahkan
             </Button>
           </div>
-        </div>
-      </section>
+        </CardContent>
+      </Card>
 
       {unknownCommand ? (
         <UnknownOutcomeNotice
@@ -332,235 +467,260 @@ export function InventoryShow() {
         </Alert>
       ) : null}
 
-      <div id="unit-ringkasan">
-        <InventoryReadinessBanner unit={unit} operational={operational.data} />
-      </div>
+      <InventoryReadinessBanner unit={unit} operational={operational.data} />
 
       <nav
-        className="sticky top-2 z-20 -mx-1 flex gap-1 overflow-x-auto rounded-2xl border border-border/80 bg-background/95 p-1 shadow-sm backdrop-blur md:hidden"
-        aria-label="Navigasi detail unit"
+        className="sticky top-2 z-20 grid grid-cols-3 rounded-2xl border border-border/80 bg-background/95 p-1 shadow-sm backdrop-blur"
+        aria-label="Bagian detail unit"
       >
-        {[
-          ["unit-ringkasan", "Ringkasan"],
-          ["unit-lokasi", "Lokasi"],
-          ["unit-riwayat", "Riwayat"],
-          ["unit-pemeriksaan", "Pemeriksaan"],
-          ["unit-perawatan", "Perawatan"],
-        ].map(([href, label]) => (
-          <a
-            key={href}
-            href={`#${href}`}
-            className="min-h-10 shrink-0 rounded-xl px-3 py-2 text-xs font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        {([
+          ["info", "Informasi", FileText],
+          ["actions", "Aksi", Settings2],
+          ["history", "Riwayat", History],
+        ] as const).map(([value, label, Icon]) => (
+          <button
+            key={value}
+            type="button"
+            aria-selected={detailTab === value}
+            onClick={() => setDetailTab(value as "info" | "actions" | "history")}
+            className={[
+              "flex h-10 items-center justify-center gap-1.5 rounded-xl px-2 text-xs font-semibold transition",
+              detailTab === value ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+            ].join(" ")}
           >
+            <Icon className="size-4" />
             {label}
-          </a>
+          </button>
         ))}
       </nav>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
-        <Card className="shadow-sm">
-          <CardHeader>
-            <CardTitle className="text-base">Identity</CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <p className="text-xs text-muted-foreground">Kode unit</p>
-              <p className="mt-1 font-semibold">{unit.kode_unit}</p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Serial</p>
-              <p className="mt-1 font-semibold">{unit.serial_number ?? "Belum dicatat"}</p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Tanggal diperoleh</p>
-              <p className="mt-1 font-semibold">{formatInventoryDate(unit.tanggal_diperoleh)}</p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Updated</p>
-              <p className="mt-1 font-semibold">{formatInventoryDateTime(unit.updated_at)}</p>
-            </div>
-            <div className="sm:col-span-2">
-              <p className="text-xs text-muted-foreground">Catatan internal</p>
-              <p className="mt-1 whitespace-pre-wrap text-sm leading-6">{unit.catatan_internal ?? "Tidak ada catatan internal."}</p>
-            </div>
-          </CardContent>
-        </Card>
+      {detailTab === "info" ? (
+        <div className="space-y-3">
+          <Card className="rounded-[22px] border-border/70 shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
+            <CardHeader className="p-4 pb-3">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Tag className="size-5 text-primary" />
+                Informasi Utama
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2.5 p-4 pt-0">
+              {[
+                ["Nama Barang", unit.barang?.nama ?? "Barang tidak ditemukan"],
+                ["Kode Unit", unit.kode_unit],
+                ["Varian", unit.varian?.nama ?? "Tanpa varian"],
+                ["Serial", unit.serial_number ?? "Belum dicatat"],
+                ["Tanggal Diperoleh", formatInventoryDate(unit.tanggal_diperoleh)],
+                ["Lokasi", unit.lokasi?.nama ?? "Belum ditentukan"],
+                ["Kondisi", unit.kondisi_ringkas ?? "Belum dicatat"],
+              ].map(([label, value], index) => (
+                <div key={label} className={[
+                  "grid grid-cols-[112px_minmax(0,1fr)] items-center gap-3 rounded-xl px-3 py-2.5",
+                  index % 2 === 0 ? "bg-muted/20" : "bg-background",
+                ].join(" ")}>
+                  <span className="text-xs text-muted-foreground">{label}</span>
+                  <span className="min-w-0 truncate text-sm font-medium">{value}</span>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
 
-        <Card id="unit-lokasi" className="shadow-sm">
-          <CardHeader>
-            <CardTitle className="text-base">Catalog & Location</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <p className="text-xs text-muted-foreground">Barang</p>
-              <p className="mt-1 font-semibold">{unit.barang?.nama ?? "Barang tidak ditemukan"}</p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Varian</p>
-              <p className="mt-1 font-semibold">{unit.varian?.nama ?? "Tanpa varian"}</p>
-            </div>
-            <div className="flex items-start gap-3 rounded-2xl border bg-muted/20 p-3">
-              <MapPin className="mt-0.5 size-4 text-muted-foreground" />
+          <section className="space-y-3" aria-label="Konteks operasional">
+            <div className="flex items-end justify-between gap-3">
               <div>
-                <p className="text-xs text-muted-foreground">Current location</p>
-                <p className="mt-1 font-semibold">{unit.lokasi?.nama ?? "Belum ditentukan"}</p>
-                <p className="mt-1 text-xs text-muted-foreground">Lokasi tidak menentukan status unit.</p>
+                <h2 className="text-base font-semibold">Konteks Operasional</h2>
+                <p className="text-sm text-muted-foreground">Fakta lintas modul yang relevan untuk unit ini.</p>
               </div>
             </div>
-          </CardContent>
-        </Card>
-      </div>
 
-      <section className="space-y-3">
-        <div>
-          <h2 className="text-base font-semibold">Penetapan Unit & Penyewaan Saat Ini</h2>
-          <p className="text-sm text-muted-foreground">
-            Penetapan Unit dan penyewaan tetap dikelola oleh menu Penyewaan.
-          </p>
+            {operational.isPending ? (
+              <div className="grid gap-2.5 sm:grid-cols-3">
+                <div className="h-28 animate-pulse rounded-2xl bg-muted" />
+                <div className="h-28 animate-pulse rounded-2xl bg-muted" />
+                <div className="h-28 animate-pulse rounded-2xl bg-muted" />
+              </div>
+            ) : (
+              <div className="grid gap-2.5 sm:grid-cols-3">
+                <Card className="rounded-[20px] border-emerald-200/60 bg-emerald-50/30 shadow-none dark:border-emerald-900/30 dark:bg-emerald-950/10">
+                  <CardContent className="space-y-1 p-3.5">
+                    <p className="text-[11px] text-muted-foreground">Pengembalian</p>
+                    <p className="truncate text-sm font-semibold">{operational.data?.latestReturn ? "Unit sudah diterima" : "Belum ada"}</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      {operational.data?.latestReturn ? formatInventoryDateTime(operational.data.latestReturn.diterima_at) : "Belum ada fakta pengembalian."}
+                    </p>
+                  </CardContent>
+                </Card>
+                <Card id="unit-pemeriksaan" className="rounded-[20px] border-sky-200/60 bg-sky-50/30 shadow-none dark:border-sky-900/30 dark:bg-sky-950/10">
+                  <CardContent className="space-y-1 p-3.5">
+                    <p className="text-[11px] text-muted-foreground">Pemeriksaan</p>
+                    <p className="truncate text-sm font-semibold">{operational.data?.latestInspection?.hasil ?? "Belum ada"}</p>
+                    <p className="truncate text-[11px] text-muted-foreground">
+                      {operational.data?.latestInspection ? operational.data.latestInspection.keputusan_operasional : "Belum ada pemeriksaan."}
+                    </p>
+                  </CardContent>
+                </Card>
+                <Card id="unit-perawatan" className="rounded-[20px] border-amber-200/60 bg-amber-50/30 shadow-none dark:border-amber-900/30 dark:bg-amber-950/10">
+                  <CardContent className="space-y-1 p-3.5">
+                    <p className="text-[11px] text-muted-foreground">Perawatan</p>
+                    <p className="truncate text-sm font-semibold">
+                      {latestMaintenance?.status === "completed"
+                        ? "Menunggu verifikasi"
+                        : operational.data?.openMaintenance.length
+                          ? operational.data.openMaintenance.length + " pekerjaan terbuka"
+                          : "Tidak ada"}
+                    </p>
+                    <p className="truncate text-[11px] text-muted-foreground">
+                      {latestMaintenance?.status === "completed" ? "Perawatan selesai" : "Data utama dikelola Perawatan."}
+                    </p>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
+          </section>
+
+          {operational.error ? (
+            <Alert>
+              <CircleAlert className="size-4" />
+              <AlertTitle>Konteks lintas modul belum tersedia</AlertTitle>
+              <AlertDescription>
+                Status utama unit tetap berasal dari Inventaris. Data modul lain dapat dimuat ulang tanpa mengubah status unit.
+              </AlertDescription>
+            </Alert>
+          ) : null}
         </div>
-        {operational.isPending ? (
-          <div className="grid gap-3 md:grid-cols-3">
-            <div className="h-32 animate-pulse rounded-2xl bg-muted" />
-            <div className="h-32 animate-pulse rounded-2xl bg-muted" />
-            <div className="h-32 animate-pulse rounded-2xl bg-muted" />
-          </div>
-        ) : (
-          <InventoryContextFacts operational={operational.data} />
-        )}
-      </section>
-
-      {operational.error ? (
-        <Alert>
-          <CircleAlert className="size-4" />
-          <AlertTitle>Konteks lintas modul belum tersedia</AlertTitle>
-          <AlertDescription>
-            Status utama unit tetap berasal dari Inventaris. Data penyewaan, pengembalian, pemeriksaan, dan perawatan dapat dimuat ulang tanpa mengubah status unit.
-          </AlertDescription>
-        </Alert>
       ) : null}
 
-      {capabilities.mutation ? (
-        <Card className="shadow-sm">
-          <CardHeader>
-            <CardTitle className="text-base">Aksi Berikutnya</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid gap-3 sm:grid-cols-2">
+      {detailTab === "actions" ? (
+        <div className="space-y-3">
+          <Card className="rounded-[22px] border-primary/15 bg-primary/[0.025] shadow-sm">
+            <CardHeader className="p-4 pb-3">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Settings2 className="size-5 text-primary" />
+                Aksi Berikutnya
+              </CardTitle>
+              <p className="text-sm text-muted-foreground">Pilih tindakan sesuai keadaan unit saat ini.</p>
+            </CardHeader>
+            <CardContent className="space-y-3 p-4 pt-0">
               {unit.status === "damaged" ? (
-                <Button asChild className="h-11 rounded-xl">
+                <Button asChild className="h-11 w-full rounded-xl justify-between">
                   <Link to={paths.perawatan + "?unit_id=" + unit.unit_barang_id}>Buka Perawatan<Wrench /></Link>
                 </Button>
               ) : null}
+
               {unit.status === "maintenance" ? (
-                <Button asChild className="h-11 rounded-xl">
-                  <Link to={paths.perawatan + "?unit_id=" + unit.unit_barang_id}>Buka Perawatan</Link>
-                </Button>
-              ) : null}
-              {unit.status === "rented" ? (
-                <Button asChild className="h-11 rounded-xl">
-                  <Link to={operational.data?.activeRental ? paths.penyewaan + "/" + operational.data.activeRental.penyewaan_id : paths.penyewaan}>
-                    {operational.data?.activeRental ? "Buka Penyewaan" : "Tinjau Penyewaan"}
+                <Button asChild className="h-11 w-full rounded-xl justify-between">
+                  <Link to={maintenanceActionHref}>
+                    {maintenanceActionLabel}
+                    {latestMaintenance?.status === "completed" ? <PackageCheck /> : <Wrench />}
                   </Link>
                 </Button>
               ) : null}
-              {canMarkReady ? (
-                <Button
-                  className="h-11 rounded-xl"
-                  onClick={() => readyMutation.mutate()}
-                  disabled={readyMutation.isPending}
-                >
-                  <PackageCheck />
-                  {readyMutation.isPending ? "Memverifikasi…" : "Verifikasi & Tetapkan Siap Disewakan"}
+
+              {unit.status === "rented" ? (
+                <Button asChild className="h-11 w-full rounded-xl justify-between">
+                  <Link to={operational.data?.activeRental ? paths.penyewaan + "/" + operational.data.activeRental.penyewaan_id : paths.penyewaan}>
+                    {operational.data?.activeRental ? "Buka Penyewaan" : "Tinjau Penyewaan"}
+                    <ArrowRight />
+                  </Link>
                 </Button>
               ) : null}
-              <Button
-                type="button"
-                variant="outline"
-                className="h-11 rounded-xl"
-                onClick={() => {
-                  setConditionDraft(unit.kondisi_ringkas ?? "");
-                  setConditionCorrectionOpen(true);
-                }}
-              >
-                Koreksi Kondisi
-              </Button>
-              {!["inspection_pending", "maintenance", "rented", "damaged"].includes(unit.status) && !canMarkReady ? (
-                <div className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">
-                  Tidak ada tindakan yang aman untuk status ini. Tinjau detail unit dan menu terkait untuk langkah berikutnya.
+
+              {canMarkReady ? (
+                <Button className="h-11 w-full rounded-xl justify-between" onClick={() => readyMutation.mutate()} disabled={readyMutation.isPending}>
+                  <span className="inline-flex items-center gap-2">
+                    <PackageCheck />
+                    {readyMutation.isPending ? "Memverifikasi…" : "Verifikasi & Tetapkan Siap Disewakan"}
+                  </span>
+                  <ArrowRight />
+                </Button>
+              ) : null}
+
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-11 rounded-xl"
+                  onClick={() => {
+                    setConditionDraft(unit.kondisi_ringkas ?? "");
+                    setConditionCorrectionOpen(true);
+                  }}
+                >
+                  Koreksi Kondisi
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-11 rounded-xl"
+                  onClick={() => setQrOpen(true)}
+                  disabled={!unitQr.data || unitQr.isPending}
+                >
+                  <QrCode />
+                  Lihat QR Unit
+                </Button>
+
+                {unit.status !== "rented" ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-11 rounded-xl"
+                    onClick={() => {
+                      setOperationalStatus("damaged");
+                      setOperationalStatusReason("");
+                      setOperationalStatusNote("");
+                      setOperationalStatusOpen(true);
+                    }}
+                  >
+                    <Ban />
+                    Ubah Status Unit
+                  </Button>
+                ) : null}
+              </div>
+
+              {unit.status === "rented" ? (
+                <div className="rounded-2xl border border-dashed p-4 text-sm leading-5 text-muted-foreground">
+                  Unit sedang disewa. Perubahan status Rusak, Hilang, atau Dinonaktifkan diproses melalui alur Penyewaan/Pengembalian agar histori tetap benar.
                 </div>
               ) : null}
-            </div>
-            <p className="text-xs leading-5 text-muted-foreground">
-              Setiap perubahan diperiksa oleh sistem sebelum disimpan. Sistem juga melindungi perubahan yang dilakukan bersamaan. Status unit tidak diubah melalui tindakan umum.
-            </p>
-          </CardContent>
-        </Card>
+
+              {!["inspection_pending", "maintenance", "rented", "damaged"].includes(unit.status) && !canMarkReady ? (
+                <div className="rounded-2xl border border-dashed p-4 text-sm text-muted-foreground">
+                  Tidak ada tindakan aman yang tersedia untuk status ini.
+                </div>
+              ) : null}
+            </CardContent>
+          </Card>
+
+          <Card className="rounded-[22px] border-border/70 bg-muted/[0.03] shadow-none">
+            <CardContent className="flex items-start gap-3 p-3.5">
+              <CircleAlert className="mt-0.5 size-5 shrink-0 text-primary" />
+              <p className="text-xs leading-5 text-muted-foreground">
+                Inventaris tetap menjadi pemilik status fisik dan readiness unit. Pemeriksaan, Perawatan, Penyewaan, dan Pengembalian menyediakan fakta lintas modul tanpa mengambil alih status Inventaris.
+              </p>
+            </CardContent>
+          </Card>
+        </div>
       ) : null}
 
-      <section className="space-y-3">
-        <div>
-          <h2 className="text-base font-semibold">Pengembalian / Pemeriksaan / Perawatan</h2>
-          <p className="text-sm text-muted-foreground">
-            Penyelesaian pada satu menu tidak otomatis mengubah status fisik unit menjadi Siap Disewakan.
-          </p>
-        </div>
-        <div className="grid gap-3 md:grid-cols-3">
-          <Card className="shadow-none">
-            <CardContent className="space-y-2 p-4">
-              <p className="text-xs text-muted-foreground">Pengembalian terakhir</p>
-              <p className="font-semibold">{operational.data?.latestReturn ? "Unit diterima" : "Belum ada pengembalian"}</p>
-              <p className="text-xs text-muted-foreground">
-                {operational.data?.latestReturn
-                  ? formatInventoryDateTime(operational.data.latestReturn.diterima_at)
-                  : "Tidak ada data pengembalian yang tersedia."}
-              </p>
-            </CardContent>
-          </Card>
-          <Card id="unit-pemeriksaan" className="shadow-none">
-            <CardContent className="space-y-2 p-4">
-              <p className="text-xs text-muted-foreground">Pemeriksaan terakhir</p>
-              <p className="font-semibold">{operational.data?.latestInspection?.hasil ?? "Belum ada pemeriksaan"}</p>
-              <p className="text-xs text-muted-foreground">
-                {operational.data?.latestInspection
-                  ? `${operational.data.latestInspection.kelengkapan_status} · ${operational.data.latestInspection.keputusan_operasional}`
-                  : "Belum ada bukti pemeriksaan."}
-              </p>
-            </CardContent>
-          </Card>
-          <Card id="unit-perawatan" className="shadow-none">
-            <CardContent className="space-y-2 p-4">
-              <p className="text-xs text-muted-foreground">Perawatan</p>
-              <p className="font-semibold">
-                {operational.data?.openMaintenance.length
-                  ? `${operational.data.openMaintenance.length} pekerjaan terbuka`
-                  : "Tidak ada perawatan aktif"}
-              </p>
-              <p className="text-xs text-muted-foreground">Data utama tetap dikelola oleh modul Perawatan.</p>
-            </CardContent>
-          </Card>
-        </div>
-      </section>
-
-      <section id="unit-riwayat" className="space-y-3">
-        <div className="flex items-end justify-between gap-3">
-          <div>
-            <h2 className="text-base font-semibold">Riwayat Unit</h2>
-            <p className="text-sm text-muted-foreground">Riwayat peristiwa unit, bukan Audit Log platform.</p>
+      {detailTab === "history" ? (
+        <section id="unit-riwayat" className="space-y-3">
+          <div className="flex items-end justify-between gap-3">
+            <div>
+              <h2 className="text-base font-semibold">Riwayat Unit</h2>
+              <p className="text-sm text-muted-foreground">Riwayat peristiwa unit, bukan Audit Log platform.</p>
+            </div>
+            {history.length > 4 ? (
+              <Button type="button" variant="ghost" className="h-9 rounded-full px-3 text-xs text-primary" onClick={() => setHistoryExpanded((value) => !value)}>
+                {historyExpanded ? "Ringkas" : "Lihat Semua"}
+                <ArrowRight className={historyExpanded ? "-rotate-90" : ""} />
+              </Button>
+            ) : null}
           </div>
-        </div>
-        <UnitHistoryTimeline history={history} />
-      </section>
+          <UnitHistoryTimeline history={historyExpanded ? history : history.slice(0, 4)} />
+        </section>
+      ) : null}
 
-      <Alert>
-        <AlertTitle>Aksi Inventaris</AlertTitle>
-        <AlertDescription>
-          {capabilities.reason} QR hanya cara cepat menemukan unit; perubahan tetap diproses oleh sistem.
-        </AlertDescription>
-      </Alert>
-
-      {capabilities.mutation && !conflictReason ? (
-        <div className="fixed inset-x-2 bottom-20 z-40 md:hidden">
-          <div className="rounded-2xl border border-border/80 bg-background/95 p-2 shadow-[0_18px_50px_rgba(20,40,30,.16)] backdrop-blur">
+      {capabilities.mutation ? (
+        <div className="fixed inset-x-3 bottom-16 z-40 lg:hidden">
+          <div className="rounded-2xl border bg-background/95 p-2 shadow-[0_18px_50px_rgba(20,40,30,.16)] backdrop-blur">
             {unknownCommand ? (
               <Button
                 type="button"
@@ -572,16 +732,13 @@ export function InventoryShow() {
               </Button>
             ) : unit.status === "damaged" ? (
               <Button asChild className="h-12 w-full rounded-xl">
-                <Link to={paths.perawatan + "?unit_id=" + unit.unit_barang_id}>
-                  Buka Perawatan
-                  <Wrench />
-                </Link>
+                <Link to={paths.perawatan + "?unit_id=" + unit.unit_barang_id}>Buka Perawatan<Wrench /></Link>
               </Button>
             ) : unit.status === "maintenance" ? (
               <Button asChild className="h-12 w-full rounded-xl">
-                <Link to={paths.perawatan + "?unit_id=" + unit.unit_barang_id}>
-                  Buka Perawatan
-                  <Wrench />
+                <Link to={maintenanceActionHref}>
+                  {maintenanceActionLabel}
+                  {latestMaintenance?.status === "completed" ? <PackageCheck /> : <Wrench />}
                 </Link>
               </Button>
             ) : unit.status === "rented" ? (
@@ -592,12 +749,7 @@ export function InventoryShow() {
                 </Link>
               </Button>
             ) : canMarkReady ? (
-              <Button
-                type="button"
-                className="h-12 w-full rounded-xl"
-                onClick={() => readyMutation.mutate()}
-                disabled={readyMutation.isPending}
-              >
+              <Button type="button" className="h-12 w-full rounded-xl" onClick={() => readyMutation.mutate()} disabled={readyMutation.isPending}>
                 <PackageCheck />
                 {readyMutation.isPending ? "Memverifikasi…" : "Verifikasi & Tetapkan Siap Disewakan"}
               </Button>
@@ -730,6 +882,111 @@ export function InventoryShow() {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <QrPreviewDialog
+        open={qrOpen}
+        onOpenChange={setQrOpen}
+        title="QR Unit"
+        description="QR ini tetap melekat pada identity unit dan membuka detail Inventaris."
+        code={unit.kode_unit}
+        kind="unit"
+        url={unitQr.data ? buildUnitQrUrl(window.location.origin, unitQr.data.token_qr) : ""}
+        labelData={unitQr.data ? {
+          kode_unit: unit.kode_unit,
+          nama_barang: unit.barang?.nama ?? "Barang",
+          nama_varian: unit.varian?.nama ?? null,
+          token_qr: unitQr.data.token_qr,
+          url: buildUnitQrUrl(window.location.origin, unitQr.data.token_qr),
+        } : null}
+      />
+
+      <Dialog
+        open={operationalStatusOpen}
+        onOpenChange={(open) => {
+          setOperationalStatusOpen(open);
+          if (!open && !operationalStatusMutation.isPending) {
+            setOperationalStatusReason("");
+            setOperationalStatusNote("");
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Ubah Status Unit</DialogTitle>
+            <DialogDescription>
+              Gunakan status ini untuk mengeluarkan unit dari penyewaan normal tanpa menghapus riwayat fisiknya.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="rounded-2xl border bg-muted/20 p-4">
+              <p className="text-xs text-muted-foreground">Unit</p>
+              <p className="mt-1 font-semibold">{unit.kode_unit}</p>
+              <p className="text-sm text-muted-foreground">{unit.barang?.nama ?? "Barang tidak ditemukan"}</p>
+            </div>
+
+            <div className="grid gap-2">
+              <label className="text-sm font-medium" htmlFor="inventory-operational-status">Status baru</label>
+              <Select value={operationalStatus} onValueChange={(value) => setOperationalStatus(value as "damaged" | "lost" | "inactive")}>
+                <SelectTrigger id="inventory-operational-status" className="h-11 rounded-xl">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="damaged">Rusak</SelectItem>
+                  <SelectItem value="lost">Hilang</SelectItem>
+                  <SelectItem value="inactive">Dinonaktifkan</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="rounded-2xl border bg-muted/20 p-4 text-sm leading-6">
+              {operationalStatus === "damaged"
+                ? "Unit tidak akan tersedia untuk penyewaan baru dan dapat ditindaklanjuti melalui Perawatan."
+                : operationalStatus === "lost"
+                  ? "Unit dianggap hilang dan tidak akan tersedia untuk penyewaan baru."
+                  : "Unit tidak lagi dianggap siap disewakan. Riwayat unit tetap tersimpan dan status ini tidak otomatis membuat unit aktif kembali."}
+            </div>
+
+            <label className="grid gap-2 text-sm font-medium">
+              Alasan
+              <textarea
+                className="min-h-24 rounded-xl border bg-background p-3 text-sm font-normal outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                value={operationalStatusReason}
+                onChange={(event) => setOperationalStatusReason(event.target.value)}
+                placeholder="Contoh: rangka patah, unit tidak ditemukan, atau tidak ekonomis untuk digunakan."
+              />
+            </label>
+
+            <label className="grid gap-2 text-sm font-medium">
+              Catatan tambahan
+              <textarea
+                className="min-h-20 rounded-xl border bg-background p-3 text-sm font-normal outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                value={operationalStatusNote}
+                onChange={(event) => setOperationalStatusNote(event.target.value)}
+                placeholder="Opsional"
+              />
+            </label>
+
+            <p className="text-xs leading-5 text-muted-foreground">
+              Perubahan dicatat pada riwayat unit dan audit. Unit tidak dihapus.
+            </p>
+
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <Button variant="outline" className="rounded-xl" onClick={() => setOperationalStatusOpen(false)}>
+                Batal
+              </Button>
+              <Button
+                className="rounded-xl"
+                disabled={operationalStatusMutation.isPending || !operationalStatusReason.trim()}
+                onClick={() => operationalStatusMutation.mutate()}
+              >
+                <TriangleAlert />
+                {operationalStatusMutation.isPending ? "Menyimpan…" : "Simpan Perubahan"}
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
 

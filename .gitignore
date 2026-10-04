@@ -49,3 +49,6 @@ supabase/.temp/
 
 # Local reference screenshot
 /ref-ui.png
+
+# Vite local dependency optimization cache
+.vite

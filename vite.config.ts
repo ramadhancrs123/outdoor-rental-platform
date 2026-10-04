@@ -11,6 +11,7 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  cacheDir: ".vite",
   server: {
     // listen on 0.0.0.0 so the dev server is reachable from other devices
     // (phone) on the same network via http://<LAN-IP>:<port>

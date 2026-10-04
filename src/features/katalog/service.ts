@@ -1,5 +1,6 @@
+import { createClientId } from "@/lib/client-id";
 import { supabase } from "@/app/providers/supabase/client";
-import type { CatalogCategory, CatalogListFilters, CatalogPackageReference, CatalogProduct, CatalogProductDetail, CatalogTariff, CatalogVariant, CatalogVariantOption } from "./types";
+import type { CatalogCategory, CatalogListFilters, CatalogPackageReference, CatalogProduct, CatalogProductDetail, CatalogSummary, CatalogStockSummary, CatalogTariff, CatalogVariant, CatalogVariantOption } from "./types";
 import { CATALOG_PRODUCT_MEDIA_BUCKET } from "./types";
 import { isActiveCatalogTariff } from "./utils";
 
@@ -28,6 +29,26 @@ export async function getCatalogContext() {
   return { usahaId, usahaName: usaha.nama as string, usahaSlug: usaha.slug as string };
 }
 
+export async function getCatalogSummary(usahaId: string): Promise<CatalogSummary> {
+  const [categoriesResult, productsResult, activeResult, inactiveResult] = await Promise.all([
+    supabase.from("kategori_barang").select("kategori_barang_id", { count: "exact", head: true }).eq("usaha_id", usahaId),
+    supabase.from("barang").select("barang_id", { count: "exact", head: true }).eq("usaha_id", usahaId),
+    supabase.from("barang").select("barang_id", { count: "exact", head: true }).eq("usaha_id", usahaId).eq("status", "active"),
+    supabase.from("barang").select("barang_id", { count: "exact", head: true }).eq("usaha_id", usahaId).eq("status", "inactive"),
+  ]);
+
+  for (const result of [categoriesResult, productsResult, activeResult, inactiveResult]) {
+    if (result.error) throw result.error;
+  }
+
+  return {
+    categoryCount: categoriesResult.count ?? 0,
+    productCount: productsResult.count ?? 0,
+    activeCount: activeResult.count ?? 0,
+    inactiveCount: inactiveResult.count ?? 0,
+  };
+}
+
 export async function listCatalogCategories(usahaId: string): Promise<CatalogCategory[]> {
   const { data, error } = await supabase.from("kategori_barang").select("kategori_barang_id,usaha_id,nama,deskripsi,urutan_tampilan,status,created_at,updated_at").eq("usaha_id", usahaId).order("nama", { ascending: true });
   if (error) throw error;
@@ -37,7 +58,7 @@ export async function listCatalogCategories(usahaId: string): Promise<CatalogCat
 export async function listCatalogVariants(usahaId: string): Promise<CatalogVariantOption[]> {
   const { data, error } = await supabase
     .from("varian_barang")
-    .select("varian_barang_id,barang_id,usaha_id,nama,kode_internal,deskripsi,atribut_pembeda,status,updated_at,barang:barang(barang_id,nama)")
+    .select("varian_barang_id,barang_id,usaha_id,nama,kode_internal,deskripsi,atribut_pembeda,status,updated_at,barang:barang!varian_barang_tenant_fk(barang_id,nama)")
     .eq("usaha_id", usahaId)
     .order("nama", { ascending: true });
   if (error) throw error;
@@ -70,7 +91,7 @@ export async function uploadCatalogMediaFile(
   if (file.size > 8 * 1024 * 1024) throw new Error("Ukuran gambar maksimal 8 MB.");
 
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-80) || "product-image";
-  const mediaId = crypto.randomUUID();
+  const mediaId = createClientId();
   const storagePath = usahaId + "/" + barangId + "/" + mediaId + "/" + safeName;
 
   const { error: uploadError } = await supabase.storage
@@ -112,7 +133,20 @@ export async function listCatalogProducts(usahaId: string, filters: CatalogListF
   if (filters.visibility === "private") query = query.eq("is_public", false);
   if (filters.search.trim()) {
     const term = filters.search.trim().replace(/[,()]/g, " ");
-    query = query.or("nama.ilike.%" + term + "%,slug.ilike.%" + term + "%");
+    const categorySearch = await supabase
+      .from("kategori_barang")
+      .select("kategori_barang_id")
+      .eq("usaha_id", usahaId)
+      .ilike("nama", "%" + term + "%");
+
+    if (categorySearch.error) throw categorySearch.error;
+
+    const categoryIds = (categorySearch.data ?? []).map((row) => row.kategori_barang_id);
+    const categoryClause = categoryIds.length ? ",kategori_barang_id.in.(" + categoryIds.join(",") + ")" : "";
+    query = query.or(
+      "nama.ilike.%" + term + "%,slug.ilike.%" + term + "%,deskripsi.ilike.%" + term + "%,ringkasan_publik.ilike.%" + term + "%" +
+        categoryClause,
+    );
   }
   const ascending = filters.sort === "updated_asc" || filters.sort === "name_asc";
   const column = filters.sort.startsWith("name") ? "nama" : "updated_at";
@@ -221,30 +255,33 @@ export async function listCatalogProductCovers(usahaId: string, productIds: stri
   }));
 }
 
-export async function listCatalogReadyStock(usahaId: string, productIds: string[]): Promise<CatalogReadyStock> {
+export async function listCatalogReadyStock(usahaId: string, productIds: string[]): Promise<CatalogStockSummary> {
   const ids = [...new Set(productIds.filter(Boolean))];
-  if (!ids.length) return { byProduct: {}, byVariant: {} };
+  if (!ids.length) return { byProduct: {}, byProductTotal: {}, byVariant: {} };
 
   const { data, error } = await supabase
     .from("unit_barang")
-    .select("barang_id,varian_barang_id")
+    .select("barang_id,status,varian_barang_id")
     .eq("usaha_id", usahaId)
-    .eq("status", "ready")
     .in("barang_id", ids);
 
   if (error) throw error;
 
   const byProduct: Record<string, number> = {};
+  const byProductTotal: Record<string, number> = {};
   const byVariant: Record<string, number> = {};
 
-  for (const row of (data ?? []) as Array<{ barang_id: string; varian_barang_id: string | null }>) {
-    byProduct[row.barang_id] = (byProduct[row.barang_id] ?? 0) + 1;
-    if (row.varian_barang_id) {
+  for (const row of (data ?? []) as Array<{ barang_id: string; status: string; varian_barang_id: string | null }>) {
+    byProductTotal[row.barang_id] = (byProductTotal[row.barang_id] ?? 0) + 1;
+    if (row.status === "ready") {
+      byProduct[row.barang_id] = (byProduct[row.barang_id] ?? 0) + 1;
+    }
+    if (row.status === "ready" && row.varian_barang_id) {
       byVariant[row.varian_barang_id] = (byVariant[row.varian_barang_id] ?? 0) + 1;
     }
   }
 
-  return { byProduct, byVariant };
+  return { byProduct, byProductTotal, byVariant };
 }
 
 export type CatalogCommandOptions = {
@@ -396,7 +433,7 @@ async function executeCatalogCommand<T extends CatalogCommandResponse>(
 }
 
 function commandKey(prefix: string, options: CatalogCommandOptions) {
-  return options.idempotencyKey ?? `${prefix}-${crypto.randomUUID()}`;
+  return options.idempotencyKey ?? `${prefix}-${createClientId()}`;
 }
 
 export async function createCatalogCategory(
@@ -414,7 +451,7 @@ export async function createCatalogCategory(
       p_nama: input.nama.trim(),
       p_deskripsi: input.deskripsi?.trim() || null,
       p_idempotency_key: idempotencyKey,
-      p_request_id: options.requestId ?? crypto.randomUUID(),
+      p_request_id: options.requestId ?? createClientId(),
     },
     "Pembuatan kategori",
     idempotencyKey,
@@ -439,7 +476,7 @@ export async function updateCatalogCategory(
       p_status: input.status ?? "active",
       p_expected_updated_at: input.expectedUpdatedAt ?? null,
       p_idempotency_key: idempotencyKey,
-      p_request_id: options.requestId ?? crypto.randomUUID(),
+      p_request_id: options.requestId ?? createClientId(),
     },
     "Pembaruan kategori",
     idempotencyKey,
@@ -467,7 +504,7 @@ export async function createCatalogProduct(
       p_is_public: input.isPublic ?? false,
       p_metadata: input.metadata ?? null,
       p_idempotency_key: idempotencyKey,
-      p_request_id: options.requestId ?? crypto.randomUUID(),
+      p_request_id: options.requestId ?? createClientId(),
     },
     "Pembuatan barang",
     idempotencyKey,
@@ -496,7 +533,7 @@ export async function updateCatalogProduct(
       p_metadata: input.metadata ?? null,
       p_expected_updated_at: input.expectedUpdatedAt ?? null,
       p_idempotency_key: idempotencyKey,
-      p_request_id: options.requestId ?? crypto.randomUUID(),
+      p_request_id: options.requestId ?? createClientId(),
     },
     "Pembaruan barang",
     idempotencyKey,
@@ -521,7 +558,7 @@ export async function setCatalogProductVisibility(
       p_is_public: isPublic,
       p_expected_updated_at: expectedUpdatedAt ?? null,
       p_idempotency_key: idempotencyKey,
-      p_request_id: options.requestId ?? crypto.randomUUID(),
+      p_request_id: options.requestId ?? createClientId(),
     },
     isPublic ? "Publikasi barang" : "Menyembunyikan barang",
     idempotencyKey,
@@ -546,7 +583,7 @@ export async function setCatalogProductStatus(
       p_status: status,
       p_expected_updated_at: expectedUpdatedAt ?? null,
       p_idempotency_key: idempotencyKey,
-      p_request_id: options.requestId ?? crypto.randomUUID(),
+      p_request_id: options.requestId ?? createClientId(),
     },
     "Perubahan status barang",
     idempotencyKey,
@@ -572,7 +609,7 @@ export async function createCatalogVariant(
       p_atribut_pembeda: input.atributPembeda ?? null,
       p_status: input.status ?? "active",
       p_idempotency_key: idempotencyKey,
-      p_request_id: options.requestId ?? crypto.randomUUID(),
+      p_request_id: options.requestId ?? createClientId(),
     },
     "Pembuatan varian",
     idempotencyKey,
@@ -599,7 +636,7 @@ export async function updateCatalogVariant(
       p_atribut_pembeda: input.atributPembeda ?? null,
       p_expected_updated_at: input.expectedUpdatedAt ?? null,
       p_idempotency_key: idempotencyKey,
-      p_request_id: options.requestId ?? crypto.randomUUID(),
+      p_request_id: options.requestId ?? createClientId(),
     },
     "Pembaruan varian",
     idempotencyKey,
@@ -624,7 +661,7 @@ export async function setCatalogVariantStatus(
       p_status: status,
       p_expected_updated_at: expectedUpdatedAt ?? null,
       p_idempotency_key: idempotencyKey,
-      p_request_id: options.requestId ?? crypto.randomUUID(),
+      p_request_id: options.requestId ?? createClientId(),
     },
     "Perubahan status varian",
     idempotencyKey,
@@ -652,7 +689,7 @@ export async function createCatalogPackage(
       p_is_public: input.isPublic ?? false,
       p_metadata: input.metadata ?? null,
       p_idempotency_key: idempotencyKey,
-      p_request_id: options.requestId ?? crypto.randomUUID(),
+      p_request_id: options.requestId ?? createClientId(),
     },
     "Pembuatan paket",
     idempotencyKey,
@@ -681,7 +718,7 @@ export async function updateCatalogPackage(
       p_metadata: input.metadata ?? null,
       p_expected_updated_at: input.expectedUpdatedAt ?? null,
       p_idempotency_key: idempotencyKey,
-      p_request_id: options.requestId ?? crypto.randomUUID(),
+      p_request_id: options.requestId ?? createClientId(),
     },
     "Pembaruan paket",
     idempotencyKey,
@@ -708,7 +745,7 @@ export async function setCatalogPackageState(
       p_is_public: isPublic,
       p_expected_updated_at: expectedUpdatedAt ?? null,
       p_idempotency_key: idempotencyKey,
-      p_request_id: options.requestId ?? crypto.randomUUID(),
+      p_request_id: options.requestId ?? createClientId(),
     },
     "Perubahan state paket",
     idempotencyKey,
@@ -733,7 +770,7 @@ export async function addCatalogPackageComponent(
       p_jumlah: input.jumlah,
       p_catatan: input.catatan?.trim() || null,
       p_idempotency_key: idempotencyKey,
-      p_request_id: options.requestId ?? crypto.randomUUID(),
+      p_request_id: options.requestId ?? createClientId(),
     },
     "Penambahan komponen paket",
     idempotencyKey,
@@ -754,7 +791,7 @@ export async function removeCatalogPackageComponent(
       p_usaha_id: usahaId,
       p_komponen_paket_id: komponenPaketId,
       p_idempotency_key: idempotencyKey,
-      p_request_id: options.requestId ?? crypto.randomUUID(),
+      p_request_id: options.requestId ?? createClientId(),
     },
     "Penghapusan komponen paket",
     idempotencyKey,
@@ -786,7 +823,7 @@ export async function createCatalogTariff(
       p_status: input.status ?? "active",
       p_metadata: input.metadata ?? null,
       p_idempotency_key: idempotencyKey,
-      p_request_id: options.requestId ?? crypto.randomUUID(),
+      p_request_id: options.requestId ?? createClientId(),
     },
     "Pembuatan tarif",
     idempotencyKey,
@@ -815,7 +852,7 @@ export async function updateCatalogTariff(
       p_metadata: input.metadata ?? null,
       p_expected_updated_at: input.expectedUpdatedAt ?? null,
       p_idempotency_key: idempotencyKey,
-      p_request_id: options.requestId ?? crypto.randomUUID(),
+      p_request_id: options.requestId ?? createClientId(),
     },
     "Pembaruan tarif",
     idempotencyKey,
@@ -840,7 +877,7 @@ export async function setCatalogTariffStatus(
       p_status: status,
       p_expected_updated_at: expectedUpdatedAt ?? null,
       p_idempotency_key: idempotencyKey,
-      p_request_id: options.requestId ?? crypto.randomUUID(),
+      p_request_id: options.requestId ?? createClientId(),
     },
     "Perubahan status tarif",
     idempotencyKey,
@@ -866,7 +903,7 @@ export async function addCatalogMedia(
       p_urutan: input.urutan ?? 1,
       p_is_cover: input.isCover ?? false,
       p_idempotency_key: idempotencyKey,
-      p_request_id: options.requestId ?? crypto.randomUUID(),
+      p_request_id: options.requestId ?? createClientId(),
     },
     "Penambahan media katalog",
     idempotencyKey,
@@ -887,7 +924,7 @@ export async function removeCatalogMedia(
       p_usaha_id: usahaId,
       p_barang_media_id: barangMediaId,
       p_idempotency_key: idempotencyKey,
-      p_request_id: options.requestId ?? crypto.randomUUID(),
+      p_request_id: options.requestId ?? createClientId(),
     },
     "Penghapusan media katalog",
     idempotencyKey,
@@ -910,7 +947,7 @@ export async function setCatalogMediaCover(
       p_barang_media_id: barangMediaId,
       p_is_cover: isCover,
       p_idempotency_key: idempotencyKey,
-      p_request_id: options.requestId ?? crypto.randomUUID(),
+      p_request_id: options.requestId ?? createClientId(),
     },
     "Perubahan cover media",
     idempotencyKey,
@@ -933,7 +970,7 @@ export async function reorderCatalogMedia(
       p_barang_id: barangId,
       p_orders: orders,
       p_idempotency_key: idempotencyKey,
-      p_request_id: options.requestId ?? crypto.randomUUID(),
+      p_request_id: options.requestId ?? createClientId(),
     },
     "Pengurutan media katalog",
     idempotencyKey,
@@ -963,7 +1000,34 @@ export async function listCatalogPackages(usahaId: string): Promise<import("./ty
     .eq("usaha_id", usahaId)
     .order("nama", { ascending: true });
   if (error) throw error;
-  return (data ?? []) as import("./types").CatalogPackage[];
+
+  const packages = (data ?? []) as import("./types").CatalogPackage[];
+  const packageIds = packages.map((pkg) => pkg.paket_sewa_id);
+  if (!packageIds.length) return packages;
+
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const tariffResult = await supabase
+    .from("tarif_sewa")
+    .select("tarif_sewa_id,usaha_id,barang_id,varian_barang_id,paket_sewa_id,nama,durasi_unit,durasi_nilai,nominal,currency_code,berlaku_mulai,berlaku_sampai,status,updated_at")
+    .eq("usaha_id", usahaId)
+    .in("paket_sewa_id", packageIds)
+    .eq("status", "active")
+    .lte("berlaku_mulai", nowIso)
+    .or("berlaku_sampai.is.null,berlaku_sampai.gt." + nowIso)
+    .order("berlaku_mulai", { ascending: false });
+  if (tariffResult.error) throw tariffResult.error;
+
+  const activeTariffByPackage = new Map<string, CatalogTariff>();
+  for (const tariff of (tariffResult.data ?? []) as CatalogTariff[]) {
+    if (!tariff.paket_sewa_id || activeTariffByPackage.has(tariff.paket_sewa_id)) continue;
+    if (isActiveCatalogTariff(tariff, now)) activeTariffByPackage.set(tariff.paket_sewa_id, tariff);
+  }
+
+  return packages.map((pkg) => ({
+    ...pkg,
+    active_tariff: activeTariffByPackage.get(pkg.paket_sewa_id) ?? null,
+  }));
 }
 
 export async function listCatalogPackageComponents(usahaId: string, paketSewaId: string): Promise<import("./types").CatalogPackageComponent[]> {

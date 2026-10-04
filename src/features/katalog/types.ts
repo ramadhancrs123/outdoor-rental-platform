@@ -22,6 +22,9 @@ export type CatalogProduct = {
   updated_at: string;
   kategori: Pick<CatalogCategory, "kategori_barang_id" | "nama" | "status"> | null;
   active_tariff: CatalogTariff | null;
+  cover_url?: string | null;
+  ready_count?: number;
+  total_unit_count?: number;
 };
 
 export type CatalogVariant = {
@@ -111,6 +114,7 @@ export type CatalogPackage = {
   slug: string;
   deskripsi: string | null;
   harga_dasar: number | null;
+  active_tariff?: CatalogTariff | null;
   currency_code: string;
   status: string;
   is_public: boolean;
@@ -139,3 +143,17 @@ export type CatalogVariantOption = CatalogVariant & {
 };
 
 export const CATALOG_PRODUCT_MEDIA_BUCKET = "rental-public-media";
+
+
+export type CatalogSummary = {
+  categoryCount: number;
+  productCount: number;
+  activeCount: number;
+  inactiveCount: number;
+};
+
+export type CatalogStockSummary = {
+  byProduct: Record<string, number>;
+  byProductTotal: Record<string, number>;
+  byVariant: Record<string, number>;
+};

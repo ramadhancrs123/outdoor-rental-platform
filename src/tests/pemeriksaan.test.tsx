@@ -82,7 +82,7 @@ describe("Pemeriksaan UI", () => {
     }]);
     renderWithQuery(<InspectionList />);
     expect((await screen.findAllByText("TD4P-001")).length).toBeGreaterThan(0);
-    expect(screen.getAllByText("RET-001").length).toBeGreaterThan(0);
+    expect(screen.getByText(/RET-001/)).toBeInTheDocument();
     expect(screen.getAllByText("Menunggu Pemeriksaan").length).toBeGreaterThan(0);
   });
 
@@ -108,7 +108,7 @@ describe("Pemeriksaan UI", () => {
     expect(serviceMock.startInspection).toHaveBeenCalledWith("usaha-a", "detail-1", "unit-1", expect.any(String));
   });
 
-  test("completed inspection displays findings boundary and does not offer READY", async () => {
+  test("completed inspection displays findings boundary and hands off to maintenance", async () => {
     serviceMock.getInspectionWorkspace.mockResolvedValue({
       ...workspace,
       returnDetail: { ...workspace.returnDetail, status_pemeriksaan: "completed" },
@@ -138,6 +138,14 @@ describe("Pemeriksaan UI", () => {
         }],
         evidences: [],
       },
+      linkedMaintenance: {
+        perawatan_id: "maintenance-1",
+        pemeriksaan_id: "inspection-1",
+        jenis_perawatan: "repair",
+        status: "planned",
+        deskripsi_pekerjaan: "Perbaikan setelah penyewaan.",
+        updated_at: "2026-09-28T04:00:00Z",
+      },
       history: [],
     });
 
@@ -147,8 +155,9 @@ describe("Pemeriksaan UI", () => {
     );
 
     expect(await screen.findByText("Perlu Perawatan")).toBeInTheDocument();
-    expect(screen.getByText(/Pemeriksaan selesai tidak otomatis membuat unit menjadi Siap Disewakan/i)).toBeInTheDocument();
-    expect(screen.getByText(/Diteruskan ke Perawatan/i)).toBeInTheDocument();
+    expect(screen.getByText("Pemeriksaan selesai", { exact: true })).toBeInTheDocument();
+    expect(screen.getByText(/Perawatan sudah dibuat/i)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Lanjutkan Perawatan/i })).toHaveAttribute("href", "/perawatan/maintenance-1");
   });
 
   test("unknown outcome exposes reconciliation instead of retry", async () => {

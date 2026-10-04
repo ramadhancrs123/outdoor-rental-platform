@@ -1,3 +1,4 @@
+import { createClientId } from "@/lib/client-id";
 import { supabase } from "@/app/providers/supabase/client";
 import { appConfig } from "@/app/config";
 
@@ -497,8 +498,8 @@ export async function createRenter(
   input: CreateRenterInput,
   options: RenterCommandOptions = {},
 ): Promise<RenterCreatedResult> {
-  const idempotencyKey = options.idempotencyKey ?? `create-renter-${crypto.randomUUID()}`;
-  const requestId = options.requestId ?? crypto.randomUUID();
+  const idempotencyKey = options.idempotencyKey ?? `create-renter-${createClientId()}`;
+  const requestId = options.requestId ?? createClientId();
 
   let data: RenterCreatedResult | null = null;
   let error: unknown = null;
@@ -626,8 +627,8 @@ export async function updateRenterProfile(
   input: UpdateRenterProfileInput,
   options: RenterCommandOptions = {},
 ): Promise<RenterUpdatedResult> {
-  const idempotencyKey = options.idempotencyKey ?? "update-renter-" + crypto.randomUUID();
-  const requestId = options.requestId ?? crypto.randomUUID();
+  const idempotencyKey = options.idempotencyKey ?? "update-renter-" + createClientId();
+  const requestId = options.requestId ?? createClientId();
 
   let error: unknown = null;
   try {
@@ -672,8 +673,8 @@ export async function addRenterIdentityEvidence(
   input: AddRenterIdentityEvidenceInput,
   options: RenterCommandOptions = {},
 ) {
-  const idempotencyKey = options.idempotencyKey ?? "renter-identity-" + crypto.randomUUID();
-  const requestId = options.requestId ?? crypto.randomUUID();
+  const idempotencyKey = options.idempotencyKey ?? "renter-identity-" + createClientId();
+  const requestId = options.requestId ?? createClientId();
 
   let error: unknown = null;
   try {
@@ -714,8 +715,8 @@ export async function verifyRenterIdentityEvidence(
   input: VerifyRenterIdentityEvidenceInput,
   options: RenterCommandOptions = {},
 ) {
-  const idempotencyKey = options.idempotencyKey ?? "verify-renter-identity-" + crypto.randomUUID();
-  const requestId = options.requestId ?? crypto.randomUUID();
+  const idempotencyKey = options.idempotencyKey ?? "verify-renter-identity-" + createClientId();
+  const requestId = options.requestId ?? createClientId();
 
   let error: unknown = null;
   try {
@@ -771,8 +772,8 @@ export async function addRenterPhoto(
   input: AddRenterPhotoInput,
   options: RenterCommandOptions = {},
 ) {
-  const idempotencyKey = options.idempotencyKey ?? "renter-photo-" + crypto.randomUUID();
-  const requestId = options.requestId ?? crypto.randomUUID();
+  const idempotencyKey = options.idempotencyKey ?? "renter-photo-" + createClientId();
+  const requestId = options.requestId ?? createClientId();
 
   let error: unknown = null;
   try {

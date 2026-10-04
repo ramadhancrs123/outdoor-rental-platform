@@ -3,12 +3,11 @@ import {
   ArrowLeft,
   ArrowRight,
   Check,
-  CircleAlert,
   Clock3,
   Loader2,
   Package,
   RefreshCw,
-  ShieldCheck,
+  Search,
   UserPlus,
 } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -37,11 +36,37 @@ import {
   listRenters,
   reconcileRenterCreation,
 } from "@/features/penyewa/service";
-import { DEFAULT_CATALOG_FILTERS, calculateRentalLineSubtotal, calculateTariffPeriods, formatTariffPeriods, getCatalogProduct, listCatalogProductCovers, listCatalogProducts, listCatalogReadyStock } from "@/features/katalog";
+import {
+  DEFAULT_CATALOG_FILTERS,
+  calculateRentalLineSubtotal,
+  calculateTariffPeriods,
+  getCatalogPackageDetails,
+  getCatalogProduct,
+  listCatalogPackages,
+  listCatalogProductCovers,
+  listCatalogProducts,
+  listCatalogReadyStock,
+} from "@/features/katalog";
 import { isActiveCatalogTariff, formatCatalogMoney, formatTariffDuration } from "@/features/katalog/utils";
+import { createClientId } from "@/lib/client-id";
+import { cn } from "@/lib/utils";
+import {
+  calculateDraftItemProductQuantity,
+  calculateRentalPeriodPreview,
+} from "@/features/penyewaan/utils";
+import { RentalPolicyDialog } from "@/components/penyewaan/rental-policy-dialog";
 import { paths } from "@/routes/paths";
+import { listInventoryPackageAvailability, type InventoryPackageAvailability } from "@/features/inventaris";
 
 type CommandState = "idle" | "processing" | "unknown" | "conflict" | "error";
+
+type DraftRentalLine = {
+  key: string;
+  kind: "item" | "package";
+  label: string;
+  description: string;
+  input: import("@/features/penyewaan").DirectRentalLineInput;
+};
 
 function readCommandMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
@@ -63,6 +88,26 @@ function isBusinessConflict(error: unknown) {
 
 const steps = ["Penyewa", "Periode", "Barang", "Tinjau"];
 
+function formatElapsedDuration(seconds: number) {
+  const totalMinutes = Math.max(0, Math.round(seconds / 60));
+  const days = Math.floor(totalMinutes / (24 * 60));
+  const hours = Math.floor((totalMinutes % (24 * 60)) / 60);
+  const minutes = totalMinutes % 60;
+  const parts: string[] = [];
+  if (days) parts.push(days + " hari");
+  if (hours) parts.push(hours + " jam");
+  if (minutes || !parts.length) parts.push(minutes + " menit");
+  return parts.join(" ");
+}
+
+function formatPeriodDateTime(value: string, timezone: string) {
+  return new Intl.DateTimeFormat("id-ID", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: timezone,
+  }).format(new Date(value));
+}
+
 export function RentalWalkIn() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -82,12 +127,19 @@ export function RentalWalkIn() {
   const [startAt, setStartAt] = useState("");
   const [endAt, setEndAt] = useState("");
   const [categoryId, setCategoryId] = useState("all");
+  const [productSearch, setProductSearch] = useState("");
+  const [packageSearch, setPackageSearch] = useState("");
   const [productId, setProductId] = useState("");
   const [variantId, setVariantId] = useState("");
   const [quantity, setQuantity] = useState("1");
   const [note, setNote] = useState("");
-  const [rentalCommandKey, setRentalCommandKey] = useState(() => crypto.randomUUID());
-  const [renterCommandKey, setRenterCommandKey] = useState(() => crypto.randomUUID());
+  const [draftLines, setDraftLines] = useState<DraftRentalLine[]>([]);
+  const [selectionMode, setSelectionMode] = useState<"item" | "package">("item");
+  const [selectedPackageId, setSelectedPackageId] = useState("");
+  const [packageQuantity, setPackageQuantity] = useState("1");
+  const [packageNote, setPackageNote] = useState("");
+  const [rentalCommandKey, setRentalCommandKey] = useState(() => createClientId());
+  const [renterCommandKey, setRenterCommandKey] = useState(() => createClientId());
   const [rentalCommandState, setRentalCommandState] = useState<CommandState>("idle");
 
   const renters = useQuery({
@@ -116,6 +168,42 @@ export function RentalWalkIn() {
     staleTime: 60_000,
   });
 
+  const packages = useQuery({
+    queryKey: ["penyewaan", "walk-in", "packages", context.data?.usahaId],
+    queryFn: () => listCatalogPackages(context.data!.usahaId),
+    enabled: Boolean(context.data?.usahaId),
+    staleTime: 60_000,
+  });
+
+  const packageAvailability = useQuery<InventoryPackageAvailability[]>({
+    queryKey: ["penyewaan", "walk-in", "package-availability", context.data?.usahaId],
+    queryFn: () => listInventoryPackageAvailability(context.data!.usahaId),
+    enabled: Boolean(context.data?.usahaId),
+    staleTime: 10_000,
+  });
+
+  const selectedPackage = useMemo(
+    () => (packages.data ?? []).find((pkg) => pkg.paket_sewa_id === selectedPackageId) ?? null,
+    [packages.data, selectedPackageId],
+  );
+
+  const packageDetail = useQuery({
+    queryKey: ["penyewaan", "walk-in", "package-detail", context.data?.usahaId, selectedPackageId],
+    queryFn: () => getCatalogPackageDetails(context.data!.usahaId, selectedPackageId),
+    enabled: Boolean(context.data?.usahaId && selectedPackageId),
+    staleTime: 60_000,
+  });
+
+  const selectedPackageTariff = useMemo(() => {
+    const active = (packageDetail.data?.tariffs ?? []).filter((tariff) => isActiveCatalogTariff(tariff));
+    return active.find((tariff) => tariff.paket_sewa_id === selectedPackageId) ?? active[0] ?? null;
+  }, [packageDetail.data?.tariffs, selectedPackageId]);
+
+  const selectedPackageAvailability = useMemo(
+    () => packageAvailability.data?.find((pkg) => pkg.paket_sewa_id === selectedPackageId) ?? null,
+    [packageAvailability.data, selectedPackageId],
+  );
+
   const categories = useMemo(() => {
     const byId = new Map<string, { id: string; nama: string }>();
     for (const product of products.data?.products ?? []) {
@@ -133,9 +221,18 @@ export function RentalWalkIn() {
       (products.data?.products ?? []).filter(
         (product) =>
           product.status === "active" &&
-          (categoryId === "all" || product.kategori_barang_id === categoryId),
+          (categoryId === "all" || product.kategori_barang_id === categoryId) &&
+          product.nama.toLowerCase().includes(productSearch.trim().toLowerCase()),
       ),
-    [categoryId, products.data?.products],
+    [categoryId, productSearch, products.data?.products],
+  );
+
+  const visiblePackages = useMemo(
+    () =>
+      (packages.data ?? []).filter((pkg) =>
+        pkg.nama.toLowerCase().includes(packageSearch.trim().toLowerCase()),
+      ),
+    [packageSearch, packages.data],
   );
 
   const productIds = useMemo(
@@ -202,14 +299,22 @@ export function RentalWalkIn() {
   const billingPeriods = selectedTariff && startAt && endAt
     ? calculateTariffPeriods(startAt, endAt, selectedTariff)
     : 0;
-  const requestedQuantity = Number(quantity);
-  const estimatedLineSubtotal = selectedTariff && billingPeriods > 0
-    ? calculateRentalLineSubtotal(requestedQuantity, Number(selectedTariff.nominal), billingPeriods)
+  const packageBillingPeriods = selectedPackageTariff && startAt && endAt
+    ? calculateTariffPeriods(startAt, endAt, selectedPackageTariff)
     : 0;
+  const requestedQuantity = Number(quantity);
+  const selectedItemIdentity = "item:" + productId + ":" + (variantId || "base");
+  const existingProductQuantity = calculateDraftItemProductQuantity(
+    draftLines,
+    productId,
+    selectedItemIdentity,
+  );
+  const productReadyStock = readyStock.data?.byProduct[productId] ?? 0;
+  const projectedProductQuantity = existingProductQuantity + requestedQuantity;
   const selectedReadyStock =
     variantId
       ? readyStock.data?.byVariant[variantId] ?? 0
-      : readyStock.data?.byProduct[productId] ?? 0;
+      : productReadyStock;
   const availability = useQuery({
     queryKey: [
       "penyewaan",
@@ -253,53 +358,149 @@ export function RentalWalkIn() {
       setNewRenterOpen(false);
       setNewName("");
       setNewPhone("");
-      setRenterCommandKey(crypto.randomUUID());
+      setRenterCommandKey(createClientId());
       void renters.refetch();
     },
   });
 
+  const addDraftLine = () => {
+    if (selectionMode === "item") {
+      if (!selectedProduct || !selectedTariff || billingPeriods <= 0 || !quantityIsValid) {
+        throw new Error("Lengkapi barang, tarif, periode, dan jumlah sebelum menambahkan.");
+      }
+      if (!availability.data || requestedQuantity > availability.data.readyPhysicalUnits) {
+        throw new Error("Jumlah melebihi unit ready saat ini.");
+      }
+      if (projectedProductQuantity > productReadyStock) {
+        throw new Error("Jumlah total barang ini melebihi stok siap yang tersedia.");
+      }
+
+      const input = {
+        barang_id: selectedProduct.barang_id,
+        varian_barang_id: variantId || null,
+        tarif_sewa_id: selectedTariff.tarif_sewa_id,
+        duration_periods: billingPeriods,
+        jumlah: requestedQuantity,
+        unit_price: Number(selectedTariff.nominal),
+        subtotal: calculateRentalLineSubtotal(
+          requestedQuantity,
+          Number(selectedTariff.nominal),
+          billingPeriods,
+        ),
+        currency_code: "IDR" as const,
+        catatan: null,
+      };
+
+      const identity = selectedItemIdentity;
+      setDraftLines((current) => {
+        const existing = current.find((line) => line.key === identity);
+        if (existing) {
+          return current.map((line) =>
+            line.key === identity
+              ? {
+                  ...line,
+                  input: { ...input },
+                  description: (selectedVariant?.nama ?? "Barang utama") + " · " + requestedQuantity + " unit",
+                }
+              : line,
+          );
+        }
+        return [
+          ...current,
+          {
+            key: identity,
+            kind: "item",
+            label: selectedProduct.nama,
+            description: (selectedVariant?.nama ?? "Barang utama") + " · " + requestedQuantity + " unit",
+            input,
+          },
+        ];
+      });
+      setQuantity("1");
+      return;
+    }
+
+    const pkgQty = Number(packageQuantity);
+    if (!selectedPackage || !selectedPackageTariff || !Number.isInteger(pkgQty) || pkgQty <= 0 || packageBillingPeriods <= 0) {
+      throw new Error("Lengkapi paket, tarif, periode, dan jumlah paket sebelum menambahkan.");
+    }
+    if (!selectedPackageAvailability || selectedPackageAvailability.status !== "available") {
+      throw new Error("Paket belum tersedia karena ada komponen yang tidak mencukupi.");
+    }
+    if (pkgQty > selectedPackageAvailability.available_package_quantity) {
+      throw new Error(
+        "Jumlah paket melebihi ketersediaan saat ini (" +
+          selectedPackageAvailability.available_package_quantity +
+          " paket).",
+      );
+    }
+
+    const input = {
+      paket_sewa_id: selectedPackage.paket_sewa_id,
+      tarif_sewa_id: selectedPackageTariff.tarif_sewa_id,
+      duration_periods: packageBillingPeriods,
+      jumlah: pkgQty,
+      unit_price: Number(selectedPackageTariff.nominal),
+      subtotal: calculateRentalLineSubtotal(
+        pkgQty,
+        Number(selectedPackageTariff.nominal),
+        packageBillingPeriods,
+      ),
+      currency_code: "IDR" as const,
+      catatan: packageNote.trim() || null,
+    };
+
+    const identity = "package:" + selectedPackage.paket_sewa_id;
+    setDraftLines((current) => {
+      const existing = current.find((line) => line.key === identity);
+      if (existing) {
+        return current.map((line) =>
+          line.key === identity
+            ? {
+                ...line,
+                input: { ...input },
+                description: "Paket x" + pkgQty,
+              }
+            : line,
+        );
+      }
+      return [
+        ...current,
+        {
+          key: identity,
+          kind: "package",
+          label: selectedPackage.nama,
+          description: "Paket x" + pkgQty,
+          input,
+        },
+      ];
+    });
+    setPackageQuantity("1");
+    setPackageNote("");
+  };
+
+  const removeDraftLine = (key: string) => {
+    setDraftLines((current) => current.filter((line) => line.key !== key));
+  };
+
+  const estimatedTotal = draftLines.reduce((sum, line) => sum + Number(line.input.subtotal), 0);
+
   const createRentalMutation = useMutation({
     mutationFn: () => {
       if (!selectedRenterId) throw new Error("Pilih penyewa.");
-      if (!selectedTariff) throw new Error("Tarif aktif belum tersedia untuk kombinasi barang yang dipilih.");
-      const start = new Date(startAt);
-      const end = new Date(endAt);
-      const qty = Number(quantity);
-      if (
-        !startAt ||
-        !endAt ||
-        Number.isNaN(start.getTime()) ||
-        Number.isNaN(end.getTime()) ||
-        end <= start
-      ) {
-        throw new Error("Jadwal rental harus lengkap dan valid.");
-      }
-      if (!Number.isFinite(qty) || qty <= 0) throw new Error("Jumlah harus lebih dari 0.");
-
+      if (!canMoveFromPeriod) throw new Error("Periode rental belum valid.");
+      if (!draftLines.length) throw new Error("Tambahkan minimal satu barang atau paket.");
       setRentalCommandState("processing");
       return createDirectRental(
         context.data!.usahaId,
         {
           penyewa_id: selectedRenterId,
-          jadwal_mulai: start.toISOString(),
-          jadwal_kembali: end.toISOString(),
+          jadwal_mulai: new Date(startAt).toISOString(),
+          jadwal_kembali: new Date(endAt).toISOString(),
           catatan: note || null,
-          lines: [
-            {
-              barang_id: selectedProduct?.barang_id ?? null,
-              varian_barang_id: variantId || null,
-              jumlah: qty,
-              unit_price: Number(selectedTariff.nominal),
-              currency_code: "IDR",
-              tarif_sewa_id: selectedTariff.tarif_sewa_id,
-              duration_periods: billingPeriods,
-              subtotal: calculateRentalLineSubtotal(qty, Number(selectedTariff.nominal), billingPeriods),
-            },
-          ],
+          lines: draftLines.map((line) => line.input),
         },
-        {
-          idempotencyKey: rentalCommandKey,
-        },
+        { idempotencyKey: rentalCommandKey },
       );
     },
     onSuccess: (result) => {
@@ -319,7 +520,7 @@ export function RentalWalkIn() {
     if (result.state === "committed" && result.response?.penyewa_id) {
       setSelectedRenterId(result.response.penyewa_id);
       setNewRenterOpen(false);
-      setRenterCommandKey(crypto.randomUUID());
+      setRenterCommandKey(createClientId());
       void renters.refetch();
     }
   };
@@ -332,7 +533,7 @@ export function RentalWalkIn() {
       return;
     }
     if (result.state === "not_found") {
-      setRentalCommandKey(crypto.randomUUID());
+      setRentalCommandKey(createClientId());
       setRentalCommandState("idle");
       return;
     }
@@ -345,19 +546,36 @@ export function RentalWalkIn() {
     !Number.isNaN(new Date(startAt).getTime()) &&
     !Number.isNaN(new Date(endAt).getTime()) &&
     new Date(endAt) > new Date(startAt);
+  const periodPreview = canMoveFromPeriod
+    ? calculateRentalPeriodPreview(startAt, endAt, context.data?.defaultToleranceHours ?? 10)
+    : null;
   const quantityIsValid = Number.isInteger(requestedQuantity) && requestedQuantity > 0;
   const availabilityRefreshing = availability.isPending || availability.isFetching;
-  const quantityFitsStock =
+  const quantityFitsSelectedStock =
     Boolean(availability.data) &&
     requestedQuantity <= (availability.data?.readyPhysicalUnits ?? 0);
-  const canMoveFromProduct =
+  const quantityFitsProductPool =
+    Boolean(readyStock.data) &&
+    Number.isFinite(projectedProductQuantity) &&
+    projectedProductQuantity <= productReadyStock;
+  const canAddItem =
     Boolean(selectedProduct && selectedTariff) &&
     selectedTariff?.currency_code === "IDR" &&
     billingPeriods > 0 &&
     quantityIsValid &&
     !availabilityRefreshing &&
     !availability.isError &&
-    quantityFitsStock;
+    quantityFitsSelectedStock &&
+    quantityFitsProductPool;
+  const packageQtyValid = Number.isInteger(Number(packageQuantity)) && Number(packageQuantity) > 0;
+  const canAddPackage =
+    Boolean(selectedPackage && selectedPackageTariff) &&
+    selectedPackageTariff?.currency_code === "IDR" &&
+    packageBillingPeriods > 0 &&
+    packageQtyValid &&
+    selectedPackageAvailability?.status === "available" &&
+    Number(packageQuantity) <= (selectedPackageAvailability?.available_package_quantity ?? 0);
+  const canReview = canMoveFromPeriod && draftLines.length > 0;
 
   if (context.isPending) {
     return <div className="p-6 text-sm text-muted-foreground">Memuat konteks Usaha…</div>;
@@ -566,30 +784,100 @@ export function RentalWalkIn() {
                 <Input type="datetime-local" value={endAt} onChange={(event) => setEndAt(event.target.value)} />
               </label>
             </div>
-            <div className="grid gap-2 sm:grid-cols-2">
-              <div className="flex items-start gap-2 rounded-2xl border bg-muted/30 p-3 text-sm">
-                <Clock3 className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                <div>
-                  <p className="font-medium">Batas toleransi pengembalian</p>
-                  <p className="mt-0.5 text-muted-foreground">
-                    {context.data.defaultToleranceHours} jam setelah waktu kembali yang dijadwalkan.
-                  </p>
-                </div>
-              </div>
-              {startAt && endAt && canMoveFromPeriod ? (
-                <div className="flex items-start gap-2 rounded-2xl border bg-muted/30 p-3 text-sm">
-                  <Check className="mt-0.5 size-4 shrink-0 text-primary" />
-                  <div>
-                    <p className="font-medium">Periode valid</p>
-                    <p className="mt-0.5 text-muted-foreground">Sistem menghitung periode tarif dari durasi yang dipilih.</p>
+            {startAt && endAt && canMoveFromPeriod && periodPreview ? (
+              <div className="space-y-3">
+                <div className="rounded-2xl border bg-muted/20 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-medium text-muted-foreground">Ringkasan periode</p>
+                      <p className="mt-1 text-base font-semibold">Durasi rental dihitung secara eksplisit</p>
+                    </div>
+                    <Badge variant="secondary" className="rounded-full">
+                      {periodPreview.dailyPeriods} periode harian
+                    </Badge>
+                  </div>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-xl border bg-background p-3">
+                      <p className="text-xs text-muted-foreground">Mulai</p>
+                      <p className="mt-1 font-medium">
+                        {formatPeriodDateTime(periodPreview.startAt, context.data.timezone)}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border bg-background p-3">
+                      <p className="text-xs text-muted-foreground">Kembali terjadwal</p>
+                      <p className="mt-1 font-medium">
+                        {formatPeriodDateTime(periodPreview.endAt, context.data.timezone)}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border bg-background p-3">
+                      <p className="text-xs text-muted-foreground">Durasi aktual yang dipilih</p>
+                      <p className="mt-1 font-semibold">
+                        {formatElapsedDuration(periodPreview.elapsedSeconds)}
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {periodPreview.elapsedHours.toLocaleString("id-ID", { maximumFractionDigits: 2 })} jam total
+                      </p>
+                    </div>
+                    <div className="rounded-xl border bg-background p-3">
+                      <p className="text-xs text-muted-foreground">Batas toleransi</p>
+                      <p className="mt-1 font-semibold">
+                        {formatPeriodDateTime(periodPreview.toleranceDeadline, context.data.timezone)}
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {periodPreview.toleranceHours} jam setelah kembali terjadwal
+                      </p>
+                    </div>
                   </div>
                 </div>
-              ) : (
-                <div className="rounded-2xl border border-dashed p-3 text-sm text-muted-foreground">
-                  Isi waktu mulai dan kembali. Waktu kembali harus setelah waktu mulai.
+
+                {periodPreview.isOver24Hours ? (
+                  <Alert variant="destructive">
+                    <AlertTitle>Durasi melewati 24 jam</AlertTitle>
+                    <AlertDescription>
+                      Durasi melewati 24 jam sebesar {formatElapsedDuration(periodPreview.excessOver24hSeconds)}.
+                      Untuk tarif harian 1 hari, sistem menghitung <strong>{periodPreview.dailyPeriods} periode tarif</strong>.
+                      Harga final mengikuti tarif yang dipilih pada langkah Barang/Paket.
+                    </AlertDescription>
+                  </Alert>
+                ) : (
+                  <div className="flex items-start gap-2 rounded-2xl border bg-primary/5 p-3 text-sm">
+                    <Check className="mt-0.5 size-4 shrink-0 text-primary" />
+                    <div>
+                      <p className="font-medium">Periode valid</p>
+                      <p className="mt-0.5 text-muted-foreground">
+                        Untuk tarif harian 1 hari, periode ini akan dihitung sebagai {periodPreview.dailyPeriods} periode tarif.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex items-start gap-2 rounded-2xl border bg-muted/20 p-3 text-sm">
+                  <Clock3 className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="font-medium">Kebijakan toleransi</p>
+                      {context.data ? (
+                        <RentalPolicyDialog
+                          usahaId={context.data.usahaId}
+                          currentToleranceHours={context.data.defaultToleranceHours}
+                          currentLateFeeEnabled={context.data.lateFeeEnabled}
+                          currentLateFeePerHour={context.data.lateFeePerHour}
+                          onSaved={() => void context.refetch()}
+                          compact
+                        />
+                      ) : null}
+                    </div>
+                    <p className="mt-0.5 text-muted-foreground">
+                      Toleransi tetap dihitung dari waktu kembali terjadwal dan tidak mengubah jadwal rental.
+                    </p>
+                  </div>
                 </div>
-              )}
-            </div>
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-dashed p-4 text-sm text-muted-foreground">
+                Isi waktu mulai dan kembali. Setelah valid, sistem akan menampilkan durasi, periode tarif harian, dan batas toleransi secara otomatis.
+              </div>
+            )}
             <div className="flex justify-between gap-2">
               <Button variant="outline" className="rounded-xl" onClick={() => setStep(1)}>Kembali</Button>
               <Button disabled={!canMoveFromPeriod} onClick={() => setStep(3)}>
@@ -603,268 +891,452 @@ export function RentalWalkIn() {
       {step === 3 ? (
         <Card className="rounded-2xl">
           <CardHeader>
-            <CardTitle>Barang yang disewa</CardTitle>
+            <CardTitle>Barang dan Paket yang Disewa</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Tambahkan banyak line dalam satu transaksi. Satu transaksi boleh mencampur barang satuan dan paket.
+            </p>
           </CardHeader>
           <CardContent className="space-y-4">
-            {products.isPending ? (
-              <div className="space-y-3" aria-label="Memuat katalog" aria-busy="true">
-                <Skeleton className="h-10 w-full" />
-                <Skeleton className="h-10 w-full" />
-                <div className="grid gap-3 sm:grid-cols-[1fr_180px]">
-                  <Skeleton className="h-24 w-full rounded-2xl" />
-                  <Skeleton className="h-10 w-full" />
-                </div>
-              </div>
-            ) : null}
+            <div className="flex items-center gap-2 overflow-x-auto pb-1">
+              <Button
+                type="button"
+                size="sm"
+                variant={selectionMode === "item" ? "default" : "outline"}
+                className="h-9 shrink-0 rounded-full"
+                onClick={() => setSelectionMode("item")}
+              >
+                Barang
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={selectionMode === "package" ? "default" : "outline"}
+                className="h-9 shrink-0 rounded-full"
+                onClick={() => setSelectionMode("package")}
+              >
+                Paket
+              </Button>
+              <span className="ml-1 shrink-0 text-[11px] text-muted-foreground">
+                Bisa dicampur dalam satu penyewaan
+              </span>
+            </div>
 
-            <div className="grid gap-3">
-              <div className="space-y-2">
-                <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_220px] sm:items-end">
-                  <div>
-                    <p className="text-sm font-medium">Pilih barang</p>
-                    <p className="text-xs text-muted-foreground">Pilih barang yang tersedia untuk periode ini.</p>
-                  </div>
-                  <label className="grid gap-1.5 text-sm font-medium" htmlFor="walkin-category">
-                    <span>Kategori</span>
-                    <select
-                      id="walkin-category"
-                      value={categoryId}
-                      onChange={(event) => {
-                        setCategoryId(event.target.value);
+            {selectionMode === "item" ? (
+              <div className="space-y-3">
+                <div className="relative">
+                  <Search
+                    className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                    aria-hidden="true"
+                  />
+                  <Input
+                    value={productSearch}
+                    onChange={(event) => setProductSearch(event.target.value)}
+                    placeholder="Cari barang…"
+                    aria-label="Cari barang"
+                    className="h-10 rounded-xl pl-9"
+                  />
+                </div>
+
+                <div className="flex gap-2 overflow-x-auto pb-1">
+                  {[{ id: "all", nama: "Semua" }, ...categories].map((category) => (
+                    <button
+                      key={category.id}
+                      type="button"
+                      onClick={() => {
+                        setCategoryId(category.id);
                         setProductId("");
                         setVariantId("");
                       }}
-                      className="h-11 w-full rounded-xl border bg-background px-3 text-sm font-normal outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className={cn(
+                        "shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                        categoryId === category.id
+                          ? "border-primary bg-primary text-primary-foreground"
+                          : "bg-background text-muted-foreground hover:bg-accent/40",
+                      )}
                     >
-                      <option value="all">Semua kategori</option>
-                      {categories.map((category) => (
-                        <option key={category.id} value={category.id}>{category.nama}</option>
-                      ))}
-                    </select>
-                  </label>
+                      {category.nama}
+                    </button>
+                  ))}
                 </div>
-                <div className="grid gap-2 sm:grid-cols-2">
+
+                <div className="grid gap-2">
                   {activeProducts.map((product) => {
-                    const selected = product.barang_id === productId;
-                    const cover = coverByProduct.get(product.barang_id);
                     const stock = readyStock.data?.byProduct[product.barang_id] ?? 0;
+                    const selected = productId === product.barang_id;
+                    const cover = coverByProduct.get(product.barang_id);
+
                     return (
                       <button
                         key={product.barang_id}
                         type="button"
-                        aria-pressed={selected}
+                        className={cn(
+                          "flex min-w-0 items-center gap-3 rounded-xl border p-2.5 text-left transition-colors",
+                          selected
+                            ? "border-primary bg-primary/[0.04] ring-1 ring-primary/20"
+                            : "hover:bg-accent/30",
+                        )}
                         onClick={() => {
                           setProductId(product.barang_id);
                           setVariantId("");
                         }}
-                        className={[
-                          "flex min-h-20 items-center gap-3 rounded-2xl border p-3 text-left transition",
-                          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                          selected ? "border-primary bg-primary/[0.03] ring-1 ring-primary/20" : "hover:bg-accent/20",
-                        ].join(" ")}
                       >
-                        <div className="size-16 shrink-0 overflow-hidden rounded-xl bg-muted sm:size-20">
-                          {cover ? (
-                            <img src={cover} alt="" className="h-full w-full object-cover" />
-                          ) : (
-                            <div className="grid h-full place-items-center text-muted-foreground"><Package className="size-6 sm:size-7" /></div>
-                          )}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="min-w-0">
-                              <p className="truncate font-semibold">{product.nama}</p>
-                              <p className="mt-0.5 truncate text-xs text-muted-foreground">{product.kategori?.nama ?? "Tanpa kategori"}</p>
-                            </div>
-                            <Badge variant={selected ? "default" : "secondary"} className="shrink-0 rounded-full">
-                              {readyStock.isPending ? "…" : `${stock} siap`}
-                            </Badge>
+                        {cover ? (
+                          <img src={cover} alt="" className="size-11 shrink-0 rounded-lg object-cover" />
+                        ) : (
+                          <div className="grid size-11 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">
+                            <Package className="size-4" aria-hidden="true" />
                           </div>
-                          <p className="mt-1 line-clamp-1 text-xs leading-5 text-muted-foreground">
-                            {product.ringkasan_publik ?? product.deskripsi ?? "Pilih barang ini."}
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-semibold">{product.nama}</p>
+                          <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                            {product.kategori?.nama ?? "Barang"}
                           </p>
                         </div>
+                        <span
+                          className={cn(
+                            "shrink-0 rounded-full px-2 py-1 text-[11px] font-medium",
+                            stock > 0
+                              ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                              : "bg-muted text-muted-foreground",
+                          )}
+                        >
+                          {stock > 0 ? String(stock) + " siap" : "Tidak siap"}
+                        </span>
                       </button>
                     );
                   })}
+
+                  {!activeProducts.length ? (
+                    <div className="rounded-xl border border-dashed px-4 py-5 text-center text-sm text-muted-foreground">
+                      Barang tidak ditemukan pada filter ini.
+                    </div>
+                  ) : null}
                 </div>
-                {!products.isPending && activeProducts.length === 0 ? (
-                  <div className="rounded-2xl border border-dashed p-5 text-sm text-muted-foreground">Belum ada barang aktif yang dapat disewakan.</div>
-                ) : null}
-              </div>
 
-              {products.isError ? (
-                <Alert variant="destructive">
-                  <AlertTitle>Katalog gagal dimuat</AlertTitle>
-                  <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <span>{readCommandMessage(products.error)}</span>
-                    <Button type="button" variant="outline" size="sm" onClick={() => void products.refetch()}>
-                      Muat ulang
-                    </Button>
-                  </AlertDescription>
-                </Alert>
-              ) : null}
-
-              {productId && productDetail.isPending ? (
-                <div className="space-y-2" aria-label="Memuat varian dan tarif" aria-busy="true">
-                  <Skeleton className="h-4 w-20" />
-                  <Skeleton className="h-10 w-full" />
-                </div>
-              ) : null}
-
-              {productId && productDetail.isError ? (
-                <Alert variant="destructive">
-                  <AlertTitle>Detail barang gagal dimuat</AlertTitle>
-                  <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <span>{readCommandMessage(productDetail.error)}</span>
-                    <Button type="button" variant="outline" size="sm" onClick={() => void productDetail.refetch()}>
-                      Muat ulang
-                    </Button>
-                  </AlertDescription>
-                </Alert>
-              ) : null}
-
-              {productDetail.data?.variants.some((variant) => variant.status === "active") ? (
-                <div className="space-y-2">
-                  <div>
-                    <p className="text-sm font-medium">Pilih varian</p>
-                    <p className="text-xs text-muted-foreground">Pilih kartu varian bila barang memiliki pilihan berbeda.</p>
-                  </div>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <button
-                      type="button"
-                      aria-pressed={variantId === ""}
-                      onClick={() => setVariantId("")}
-                      className={[
-                        "flex items-center gap-3 rounded-2xl border p-3 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                        variantId === "" ? "border-primary bg-primary/[0.04] ring-1 ring-primary/20" : "hover:bg-accent/20"
-                      ].join(" ")}
-                    >
-                      <div className="flex items-start gap-3">
-                        <div className="size-14 shrink-0 overflow-hidden rounded-xl bg-muted sm:size-16">
-                          {coverByProduct.get(productId) ? <img src={coverByProduct.get(productId) ?? ""} alt="" className="h-full w-full object-cover" /> : <div className="grid h-full place-items-center text-muted-foreground"><Package className="size-5" /></div>}
+                {productId ? (
+                  <div className="space-y-3 rounded-xl border bg-muted/20 p-3">
+                    {productDetail.data?.variants.some((variant) => variant.status === "active") ? (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                            Varian
+                          </p>
+                          <span className="text-[11px] text-muted-foreground">Opsional</span>
                         </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-start justify-between gap-2"><p className="font-semibold">Barang utama</p><Badge variant={variantId === "" ? "default" : "secondary"} className="rounded-full">{readyStock.data?.byProduct[productId] ?? 0} unit siap</Badge></div>
-                          <p className="mt-1 text-xs leading-5 text-muted-foreground">Gunakan stok barang utama.</p>
+                        <div className="flex gap-2 overflow-x-auto pb-1">
+                          <button
+                            type="button"
+                            className={cn(
+                              "shrink-0 rounded-lg border px-3 py-2 text-left text-xs",
+                              variantId === ""
+                                ? "border-primary bg-primary/5 font-semibold"
+                                : "bg-background hover:bg-accent/30",
+                            )}
+                            onClick={() => setVariantId("")}
+                          >
+                            Barang utama
+                          </button>
+                          {(productDetail.data?.variants ?? [])
+                            .filter((variant) => variant.status === "active")
+                            .map((variant) => (
+                              <button
+                                key={variant.varian_barang_id}
+                                type="button"
+                                className={cn(
+                                  "shrink-0 rounded-lg border px-3 py-2 text-left text-xs",
+                                  variantId === variant.varian_barang_id
+                                    ? "border-primary bg-primary/5 font-semibold"
+                                    : "bg-background hover:bg-accent/30",
+                                )}
+                                onClick={() => setVariantId(variant.varian_barang_id)}
+                              >
+                                {variant.nama}
+                              </button>
+                            ))}
                         </div>
                       </div>
-                    </button>
-                    {(productDetail.data?.variants ?? []).filter((variant) => variant.status === "active").map((variant) => {
-                      const selected = variant.varian_barang_id === variantId;
-                      const stock = readyStock.data?.byVariant[variant.varian_barang_id] ?? 0;
-                      return (
-                        <button
-                          key={variant.varian_barang_id}
-                          type="button"
-                          aria-pressed={selected}
-                          onClick={() => setVariantId(variant.varian_barang_id)}
-                          className={[
-                            "flex items-center gap-3 rounded-2xl border p-3 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                            selected ? "border-primary bg-primary/[0.04] ring-1 ring-primary/20" : "hover:bg-accent/20"
-                          ].join(" ")}
-                        >
-                          <div className="flex items-start gap-3">
-                            <div className="size-14 shrink-0 overflow-hidden rounded-xl bg-muted sm:size-16">
-                              {coverByProduct.get(productId) ? <img src={coverByProduct.get(productId) ?? ""} alt="" className="h-full w-full object-cover" /> : <div className="grid h-full place-items-center text-muted-foreground"><Package className="size-5" /></div>}
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-start justify-between gap-2"><p className="font-semibold">{variant.nama}</p><Badge variant={selected ? "default" : "secondary"} className="rounded-full">{readyStock.isPending ? "…" : `${stock} unit siap`}</Badge></div>
-                              <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{variant.deskripsi ?? variant.kode_internal ?? "Pilihan varian barang."}</p>
-                            </div>
+                    ) : null}
+
+                    <div className="grid gap-3 sm:grid-cols-[1fr_110px_auto] sm:items-end">
+                      <div className="min-w-0">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-xs text-muted-foreground">Tarif aktif</p>
+                            <p className="truncate text-sm font-semibold">
+                              {selectedTariff
+                                ? formatCatalogMoney(selectedTariff.nominal, selectedTariff.currency_code) +
+                                  " · " +
+                                  formatTariffDuration(selectedTariff)
+                                : "Belum tersedia"}
+                            </p>
                           </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              ) : null}
+                          <div className="shrink-0 text-right">
+                            <p className="text-xs text-muted-foreground">Siap</p>
+                            <p
+                              className={cn(
+                                "text-sm font-semibold",
+                                selectedReadyStock > 0 ? "text-primary" : "text-muted-foreground",
+                              )}
+                            >
+                              {readyStock.isPending ? "…" : String(selectedReadyStock) + " unit"}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
 
-              <div className="grid gap-3 sm:grid-cols-[1fr_180px]">
-                <div className="rounded-2xl border bg-muted/30 p-4">
-                  <p className="text-xs text-muted-foreground">Tarif aktif</p>
-                  <p className="mt-1 font-semibold">
-                    {selectedTariff ? formatCatalogMoney(selectedTariff.nominal, selectedTariff.currency_code) : "Belum tersedia"}
-                  </p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {selectedTariff ? formatTariffDuration(selectedTariff) : "Pilih barang dan varian yang memiliki tarif aktif."}
-                  </p>
-                  {productId ? <p className="mt-2 text-xs font-medium text-muted-foreground">Stok siap saat ini · {readyStock.isPending ? "Memuat…" : `${selectedReadyStock} unit`}</p> : null}
-                </div>
-                <label className="space-y-1.5 text-sm">
-                  <span className="font-medium">Jumlah unit</span>
-                  <Input
-                    inputMode="numeric"
-                    min={1}
-                    step={1}
-                    type="number"
-                    value={quantity}
-                    onChange={(event) => setQuantity(event.target.value)}
-                    aria-label="Jumlah unit"
-                  />
-                </label>
+                      <label className="space-y-1 text-xs">
+                        <span className="font-medium text-muted-foreground">Jumlah</span>
+                        <Input
+                          type="number"
+                          min={1}
+                          step={1}
+                          value={quantity}
+                          onChange={(event) => setQuantity(event.target.value)}
+                          aria-label="Jumlah unit"
+                          className="h-10 rounded-xl"
+                        />
+                      </label>
+
+                      <Button
+                        type="button"
+                        className="h-10 rounded-xl sm:min-w-28"
+                        disabled={!canAddItem}
+                        onClick={() => {
+                          try {
+                            addDraftLine();
+                          } catch {
+                            setRentalCommandState("error");
+                          }
+                        }}
+                      >
+                        Tambahkan
+                      </Button>
+                    </div>
+
+                    {productId && availability.data && !quantityFitsSelectedStock ? (
+                      <p className="text-xs font-medium text-destructive">
+                        Stok siap pada pilihan ini {availability.data.readyPhysicalUnits} unit, sementara diminta{" "}
+                        {requestedQuantity}.
+                      </p>
+                    ) : null}
+                    {productId && readyStock.data && quantityFitsSelectedStock && !quantityFitsProductPool ? (
+                      <p className="text-xs font-medium text-destructive">
+                        Total {selectedProduct?.nama ?? "barang"} dalam transaksi akan menjadi{" "}
+                        {projectedProductQuantity} unit, sedangkan stok siap seluruh barang hanya {productReadyStock} unit.
+                        Varian dan barang utama memakai stok fisik yang sama.
+                      </p>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-dashed px-4 py-3 text-xs text-muted-foreground">
+                    Pilih barang untuk melihat tarif, varian, dan jumlah unit yang siap disewakan.
+                  </div>
+                )}
               </div>
-              {quantity && !quantityIsValid ? (
-                <Alert variant="destructive">
-                  <AlertTitle>Jumlah unit tidak valid</AlertTitle>
-                  <AlertDescription>Masukkan jumlah unit berupa bilangan bulat, minimal 1.</AlertDescription>
-                </Alert>
-              ) : null}
-
-              {productId && availabilityRefreshing ? (
-                <div
-                  className="rounded-2xl border border-dashed p-4 text-sm text-muted-foreground"
-                  aria-live="polite"
-                  aria-busy="true"
-                >
-                  Memeriksa stok siap terbaru…
+            ) : (
+              <div className="space-y-3">
+                <div className="relative">
+                  <Search
+                    className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                    aria-hidden="true"
+                  />
+                  <Input
+                    value={packageSearch}
+                    onChange={(event) => setPackageSearch(event.target.value)}
+                    placeholder="Cari paket…"
+                    aria-label="Cari paket"
+                    className="h-10 rounded-xl pl-9"
+                  />
                 </div>
-              ) : null}
 
-              {productId && availability.isError ? (
-                <Alert variant="destructive">
-                  <AlertTitle>Kesiapan fisik belum dapat diperiksa</AlertTitle>
-                  <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <span>{readCommandMessage(availability.error)}</span>
-                    <Button type="button" variant="outline" size="sm" onClick={() => void availability.refetch()}>
-                      Periksa lagi
-                    </Button>
-                  </AlertDescription>
-                </Alert>
-              ) : null}
+                <div className="grid gap-2">
+                  {visiblePackages.map((pkg) => {
+                    const availabilityItem = packageAvailability.data?.find(
+                      (item) => item.paket_sewa_id === pkg.paket_sewa_id,
+                    );
+                    const selected = selectedPackageId === pkg.paket_sewa_id;
+                    const available = availabilityItem?.status === "available";
 
-              {productId && availability.data && requestedQuantity > availability.data.readyPhysicalUnits ? (
-                <Alert variant="destructive" aria-live="assertive">
-                  <CircleAlert className="size-4" />
-                  <AlertTitle>Jumlah melebihi unit siap disewakan</AlertTitle>
-                  <AlertDescription>
-                    Tersedia {availability.data.readyPhysicalUnits} unit Siap Disewakan, tetapi Anda meminta {availability.data.requestedUnits} unit. Kurangi jumlah sebelum melanjutkan.
-                  </AlertDescription>
-                </Alert>
-              ) : null}
+                    return (
+                      <button
+                        key={pkg.paket_sewa_id}
+                        type="button"
+                        className={cn(
+                          "flex min-w-0 items-center gap-3 rounded-xl border p-3 text-left transition-colors",
+                          selected
+                            ? "border-primary bg-primary/[0.04] ring-1 ring-primary/20"
+                            : "hover:bg-accent/30",
+                        )}
+                        onClick={() => setSelectedPackageId(pkg.paket_sewa_id)}
+                      >
+                        <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">
+                          <Package className="size-4" aria-hidden="true" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-semibold">{pkg.nama}</p>
+                          <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                            {pkg.active_tariff
+                              ? formatCatalogMoney(pkg.active_tariff.nominal, pkg.active_tariff.currency_code) +
+                                " - " +
+                                formatTariffDuration(pkg.active_tariff)
+                              : pkg.harga_dasar == null
+                                ? "Harga belum ditentukan"
+                                : formatCatalogMoney(pkg.harga_dasar, pkg.currency_code)}
+                          </p>
+                        </div>
+                        <span
+                          className={cn(
+                            "shrink-0 rounded-full px-2 py-1 text-[11px] font-medium",
+                            available
+                              ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                              : "bg-muted text-muted-foreground",
+                          )}
+                        >
+                          {available
+                            ? String(availabilityItem?.available_package_quantity ?? 0) + " siap"
+                            : "Belum siap"}
+                        </span>
+                      </button>
+                    );
+                  })}
 
-              {productId && availability.data && requestedQuantity <= availability.data.readyPhysicalUnits ? (
-                <div
-                  aria-live="polite"
-                  className="flex items-start gap-3 rounded-2xl border bg-emerald-50/50 p-4"
-                >
-                  <ShieldCheck className="mt-0.5 size-5 shrink-0 text-emerald-700" />
-                  <div>
-                    <p className="font-semibold">
-                      {availability.data.readyPhysicalUnits} unit siap disewakan
-                    </p>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      Permintaan {availability.data.requestedUnits} unit masih dalam batas stok siap. Ketersediaan pada periode rental tetap diperiksa ulang oleh server saat draft disimpan.
-                    </p>
+                  {!visiblePackages.length ? (
+                    <div className="rounded-xl border border-dashed px-4 py-5 text-center text-sm text-muted-foreground">
+                      Paket tidak ditemukan.
+                    </div>
+                  ) : null}
+                </div>
+
+                {selectedPackage ? (
+                  <div className="space-y-3 rounded-xl border bg-muted/20 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold">{selectedPackage.nama}</p>
+                        <p className="mt-0.5 text-[11px] text-muted-foreground">
+                          {selectedPackageAvailability?.available_package_quantity ?? 0} paket siap disewakan
+                        </p>
+                      </div>
+                      <label className="flex items-center gap-2 text-xs">
+                        <span className="font-medium text-muted-foreground">Jumlah</span>
+                        <Input
+                          type="number"
+                          min={1}
+                          step={1}
+                          value={packageQuantity}
+                          onChange={(event) => setPackageQuantity(event.target.value)}
+                          className="h-9 w-20 rounded-lg"
+                          aria-label="Jumlah paket"
+                        />
+                      </label>
+                    </div>
+
+                    <div className="grid gap-1.5">
+                      {(packageDetail.data?.components ?? []).map((component) => {
+                        const availabilityComponent = selectedPackageAvailability?.components.find(
+                          (item) => item.komponen_paket_id === component.komponen_paket_id,
+                        );
+                        return (
+                          <div
+                            key={component.komponen_paket_id}
+                            className="flex items-center justify-between gap-3 rounded-lg border bg-background px-3 py-2"
+                          >
+                            <div className="min-w-0">
+                              <p className="truncate text-xs font-medium">
+                                {component.varian?.nama ?? component.barang?.nama ?? "Komponen"}
+                              </p>
+                              <p className="text-[11px] text-muted-foreground">
+                                {component.jumlah} per paket
+                              </p>
+                            </div>
+                            <span className="shrink-0 text-[11px] text-muted-foreground">
+                              siap {availabilityComponent?.ready_quantity ?? 0}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                      <Input
+                        value={packageNote}
+                        onChange={(event) => setPackageNote(event.target.value)}
+                        placeholder="Catatan paket (opsional)"
+                        className="h-10 rounded-xl"
+                      />
+                      <Button
+                        type="button"
+                        className="h-10 rounded-xl"
+                        disabled={!canAddPackage}
+                        onClick={() => {
+                          try {
+                            addDraftLine();
+                          } catch {
+                            setRentalCommandState("error");
+                          }
+                        }}
+                      >
+                        Tambahkan paket
+                      </Button>
+                    </div>
                   </div>
-                </div>
-              ) : null}
-            </div>
+                ) : (
+                  <div className="rounded-xl border border-dashed px-4 py-3 text-xs text-muted-foreground">
+                    Pilih paket untuk melihat komponen dan ketersediaan fisiknya.
+                  </div>
+                )}
+              </div>
+            )}
+
+            {draftLines.length ? (
+              <Card className="border-primary/20">
+                <CardHeader className="px-4 pb-2 pt-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <CardTitle className="text-base">Isi Penyewaan</CardTitle>
+                    <Badge variant="secondary" className="rounded-full">{draftLines.length} line</Badge>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {draftLines.map((line) => (
+                    <div key={line.key} className="flex items-start justify-between gap-3 rounded-2xl border p-3">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline" className="rounded-full">{line.kind === "package" ? "Paket" : "Barang"}</Badge>
+                          <p className="font-semibold">{line.label}</p>
+                        </div>
+                        <p className="mt-1 text-sm text-muted-foreground">{line.description}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {formatCatalogMoney(line.input.subtotal, line.input.currency_code ?? "IDR")}
+                        </p>
+                      </div>
+                      <Button type="button" variant="ghost" size="sm" className="rounded-xl" onClick={() => removeDraftLine(line.key)}>
+                        Hapus
+                      </Button>
+                    </div>
+                  ))}
+                  <div className="flex items-center justify-between border-t pt-3 text-sm">
+                    <span className="text-muted-foreground">Estimasi total sewa</span>
+                    <span className="text-lg font-bold">{formatCatalogMoney(estimatedTotal, "IDR")}</span>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="rounded-2xl border border-dashed p-5 text-sm text-muted-foreground">
+                Belum ada line. Tambahkan Carrier, Jaket, Tenda, atau satu/lebih paket ke transaksi yang sama.
+              </div>
+            )}
+
+            {rentalCommandState === "error" && createRentalMutation.error ? (
+              <Alert variant="destructive">
+                <AlertTitle>Line belum dapat ditambahkan atau draft belum dibuat</AlertTitle>
+                <AlertDescription>{readCommandMessage(createRentalMutation.error)}</AlertDescription>
+              </Alert>
+            ) : null}
 
             <div className="flex justify-between gap-2">
               <Button variant="outline" className="rounded-xl" onClick={() => setStep(2)}>Kembali</Button>
-              <Button disabled={!canMoveFromProduct} onClick={() => setStep(4)}>
-                Lanjut ke review <ArrowRight />
+              <Button disabled={!canReview} onClick={() => setStep(4)}>
+                Review Transaksi <ArrowRight />
               </Button>
             </div>
           </CardContent>
@@ -875,6 +1347,9 @@ export function RentalWalkIn() {
         <Card className="rounded-2xl">
           <CardHeader>
             <CardTitle>Tinjauan Transaksi</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Semua line akan dikirim sebagai satu command. Kapasitas gabungan paket dan barang satuan divalidasi ulang oleh server.
+            </p>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-2">
@@ -890,38 +1365,39 @@ export function RentalWalkIn() {
               </div>
             </div>
 
-            <div className="rounded-2xl border p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="font-semibold">{selectedProduct?.nama ?? "—"}</p>
-                  <p className="text-sm text-muted-foreground">{selectedVariant?.nama ?? "Barang utama"}</p>
+            <div className="space-y-2">
+              {draftLines.map((line) => (
+                <div key={line.key} className="rounded-2xl border p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="rounded-full">{line.kind === "package" ? "Paket" : "Barang"}</Badge>
+                        <p className="font-semibold">{line.label}</p>
+                      </div>
+                      <p className="mt-1 text-sm text-muted-foreground">{line.description}</p>
+                    </div>
+                    <p className="font-semibold">{formatCatalogMoney(line.input.subtotal, line.input.currency_code ?? "IDR")}</p>
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-2 border-t pt-3 text-sm">
+                    <span className="text-muted-foreground">Jumlah</span>
+                    <span className="text-right">{line.input.jumlah}</span>
+                    <span className="text-muted-foreground">Durasi</span>
+                    <span className="text-right">
+                      {line.input.duration_periods} periode
+                    </span>
+                  </div>
                 </div>
-                <Badge variant="secondary" className="rounded-full">{quantity} unit</Badge>
+              ))}
+            </div>
+
+            <div className="rounded-2xl border bg-muted/20 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <p className="font-medium">Total transaksi</p>
+                <p className="text-xl font-bold">{formatCatalogMoney(estimatedTotal, "IDR")}</p>
               </div>
-              <div className="mt-4 grid gap-2 border-t pt-4 text-sm sm:grid-cols-2">
-                <div className="text-muted-foreground">Tarif / periode</div>
-                <div className="text-right font-medium">
-                  {selectedTariff ? formatCatalogMoney(selectedTariff.nominal, selectedTariff.currency_code) : "—"}
-                </div>
-                <div className="text-muted-foreground">Durasi ditagihkan</div>
-                <div className="text-right font-medium">
-                  {selectedTariff && billingPeriods > 0 ? formatTariffPeriods(billingPeriods, selectedTariff) : "—"}
-                </div>
-                <div className="text-muted-foreground">Jumlah unit</div>
-                <div className="text-right font-medium">{requestedQuantity || "—"} unit</div>
-                <div className="text-muted-foreground">Total sewa</div>
-                <div className="text-right text-lg font-bold">
-                  {selectedTariff && billingPeriods > 0
-                    ? formatCatalogMoney(estimatedLineSubtotal, selectedTariff.currency_code)
-                    : "—"}
-                </div>
-              </div>
-              <div className="rounded-2xl border bg-muted/25 p-3 text-sm">
-                <p className="font-medium">Batas toleransi pengembalian</p>
-                <p className="mt-1 text-muted-foreground">
-                  {context.data.defaultToleranceHours} jam setelah waktu kembali yang dijadwalkan.
-                </p>
-              </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                Ketersediaan yang tampil di UI adalah kondisi fisik saat ini. Saat draf disimpan, server memvalidasi seluruh line sebagai satu kapasitas gabungan.
+              </p>
             </div>
 
             <label className="space-y-1.5 text-sm">
@@ -929,13 +1405,10 @@ export function RentalWalkIn() {
               <Input value={note} onChange={(event) => setNote(event.target.value)} placeholder="Opsional" />
             </label>
 
-            {rentalCommandState === "conflict" ? (
+            {rentalCommandState === "conflict" && createRentalMutation.error ? (
               <Alert variant="destructive">
                 <AlertTitle>Kapasitas atau status penyewaan berubah</AlertTitle>
-                <AlertDescription>
-                  Sistem menolak tindakan karena kondisi terbaru tidak lagi memenuhi aturan penyewaan.
-                  Perbarui pilihan barang / quantity lalu coba lagi.
-                </AlertDescription>
+                <AlertDescription>{readCommandMessage(createRentalMutation.error)}</AlertDescription>
               </Alert>
             ) : null}
 
@@ -950,14 +1423,9 @@ export function RentalWalkIn() {
               <Alert>
                 <AlertTitle>Hasil tindakan belum pasti</AlertTitle>
                 <AlertDescription>
-                  Jangan tekan tombol buat ulang. Periksa dulu apakah draft rental sudah terbentuk.
+                  Jangan buat ulang. Periksa dulu apakah draft rental sudah terbentuk.
                   <div className="mt-3">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => void reconcileRental()}
-                    >
+                    <Button type="button" variant="outline" size="sm" onClick={() => void reconcileRental()}>
                       <RefreshCw /> Periksa status tindakan
                     </Button>
                   </div>
@@ -965,10 +1433,7 @@ export function RentalWalkIn() {
               </Alert>
             ) : null}
 
-            <div
-              className="sticky bottom-2 z-20 -mx-1 rounded-2xl border bg-background/95 p-2 shadow-lg backdrop-blur sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none sm:backdrop-blur-0"
-              style={{ paddingBottom: "max(0.5rem, env(safe-area-inset-bottom))" }}
-            >
+            <div className="sticky bottom-2 z-20 -mx-1 rounded-2xl border bg-background/95 p-2 shadow-lg backdrop-blur sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none sm:backdrop-blur-0">
               <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-between">
                 <Button
                   variant="outline"
@@ -980,7 +1445,7 @@ export function RentalWalkIn() {
                 </Button>
                 <Button
                   className="w-full rounded-xl sm:w-auto"
-                  disabled={createRentalMutation.isPending || rentalCommandState === "unknown" || !canMoveFromProduct}
+                  disabled={createRentalMutation.isPending || rentalCommandState === "unknown" || !canReview}
                   onClick={() => createRentalMutation.mutate()}
                 >
                   {createRentalMutation.isPending || rentalCommandState === "processing" ? (

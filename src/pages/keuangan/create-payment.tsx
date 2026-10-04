@@ -1,7 +1,8 @@
+import { createClientId } from "@/lib/client-id";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, Check, CircleAlert, Clock3, Search, ShieldCheck, UserRound } from "lucide-react";
-import { useRef, useState } from "react";
-import { Link, useNavigate } from "react-router";
+import { useEffect, useRef, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router";
 import { cn } from "@/lib/utils";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -10,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import {
   getFinanceCapabilities,
   getKeuanganContext,
+  listFinanceAccounts,
   recordPayment,
   reconcilePaymentCommand,
   searchFinanceSources,
@@ -17,6 +19,7 @@ import {
   type RecordPaymentInput,
 } from "@/features/keuangan";
 import { paths } from "@/routes/paths";
+import { formatDateTimeLocalInTimezone, formatFinanceTimezone } from "@/features/keuangan/utils";
 import { AmountDisplay, FinanceShell, FinanceStateScreen, SourcePreview } from "@/components/keuangan/finance-ui";
 
 type Step = 1 | 2 | 3;
@@ -37,13 +40,18 @@ const methods: Array<[RecordPaymentInput["metode"], string]> = [
 
 export function PaymentCreate() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
+  const presetSourceType = searchParams.get("sourceType") === "rental" ? "rental" : searchParams.get("sourceType") === "reservation" ? "reservation" : null;
+  const presetSourceId = searchParams.get("sourceId");
+  const presetSourceNumber = searchParams.get("sourceNumber");
   const [step, setStep] = useState<Step>(1);
   const [mode, setMode] = useState<Mode>("form");
-  const [sourceType, setSourceType] = useState<"reservation" | "rental">("reservation");
-  const [sourceSearch, setSourceSearch] = useState("");
+  const [sourceType, setSourceType] = useState<"reservation" | "rental">(presetSourceType ?? "reservation");
+  const [sourceSearch, setSourceSearch] = useState(presetSourceNumber ?? "");
+  const presetAppliedRef = useRef(false);
   const [selected, setSelected] = useState<FinanceSourceOption | null>(null);
-  const [form, setForm] = useState<RecordPaymentInput>({ jenis: "dp", metode: "bank_transfer", amount: 0, dibayarAt: null, referenceText: "", catatan: "" });
+  const [form, setForm] = useState<RecordPaymentInput>({ akunKeuanganId: "", jenis: "dp", metode: "bank_transfer", amount: 0, dibayarAt: null, referenceText: "", catatan: "" });
   const [result, setResult] = useState<{ id: string; number: string } | null>(null);
   const [feedback, setFeedback] = useState("");
   const commandRef = useRef<string | null>(null);
@@ -55,21 +63,48 @@ export function PaymentCreate() {
     enabled: Boolean(context.data?.usahaId),
     staleTime: 15_000,
   });
+  const accounts = useQuery({
+    queryKey: ["keuangan", "accounts", context.data?.usahaId],
+    queryFn: () => listFinanceAccounts(context.data!.usahaId),
+    enabled: Boolean(context.data?.usahaId),
+    staleTime: 30_000,
+  });
   const capabilities = getFinanceCapabilities();
 
+  useEffect(() => {
+    if (presetAppliedRef.current || !presetSourceId || !sources.data?.length) return;
+    const match = sources.data.find((source) => source.id === presetSourceId);
+    if (!match) return;
+    presetAppliedRef.current = true;
+    setSelected(match);
+    setSourceType(match.type);
+    setStep(2);
+  }, [presetSourceId, sources.data]);
+
+  useEffect(() => {
+    if (form.dibayarAt || !context.data?.timezone) return;
+    setForm((current) => ({ ...current, dibayarAt: formatDateTimeLocalInTimezone(new Date(), context.data.timezone) }));
+  }, [context.data?.timezone, form.dibayarAt]);
+
+  useEffect(() => {
+    const onlyAccount = accounts.data?.length === 1 ? accounts.data[0] : null;
+    if (form.akunKeuanganId || !onlyAccount) return;
+    setForm((current) => ({ ...current, akunKeuanganId: onlyAccount.akun_keuangan_id }));
+  }, [accounts.data, form.akunKeuanganId]);
+
   const canContinueSource = Boolean(selected);
-  const canContinueDetail = Number(form.amount) > 0 && Boolean(form.dibayarAt) && Boolean(selected);
+  const canContinueDetail = Number(form.amount) > 0 && Boolean(form.dibayarAt) && Boolean(selected) && Boolean(form.akunKeuanganId);
 
   const mutation = useMutation({
     mutationFn: async () => {
       if (!context.data || !selected) throw new Error("Sumber pembayaran belum dipilih.");
-      if (!commandRef.current) commandRef.current = crypto.randomUUID();
+      if (!commandRef.current) commandRef.current = createClientId();
       return recordPayment(context.data.usahaId, {
         ...form,
         reservasiId: sourceType === "reservation" ? selected.id : null,
         penyewaanId: sourceType === "rental" ? selected.id : null,
         amount: Number(form.amount),
-      }, { idempotencyKey: commandRef.current, requestId: crypto.randomUUID() });
+      }, { idempotencyKey: commandRef.current, requestId: createClientId(), businessTimezone: context.data.timezone });
     },
     onMutate: () => { setFeedback(""); setMode("processing"); },
     onSuccess: async (data) => {
@@ -153,6 +188,28 @@ export function PaymentCreate() {
           <section className="space-y-1"><h2 className="text-base font-semibold">Detail Pembayaran</h2><p className="text-xs text-muted-foreground">Masukkan data pembayaran yang akan dicatat.</p></section>
           {selected ? <SourcePreview type={selected.type === "reservation" ? "Reservasi" : "Penyewaan"} number={selected.number} renter={selected.renterName} period={selected.period} meta={selected.meta} /> : null}
           <Card className="shadow-sm"><CardContent className="space-y-4 p-4">
+            <div className="rounded-2xl border bg-muted/25 px-3 py-2.5 text-xs text-muted-foreground">
+              Waktu mengikuti timezone Usaha: <span className="font-semibold text-foreground">{context.data ? formatFinanceTimezone(context.data.timezone) : "-"}</span>. Waktu yang dipilih akan dikonversi ke UTC sebelum disimpan.
+            </div>
+            {accounts.isPending ? (
+              <div className="h-12 animate-pulse rounded-xl bg-muted" />
+            ) : accounts.data?.length ? (
+              <FieldSelect
+                label="Uang Masuk ke"
+                value={form.akunKeuanganId}
+                options={accounts.data.map((account) => [account.akun_keuangan_id, `${account.nama_akun} · ${account.jenis_akun}`] as [string, string])}
+                onChange={(v) => setForm((current) => ({ ...current, akunKeuanganId: v }))}
+              />
+            ) : (
+              <Alert>
+                <CircleAlert className="size-4" />
+                <AlertTitle>Belum ada akun uang</AlertTitle>
+                <AlertDescription className="space-y-2">
+                  <p>Pembayaran membutuhkan minimal satu akun Kas, Bank, atau E-Wallet aktif.</p>
+                  <Button asChild variant="outline" size="sm" className="rounded-lg"><Link to={paths.keuangan}>Buka Keuangan untuk setup</Link></Button>
+                </AlertDescription>
+              </Alert>
+            )}
             <FieldSelect label="Jenis Pembayaran" value={form.jenis} options={paymentKinds} onChange={(v) => setForm((c) => ({ ...c, jenis: v as RecordPaymentInput["jenis"] }))} />
             <FieldSelect label="Metode Pembayaran" value={form.metode} options={methods} onChange={(v) => setForm((c) => ({ ...c, metode: v as RecordPaymentInput["metode"] }))} />
             <div className="space-y-1.5"><label className="text-xs font-semibold" htmlFor="finance-payment-amount">Nominal Pembayaran</label><div className="flex items-center rounded-xl border bg-card px-3 focus-within:ring-2 focus-within:ring-ring/60"><span className="text-sm font-semibold text-muted-foreground">Rp</span><Input id="finance-payment-amount" type="number" min="1" value={form.amount || ""} onChange={(e) => setForm((c) => ({ ...c, amount: Number(e.target.value) }))} className="h-12 border-0 shadow-none text-right text-lg font-bold focus-visible:ring-0" placeholder="150.000" /></div></div>
@@ -168,7 +225,10 @@ export function PaymentCreate() {
       {step === 3 ? (
         <div className="space-y-4">
           <section className="space-y-1"><h2 className="text-base font-semibold">Tinjauan Pembayaran</h2><p className="text-xs text-muted-foreground">Periksa data sebelum menyimpan.</p></section>
-          <Card className="shadow-sm"><CardContent className="space-y-4 p-4">{selected ? <SourcePreview type={selected.type === "reservation" ? "Reservasi" : "Penyewaan"} number={selected.number} renter={selected.renterName} period={selected.period} meta={selected.meta} /> : null}<div className="grid gap-3 rounded-2xl bg-muted/40 p-4 sm:grid-cols-2"><ReviewRow label="Jenis Pembayaran" value={paymentKinds.find(([key]) => key === form.jenis)?.[1] ?? form.jenis} /><ReviewRow label="Metode" value={methods.find(([key]) => key === form.metode)?.[1] ?? form.metode} /><ReviewRow label="Waktu Pembayaran" value={form.dibayarAt ?? "-"} /><ReviewRow label="Reference" value={form.referenceText || "-"} /></div><SeparatorLine /><AmountDisplay amount={form.amount} label="Total Pembayaran" /></CardContent></Card>
+          <Card className="shadow-sm"><CardContent className="space-y-4 p-4">
+            <div className="rounded-2xl border bg-muted/25 px-3 py-2.5 text-xs text-muted-foreground">
+              Waktu mengikuti timezone Usaha: <span className="font-semibold text-foreground">{context.data ? formatFinanceTimezone(context.data.timezone) : "-"}</span>. Waktu yang dipilih akan dikonversi ke UTC sebelum disimpan.
+            </div>{selected ? <SourcePreview type={selected.type === "reservation" ? "Reservasi" : "Penyewaan"} number={selected.number} renter={selected.renterName} period={selected.period} meta={selected.meta} /> : null}<div className="grid gap-3 rounded-2xl bg-muted/40 p-4 sm:grid-cols-2"><ReviewRow label="Uang Masuk ke" value={accounts.data?.find((account) => account.akun_keuangan_id === form.akunKeuanganId)?.nama_akun ?? "-"} /><ReviewRow label="Jenis Pembayaran" value={paymentKinds.find(([key]) => key === form.jenis)?.[1] ?? form.jenis} /><ReviewRow label="Metode" value={methods.find(([key]) => key === form.metode)?.[1] ?? form.metode} /><ReviewRow label="Waktu Pembayaran" value={form.dibayarAt ?? "-"} /><ReviewRow label="Reference" value={form.referenceText || "-"} /></div><SeparatorLine /><AmountDisplay amount={form.amount} label="Total Pembayaran" /></CardContent></Card>
           <Alert className="border-primary/10 bg-primary/[0.03]"><ShieldCheck className="size-4" /><AlertTitle>Pembayaran → Transaksi Keuangan</AlertTitle><AlertDescription>Pencatatan pembayaran akan menyimpan pembayaran dan transaksi keuangan. Status Reservasi atau Penyewaan tetap dikelola pada menu masing-masing.</AlertDescription></Alert>
           <StickyFinanceAction><Button className="h-12 w-full rounded-xl" disabled={mutation.isPending || !capabilities.mutation} onClick={() => mutation.mutate()}>{mutation.isPending ? "Mencatat Pembayaran…" : "Catat Pembayaran"} <Check /></Button></StickyFinanceAction>
         </div>

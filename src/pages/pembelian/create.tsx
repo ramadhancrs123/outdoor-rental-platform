@@ -1,3 +1,4 @@
+import { createClientId } from "@/lib/client-id";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, Check, ChevronDown, Loader2, Plus, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -106,20 +107,20 @@ export function PurchaseCreate() {
   const mutation = useMutation({
     mutationFn: async () => {
       if (!context.data) throw new Error("Konteks Usaha belum siap.");
-      commandRef.current ??= crypto.randomUUID();
+      commandRef.current ??= createClientId();
       setFeedback("");
       if (editing) {
         return updatePurchaseDraft(
           context.data.usahaId,
           id!,
           { ...form, expectedUpdatedAt },
-          { idempotencyKey: commandRef.current, requestId: crypto.randomUUID() },
+          { idempotencyKey: commandRef.current, requestId: createClientId() },
         );
       }
       return createPurchaseDraft(
         context.data.usahaId,
         form,
-        { idempotencyKey: commandRef.current, requestId: crypto.randomUUID() },
+        { idempotencyKey: commandRef.current, requestId: createClientId() },
       );
     },
     onMutate: () => setMode("processing"),

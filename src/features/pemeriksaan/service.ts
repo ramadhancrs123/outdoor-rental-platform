@@ -1,3 +1,4 @@
+import { createClientId } from "@/lib/client-id";
 import { supabase } from "@/app/providers/supabase/client";
 import type {
   AttachEvidenceResult,
@@ -399,6 +400,17 @@ export async function getInspectionWorkspace(
   const history = await buildHistory(usahaId, (inspectionRows ?? []) as InspectionRow[]);
   const currentInspection = history[0] ?? null;
 
+  const { data: maintenanceData, error: maintenanceError } = currentInspection
+    ? await supabase
+        .from("perawatan")
+        .select("perawatan_id,pemeriksaan_id,jenis_perawatan,status,deskripsi_pekerjaan,updated_at")
+        .eq("usaha_id", usahaId)
+        .eq("pemeriksaan_id", currentInspection.pemeriksaan_id)
+        .maybeSingle()
+    : { data: null, error: null };
+
+  if (maintenanceError) throw maintenanceError;
+
   return {
     returnDetail: detail,
     returnHeader: returnHeader,
@@ -418,12 +430,13 @@ export async function getInspectionWorkspace(
       varian_nama: unit.varian_barang_id ? productNames.variants.get(unit.varian_barang_id) ?? null : null,
     },
     currentInspection,
+    linkedMaintenance: maintenanceData ? (maintenanceData as InspectionWorkspace["linkedMaintenance"]) : null,
     history,
   };
 }
 
 function newRequestId() {
-  return crypto.randomUUID();
+  return createClientId();
 }
 
 function unknownOutcome(message: string) {
@@ -455,7 +468,7 @@ export async function startInspection(
   usahaId: string,
   detailPengembalianId: string,
   unitBarangId: string,
-  idempotencyKey = "start-inspection-" + crypto.randomUUID(),
+  idempotencyKey = "start-inspection-" + createClientId(),
 ): Promise<StartInspectionResult> {
   const { data, error } = await supabase.rpc("command_start_inspection", {
     p_usaha_id: usahaId,
@@ -478,7 +491,7 @@ export async function completeInspection(
   input: InspectionCompleteInput,
   expectedInspectionUpdatedAt: string,
   expectedUnitUpdatedAt: string,
-  idempotencyKey = "complete-inspection-" + crypto.randomUUID(),
+  idempotencyKey = "complete-inspection-" + createClientId(),
 ): Promise<CompleteInspectionResult> {
   const findings = normalizeInspectionFindings(input.findings);
   const { data, error } = await supabase.rpc("command_complete_inspection", {
@@ -508,9 +521,9 @@ export async function uploadAndAttachInspectionEvidence(
   pemeriksaanId: string,
   unitBarangId: string,
   input: { file: File; jenisFoto: string; catatan?: string | null },
-  idempotencyKey = "attach-evidence-" + crypto.randomUUID(),
+  idempotencyKey = "attach-evidence-" + createClientId(),
 ): Promise<AttachEvidenceResult> {
-  const evidenceId = crypto.randomUUID();
+  const evidenceId = createClientId();
   const safeName = input.file.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-80) || "condition.jpg";
   const storagePath = usahaId + "/" + pemeriksaanId + "/" + evidenceId + "/" + safeName;
 

@@ -1,3 +1,4 @@
+import { createClientId } from "@/lib/client-id";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, Check, CircleAlert, PackagePlus, Search, ShieldCheck } from "lucide-react";
 import { useRef, useState } from "react";
@@ -108,10 +109,10 @@ export function InventoryCreate() {
   const mutation = useMutation({
     mutationFn: async () => {
       if (!context.data?.usahaId) throw new Error("Konteks Usaha belum siap.");
-      if (!commandRef.current) commandRef.current = crypto.randomUUID();
+      if (!commandRef.current) commandRef.current = createClientId();
       return registerInventoryUnit(context.data.usahaId, form, {
         idempotencyKey: commandRef.current,
-        requestId: crypto.randomUUID(),
+        requestId: createClientId(),
       });
     },
     onMutate: () => {

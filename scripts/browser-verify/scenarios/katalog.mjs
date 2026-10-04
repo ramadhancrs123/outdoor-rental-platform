@@ -37,7 +37,19 @@ export default async function katalogScenario({ page, baseURL, capture }) {
 
   await page.getByRole("tab", { name: "Tarif" }).click();
   await page.getByText("Tambah Tarif", { exact: true }).first().waitFor({ state: "visible", timeout: 10000 });
-  await page.getByRole("combobox", { name: "Tipe target" }).waitFor({ state: "visible", timeout: 5000 });
+  const tariffTargetType = page.getByRole("combobox", { name: "Tipe target" });
+  await tariffTargetType.waitFor({ state: "visible", timeout: 5000 });
+  await tariffTargetType.click();
+  await page.getByRole("option", { name: "Varian", exact: true }).click();
+  const tariffComboboxes = page.getByRole("combobox");
+  if (await tariffComboboxes.count() < 2) throw new Error("Target tarif Varian tidak menyediakan dropdown target.");
+  await tariffComboboxes.nth(1).click();
+  const tariffVariantOptions = (await page.getByRole("option").allTextContents())
+    .map((value) => value.trim())
+    .filter((value) => value && value !== "Pilih varian");
+  if (tariffVariantOptions.length === 0) throw new Error("Dropdown Target Varian kosong padahal data varian tersedia.");
+  await page.keyboard.press("Escape");
+  await capture("catalog-manage-tariff-variant");
   await capture("catalog-manage-tariff");
 
   await page.goto(`${baseURL}/katalog`, { waitUntil: "domcontentloaded" });

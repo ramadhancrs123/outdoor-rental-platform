@@ -381,7 +381,7 @@ BEGIN
     to_char(p_jadwal_mulai AT TIME ZONE v_timezone, 'YYYY')
   );
   v_rental_number := 'RNT-' || to_char(p_jadwal_mulai AT TIME ZONE v_timezone, 'YYYY') || '-' || lpad(v_number::text, 3, '0');
-  v_tolerance_deadline := p_jadwal_kembali + make_interval(hours => v_default_tolerance_hours::double precision);
+  v_tolerance_deadline := p_jadwal_kembali + pg_catalog.make_interval(secs => v_default_tolerance_hours::double precision * 3600);
 
   INSERT INTO public.penyewaan (
     penyewaan_id,
