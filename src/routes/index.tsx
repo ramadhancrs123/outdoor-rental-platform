@@ -20,11 +20,14 @@ const InventoryList = lazyNamed(() => import("@/pages/inventaris/list"), "Invent
 const InventoryCreate = lazyNamed(() => import("@/pages/inventaris/create"), "InventoryCreate");
 const InventoryLocations = lazyNamed(() => import("@/pages/inventaris/locations"), "InventoryLocations");
 const InventoryShow = lazyNamed(() => import("@/pages/inventaris/show"), "InventoryShow");
+const InventoryProductShow = lazyNamed(() => import("@/pages/inventaris/product"), "InventoryProductShow");
 
 const CatalogList = lazyNamed(() => import("@/pages/katalog/list"), "CatalogList");
 const CatalogManage = lazyNamed(() => import("@/pages/katalog/manage"), "CatalogManage");
+const CatalogQuickItem = lazyNamed(() => import("@/pages/katalog/quick-item"), "CatalogQuickItem");
 const CatalogEdit = lazyNamed(() => import("@/pages/katalog/edit"), "CatalogEdit");
 const CatalogShow = lazyNamed(() => import("@/pages/katalog/show"), "CatalogShow");
+const CatalogPackage = lazyNamed(() => import("@/pages/katalog/package"), "CatalogPackagePage");
 
 const RenterList = lazyNamed(() => import("@/pages/penyewa/list"), "RenterList");
 const RenterCreate = lazyNamed(() => import("@/pages/penyewa/create"), "RenterCreate");
@@ -129,12 +132,16 @@ export function AppRoutes() {
             <Route index element={<InventoryList />} />
             <Route path="create" element={<InventoryCreate />} />
             <Route path="lokasi" element={<InventoryLocations />} />
+            <Route path="barang/:id" element={<InventoryProductShow />} />
             <Route path=":id" element={<InventoryShow />} />
           </Route>
 
           <Route path={paths.katalog}>
             <Route index element={<CatalogList />} />
+            <Route path="tambah" element={<CatalogQuickItem />} />
             <Route path="manage" element={<CatalogManage />} />
+            <Route path="paket/tambah" element={<CatalogPackage />} />
+            <Route path="paket/:id" element={<CatalogPackage />} />
             <Route path="edit/:id" element={<CatalogEdit />} />
             <Route path="show/:id" element={<CatalogShow />} />
           </Route>

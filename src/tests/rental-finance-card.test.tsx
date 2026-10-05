@@ -82,19 +82,20 @@ describe("RentalFinanceCard", () => {
     });
   });
 
-  test("menampilkan entry point Keuangan dan mengikat Catat Pembayaran ke rental source", async () => {
+  test("menampilkan entry point Keuangan dan membuka callback Catat Pembayaran", async () => {
+    const onRecordPayment = vi.fn();
     render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <MemoryRouter>
-          <RentalFinanceCard context={context} rental={rental as never} />
+          <RentalFinanceCard context={context} rental={rental as never} onRecordPayment={onRecordPayment} />
         </MemoryRouter>
       </QueryClientProvider>,
     );
 
     expect(await screen.findByText("Keuangan")).toBeInTheDocument();
     expect(await screen.findByText(/Pembayaran tercatat/)).toBeInTheDocument();
-    const paymentLink = screen.getByRole("link", { name: /Catat Pembayaran/i });
-    expect(paymentLink).toHaveAttribute("href", expect.stringContaining("sourceType=rental"));
-    expect(paymentLink).toHaveAttribute("href", expect.stringContaining("sourceId=rental-1"));
+    const paymentButton = screen.getByRole("button", { name: /Catat Pembayaran/i });
+    paymentButton.click();
+    expect(onRecordPayment).toHaveBeenCalledTimes(1);
   });
 });

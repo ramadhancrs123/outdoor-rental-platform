@@ -34,21 +34,14 @@ function formatPaymentDate(value: string, timezone: string) {
   }).format(new Date(value));
 }
 
-function paymentHref(rental: RentalDetail) {
-  const params = new URLSearchParams({
-    sourceType: "rental",
-    sourceId: rental.penyewaan_id,
-    sourceNumber: rental.nomor_penyewaan,
-  });
-  return paths.keuangan + "/pembayaran/create?" + params.toString();
-}
-
 export function RentalFinanceCard({
   context,
   rental,
+  onRecordPayment,
 }: {
   context: RentalTenantContext;
   rental: RentalDetail;
+  onRecordPayment?: () => void;
 }) {
   const summary = useQuery({
     queryKey: ["keuangan", "rental-payment-summary", context.usahaId, rental.penyewaan_id, rental.total_amount],
@@ -133,12 +126,10 @@ export function RentalFinanceCard({
                 </p>
               )}
 
-              {rental.status !== "completed" ? (
-                <Button asChild className="mt-2.5 h-10 w-full rounded-xl bg-[#0a6b55] text-xs font-semibold shadow-[0_8px_18px_rgba(10,107,85,.16)] hover:bg-[#075944]">
-                  <Link to={paymentHref(rental)}>
-                    <CreditCard className="size-4" />
-                    Catat Pembayaran
-                  </Link>
+              {onRecordPayment ? (
+                <Button type="button" onClick={onRecordPayment} className="mt-2.5 h-10 w-full rounded-xl bg-[#0a6b55] text-xs font-semibold shadow-[0_8px_18px_rgba(10,107,85,.16)] hover:bg-[#075944]">
+                  <CreditCard className="size-4" />
+                  Catat Pembayaran
                 </Button>
               ) : null}
             </>

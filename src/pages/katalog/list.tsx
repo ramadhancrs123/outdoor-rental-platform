@@ -1,13 +1,12 @@
 import { createClientId } from "@/lib/client-id";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowDownAZ,
-  ArrowUpAZ,
   Boxes,
   CheckCircle2,
   EllipsisVertical,
   Filter,
   Layers3,
+  MapPin,
   PackageOpen,
   Plus,
   RefreshCw,
@@ -291,7 +290,7 @@ export const CatalogList = () => {
                 <h1 className="text-[25px] font-bold leading-tight tracking-tight sm:text-[28px]">Katalog</h1>
               </div>
               <Button asChild className="h-10 shrink-0 rounded-xl px-4">
-                <Link to={paths.katalog + "/manage?tab=product"}>
+                <Link to={paths.katalogQuickItem}>
                   <Plus />
                   Tambah Barang
                 </Link>
@@ -308,7 +307,10 @@ export const CatalogList = () => {
               Usaha: {context.data.usahaName}
             </div>
             <Button asChild variant="outline" className="h-10 rounded-full px-4">
-              <Link to={paths.katalog + "/manage"}>Kelola Kategori</Link>
+              <Link to={paths.inventarisLocations}>
+                <MapPin />
+                Input Lokasi
+              </Link>
             </Button>
           </div>
 
@@ -604,8 +606,7 @@ export const CatalogList = () => {
               <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">Lihat paket yang ditawarkan, barang/varian yang termasuk, jumlah komponen, dan tarif paket yang tercatat.</p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Button asChild variant="outline" className="rounded-xl"><Link to={paths.katalog + "/manage?tab=package"}>Kelola Paket</Link></Button>
-              <Button asChild className="rounded-xl"><Link to={paths.katalog + "/manage?tab=package"}><Plus />Buat Paket</Link></Button>
+              <Button asChild className="rounded-xl"><Link to={paths.katalogPackageCreate}><Plus />Buat Paket</Link></Button>
             </div>
           </header>
           <div className="grid gap-4 lg:grid-cols-[.8fr_1.2fr]">
@@ -625,9 +626,14 @@ export const CatalogList = () => {
                       "w-full rounded-xl border p-4 text-left transition-colors",
                       selectedPackageId === item.paket_sewa_id ? "border-primary bg-primary/[0.04] ring-1 ring-primary/20" : "hover:bg-muted/40",
                     ].join(" ")}>
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0"><p className="truncate font-semibold">{item.nama}</p><p className="mt-1 text-xs text-muted-foreground">{item.slug}</p></div>
-                        <Badge variant={item.status === "active" ? "default" : "secondary"} className="shrink-0 rounded-full">{catalogStatusLabel(item.status)}</Badge>
+                      <div className="flex items-start gap-3">
+                        <div className="grid size-14 shrink-0 place-items-center overflow-hidden rounded-xl border bg-muted/40">
+                          {item.cover_url ? <img src={item.cover_url} alt={item.nama} className="h-full w-full object-cover" loading="lazy" /> : <Boxes className="size-6 text-muted-foreground" aria-hidden="true" />}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-start justify-between gap-3"><p className="truncate font-semibold">{item.nama}</p><Badge variant={item.status === "active" ? "default" : "secondary"} className="shrink-0 rounded-full">{catalogStatusLabel(item.status)}</Badge></div>
+                          <p className="mt-1 text-xs text-muted-foreground">{item.slug}</p>
+                        </div>
                       </div>
                       <div className="mt-3 flex flex-wrap gap-2">
                         <Badge variant="outline" className="rounded-full">{item.is_public ? "Publik" : "Internal"}</Badge>
@@ -636,7 +642,7 @@ export const CatalogList = () => {
                     </button>
                   ))
                 ) : (
-                  <div className="rounded-2xl border border-dashed p-6 text-center"><Boxes className="mx-auto size-8 text-muted-foreground" /><p className="mt-3 font-semibold">Belum ada Paket Sewa</p><p className="mt-1 text-sm leading-6 text-muted-foreground">Buat paket dari Kelola Katalog untuk kemudian melihat rincian paket di sini.</p><Button asChild className="mt-4 rounded-xl"><Link to={paths.katalog + "/manage?tab=package"}><Plus />Buat Paket</Link></Button></div>
+                  <div className="rounded-2xl border border-dashed p-6 text-center"><Boxes className="mx-auto size-8 text-muted-foreground" /><p className="mt-3 font-semibold">Belum ada Paket Sewa</p><p className="mt-1 text-sm leading-6 text-muted-foreground">Buat paket melalui tombol Buat Paket untuk kemudian melihat rincian paket di sini.</p><Button asChild className="mt-4 rounded-xl"><Link to={paths.katalogPackageCreate}><Plus />Buat Paket</Link></Button></div>
                 )}
               </CardContent>
             </Card>
@@ -656,7 +662,7 @@ export const CatalogList = () => {
                   </div>
 
                   <section className="rounded-2xl border p-4">
-                    <div className="flex items-center justify-between gap-3"><div><p className="text-xs text-muted-foreground">Harga dasar</p><p className="text-2xl font-bold">{packageDetails.data.package.harga_dasar == null ? "Belum ditetapkan" : formatCatalogMoney(packageDetails.data.package.harga_dasar, packageDetails.data.package.currency_code)}</p></div><Button asChild variant="outline" className="rounded-xl"><Link to={paths.katalogManage + "?tab=package&editPackage=" + packageDetails.data.package.paket_sewa_id}>Ubah Paket</Link></Button></div>
+                    <div className="flex items-center justify-between gap-3"><div><p className="text-xs text-muted-foreground">Harga dasar</p><p className="text-2xl font-bold">{packageDetails.data.package.harga_dasar == null ? "Belum ditetapkan" : formatCatalogMoney(packageDetails.data.package.harga_dasar, packageDetails.data.package.currency_code)}</p></div><Button asChild variant="outline" className="rounded-xl"><Link to={paths.katalogPackage + "/" + packageDetails.data.package.paket_sewa_id}>Ubah Paket</Link></Button></div>
                   </section>
 
                   <section>

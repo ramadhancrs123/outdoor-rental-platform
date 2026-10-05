@@ -17,9 +17,12 @@ import type {
   InventoryOperationalContext,
   InventoryOperationalStatusInput,
   InventoryPackageAvailability,
+  InventoryProductDetail,
+  InventoryProductOverview,
   InventoryReconciliationResult,
   InventoryUnit,
   InventoryUnitHistory,
+  InventoryUnitMedia,
   InventoryVariant,
   InspectionPendingCommandInput,
   RegisterInventoryUnitInput,
@@ -397,7 +400,6 @@ export async function registerInventoryUnit(
   const kodeUnit = input.kodeUnit.trim();
   if (!usahaId.trim()) throw new Error("Usaha wajib ditentukan.");
   if (!input.barangId.trim()) throw new Error("Barang wajib dipilih.");
-  if (!kodeUnit) throw new Error("Kode unit wajib diisi.");
 
   const idempotencyKey = options.idempotencyKey ?? `register-inventory-unit-${createClientId()}`;
 
@@ -853,4 +855,253 @@ export async function listInventoryPackageAvailability(
       components: packageComponents,
     };
   });
+}
+
+const INVENTORY_UNIT_MEDIA_BUCKET = "rental-private-inventory";
+const SIGNED_MEDIA_TTL_SECONDS = 60 * 60;
+
+function getPublicMediaUrl(storageBucket: string, storagePath: string) {
+  return supabase.storage.from(storageBucket).getPublicUrl(storagePath).data.publicUrl;
+}
+
+async function signUnitMediaRows(rows: Array<Omit<InventoryUnitMedia, "signed_url">>): Promise<InventoryUnitMedia[]> {
+  return Promise.all(
+    rows.map(async (row) => {
+      const { data, error } = await supabase.storage
+        .from(row.storage_bucket)
+        .createSignedUrl(row.storage_path, SIGNED_MEDIA_TTL_SECONDS);
+      return {
+        ...row,
+        signed_url: error ? null : data?.signedUrl ?? null,
+      };
+    }),
+  );
+}
+
+export async function listInventoryProductOverview(usahaId: string): Promise<InventoryProductOverview[]> {
+  const { data, error } = await supabase.rpc("inventory_product_overview", {
+    p_usaha_id: usahaId,
+  });
+  if (error) throw normalizeRpcError(error, "Ringkasan produk Inventaris");
+
+  return ((data ?? []) as Array<Omit<InventoryProductOverview, "cover_url"> & {
+    cover_bucket: string | null;
+    cover_path: string | null;
+    latest_unit_updated_at: string | null;
+  }>).map((row) => ({
+    ...row,
+    total_unit: Number(row.total_unit ?? 0),
+    ready_unit: Number(row.ready_unit ?? 0),
+    rented_unit: Number(row.rented_unit ?? 0),
+    attention_unit: Number(row.attention_unit ?? 0),
+    inspection_pending_unit: Number(row.inspection_pending_unit ?? 0),
+    maintenance_unit: Number(row.maintenance_unit ?? 0),
+    damaged_unit: Number(row.damaged_unit ?? 0),
+    lost_unit: Number(row.lost_unit ?? 0),
+    inactive_unit: Number(row.inactive_unit ?? 0),
+    variant_count: Number(row.variant_count ?? 0),
+    latest_unit_updated_at: row.latest_unit_updated_at ?? null,
+    cover_url: row.cover_bucket && row.cover_path
+      ? getPublicMediaUrl(row.cover_bucket, row.cover_path)
+      : null,
+  }));
+}
+
+export async function getInventoryProductDetail(
+  usahaId: string,
+  productId: string,
+): Promise<InventoryProductDetail> {
+  const [productResult, variantsResult, mediaResult, summaryRows, unitsResult] = await Promise.all([
+    supabase
+      .from("barang")
+      .select("barang_id,usaha_id,kategori_barang_id,nama,slug,deskripsi,ringkasan_publik,status,is_public,updated_at,kategori:kategori_barang!barang_kategori_tenant_fk(kategori_barang_id,nama,status)")
+      .eq("usaha_id", usahaId)
+      .eq("barang_id", productId)
+      .maybeSingle(),
+    supabase
+      .from("varian_barang")
+      .select("varian_barang_id,barang_id,usaha_id,nama,kode_internal,status")
+      .eq("usaha_id", usahaId)
+      .eq("barang_id", productId)
+      .order("nama", { ascending: true }),
+    supabase
+      .from("barang_media")
+      .select("barang_media_id,storage_bucket,storage_path,media_type,urutan,is_cover,status")
+      .eq("usaha_id", usahaId)
+      .eq("barang_id", productId)
+      .in("status", ["valid", "active"])
+      .order("is_cover", { ascending: false })
+      .order("urutan", { ascending: true }),
+    listInventoryProductOverview(usahaId),
+    listInventoryUnits(usahaId, {
+      page: 1,
+      pageSize: 6,
+      search: "",
+      status: "all",
+      barangId: productId,
+      varianBarangId: "all",
+      locationId: "all",
+      availabilityContext: "all",
+      sort: "updated_desc",
+    }),
+  ]);
+
+  if (productResult.error) throw productResult.error;
+  if (!productResult.data) throw new Error("Barang tidak ditemukan dalam Usaha aktif.");
+  if (variantsResult.error) throw variantsResult.error;
+  if (mediaResult.error) throw mediaResult.error;
+
+  const summary = summaryRows.find((row) => row.barang_id === productId);
+  if (!summary) throw new Error("Ringkasan Inventaris barang tidak ditemukan.");
+
+  const unitIdsResult = await supabase
+    .from("unit_barang")
+    .select("unit_barang_id,kode_unit")
+    .eq("usaha_id", usahaId)
+    .eq("barang_id", productId)
+    .order("updated_at", { ascending: false })
+    .limit(50);
+  if (unitIdsResult.error) throw unitIdsResult.error;
+
+  const unitCodeById = new Map(
+    (unitIdsResult.data ?? []).map((row) => [row.unit_barang_id as string, row.kode_unit as string]),
+  );
+  const historyIds = Array.from(unitCodeById.keys());
+  let recentHistory: InventoryProductDetail["recentHistory"] = [];
+
+  if (historyIds.length) {
+    const historyResult = await supabase
+      .from("riwayat_unit")
+      .select("riwayat_unit_id,usaha_id,unit_barang_id,jenis_kejadian,terjadi_at,status_sebelum,status_sesudah,lokasi_sebelum_id,lokasi_sesudah_id,sumber_type,sumber_id,actor_akun_admin_id,catatan,metadata,created_at")
+      .eq("usaha_id", usahaId)
+      .in("unit_barang_id", historyIds)
+      .order("terjadi_at", { ascending: false })
+      .limit(12);
+
+    if (historyResult.error) throw historyResult.error;
+    recentHistory = ((historyResult.data ?? []) as InventoryUnitHistory[]).map((item) => ({
+      ...item,
+      unit_kode: unitCodeById.get(item.unit_barang_id) ?? "Unit",
+    }));
+  }
+
+  return {
+    product: productResult.data as unknown as InventoryProductDetail["product"],
+    variants: (variantsResult.data ?? []) as InventoryVariant[],
+    media: ((mediaResult.data ?? []) as Array<{
+      barang_media_id: string;
+      storage_bucket: string;
+      storage_path: string;
+      media_type: string;
+      urutan: number;
+      is_cover: boolean;
+      status: string;
+    }>).map((row) => ({
+      ...row,
+      url: getPublicMediaUrl(row.storage_bucket, row.storage_path),
+    })),
+    summary,
+    units: unitsResult,
+    recentHistory,
+  };
+}
+
+export async function listInventoryUnitMedia(
+  usahaId: string,
+  unitBarangId: string,
+): Promise<InventoryUnitMedia[]> {
+  const { data, error } = await supabase
+    .from("unit_media")
+    .select("unit_media_id,usaha_id,unit_barang_id,storage_bucket,storage_path,media_type,urutan,is_cover,status,created_at,updated_at")
+    .eq("usaha_id", usahaId)
+    .eq("unit_barang_id", unitBarangId)
+    .eq("status", "valid")
+    .order("is_cover", { ascending: false })
+    .order("urutan", { ascending: true });
+
+  if (error) throw normalizeRpcError(error, "Foto unit");
+  return signUnitMediaRows((data ?? []) as Array<Omit<InventoryUnitMedia, "signed_url">>);
+}
+
+export async function uploadInventoryUnitMediaFile(
+  usahaId: string,
+  unitBarangId: string,
+  file: File,
+  options: { isCover?: boolean; urutan?: number; idempotencyKey?: string } = {},
+): Promise<InventoryUnitMedia> {
+  if (!file.type.startsWith("image/")) throw new Error("Foto unit harus berupa gambar.");
+  if (file.size > 8 * 1024 * 1024) throw new Error("Ukuran foto maksimal 8 MB.");
+
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-80) || "unit-photo";
+  const mediaId = createClientId();
+  const storagePath = usahaId + "/unit/" + unitBarangId + "/" + mediaId + "/" + safeName;
+  const { error: uploadError } = await supabase.storage
+    .from(INVENTORY_UNIT_MEDIA_BUCKET)
+    .upload(storagePath, file, { upsert: false, contentType: file.type });
+
+  if (uploadError) throw uploadError;
+
+  const idempotencyKey = options.idempotencyKey ?? ("add-unit-media-" + mediaId);
+  const { data, error } = await supabase.rpc("command_add_unit_media", {
+    p_usaha_id: usahaId,
+    p_unit_barang_id: unitBarangId,
+    p_storage_bucket: INVENTORY_UNIT_MEDIA_BUCKET,
+    p_storage_path: storagePath,
+    p_media_type: file.type,
+    p_urutan: options.urutan ?? 1,
+    p_is_cover: options.isCover ?? false,
+    p_idempotency_key: idempotencyKey,
+    p_request_id: createClientId(),
+  });
+
+  if (error || !data) {
+    const { data: existing } = await supabase
+      .from("unit_media")
+      .select("unit_media_id,usaha_id,unit_barang_id,storage_bucket,storage_path,media_type,urutan,is_cover,status,created_at,updated_at")
+      .eq("usaha_id", usahaId)
+      .eq("unit_barang_id", unitBarangId)
+      .eq("storage_path", storagePath)
+      .eq("status", "valid")
+      .maybeSingle();
+
+    if (existing) {
+      return (await signUnitMediaRows([existing as Omit<InventoryUnitMedia, "signed_url">]))[0];
+    }
+
+    if (error) throw normalizeRpcError(error, "Pencatatan foto unit");
+    throw new Error("Pencatatan foto unit tidak mengembalikan hasil.");
+  }
+
+  const row = data as InventoryUnitMedia;
+  return (await signUnitMediaRows([row as unknown as Omit<InventoryUnitMedia, "signed_url">]))[0];
+}
+
+export async function removeInventoryUnitMedia(
+  usahaId: string,
+  unitMediaId: string,
+): Promise<void> {
+  const { data, error } = await supabase.rpc("command_remove_unit_media", {
+    p_usaha_id: usahaId,
+    p_unit_media_id: unitMediaId,
+    p_idempotency_key: "remove-unit-media-" + unitMediaId + "-" + createClientId(),
+    p_request_id: createClientId(),
+  });
+  if (error) throw normalizeRpcError(error, "Hapus foto unit");
+  if (!data) throw new Error("Hapus foto unit tidak mengembalikan hasil.");
+}
+
+export async function setInventoryUnitMediaCover(
+  usahaId: string,
+  unitMediaId: string,
+  isCover: boolean,
+): Promise<void> {
+  const { data, error } = await supabase.rpc("command_set_unit_media_cover", {
+    p_usaha_id: usahaId,
+    p_unit_media_id: unitMediaId,
+    p_is_cover: isCover,
+    p_idempotency_key: "cover-unit-media-" + unitMediaId + "-" + (isCover ? "on" : "off") + "-" + createClientId(),
+    p_request_id: createClientId(),
+  });
+  if (error) throw normalizeRpcError(error, "Perubahan foto utama unit");
+  if (!data) throw new Error("Perubahan foto utama unit tidak mengembalikan hasil.");
 }

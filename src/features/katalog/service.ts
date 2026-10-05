@@ -1,6 +1,6 @@
 import { createClientId } from "@/lib/client-id";
 import { supabase } from "@/app/providers/supabase/client";
-import type { CatalogCategory, CatalogListFilters, CatalogPackageReference, CatalogProduct, CatalogProductDetail, CatalogSummary, CatalogStockSummary, CatalogTariff, CatalogVariant, CatalogVariantOption } from "./types";
+import type { CatalogCategory, CatalogListFilters, CatalogPackageMedia, CatalogPackageReference, CatalogProduct, CatalogProductDetail, CatalogSummary, CatalogStockSummary, CatalogTariff, CatalogVariant, CatalogVariantOption } from "./types";
 import { CATALOG_PRODUCT_MEDIA_BUCKET } from "./types";
 import { isActiveCatalogTariff } from "./utils";
 
@@ -79,6 +79,48 @@ export async function listCatalogVariants(usahaId: string): Promise<CatalogVaria
 
 export function getCatalogMediaUrl(storageBucket: string, storagePath: string) {
   return supabase.storage.from(storageBucket).getPublicUrl(storagePath).data.publicUrl;
+}
+
+export async function uploadCatalogPackageMediaFile(
+  usahaId: string,
+  paketSewaId: string,
+  file: File,
+  options: { isCover?: boolean; urutan?: number; idempotencyKey?: string } = {},
+) {
+  if (!file.type.startsWith("image/")) throw new Error("Media paket harus berupa gambar.");
+  if (file.size > 8 * 1024 * 1024) throw new Error("Ukuran gambar maksimal 8 MB.");
+
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-80) || "package-image";
+  const mediaId = createClientId();
+  const storagePath = usahaId + "/paket/" + paketSewaId + "/" + mediaId + "/" + safeName;
+
+  const { error: uploadError } = await supabase.storage
+    .from(CATALOG_PRODUCT_MEDIA_BUCKET)
+    .upload(storagePath, file, { upsert: false, contentType: file.type });
+
+  if (uploadError) throw uploadError;
+
+  try {
+    return await addCatalogPackageMedia(
+      usahaId,
+      {
+        paketSewaId,
+        storageBucket: CATALOG_PRODUCT_MEDIA_BUCKET,
+        storagePath,
+        mediaType: file.type,
+        urutan: options.urutan ?? 1,
+        isCover: options.isCover ?? false,
+      },
+      { idempotencyKey: options.idempotencyKey },
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.startsWith("UNKNOWN_OUTCOME:")) throw new Error(message);
+    throw new Error(
+      "Upload berhasil tetapi pencatatan media paket belum dapat dipastikan. Jangan upload ulang file yang sama sebelum memeriksa state. " +
+      message,
+    );
+  }
 }
 
 export async function uploadCatalogMediaFile(
@@ -381,6 +423,15 @@ export type UpdateCatalogTariffInput = {
 
 export type AddCatalogMediaInput = {
   barangId: string;
+  storageBucket: string;
+  storagePath: string;
+  mediaType?: string;
+  urutan?: number;
+  isCover?: boolean;
+};
+
+export type AddCatalogPackageMediaInput = {
+  paketSewaId: string;
   storageBucket: string;
   storagePath: string;
   mediaType?: string;
@@ -977,6 +1028,99 @@ export async function reorderCatalogMedia(
   );
 }
 
+export async function addCatalogPackageMedia(
+  usahaId: string,
+  input: AddCatalogPackageMediaInput,
+  options: CatalogCommandOptions = {},
+) {
+  const idempotencyKey = commandKey("add-katalog-package-media", options);
+  return executeCatalogCommand(
+    usahaId,
+    "add_paket_media",
+    "command_add_paket_media",
+    {
+      p_usaha_id: usahaId,
+      p_paket_sewa_id: input.paketSewaId,
+      p_storage_bucket: input.storageBucket,
+      p_storage_path: input.storagePath,
+      p_media_type: input.mediaType ?? "image",
+      p_urutan: input.urutan ?? 1,
+      p_is_cover: input.isCover ?? false,
+      p_idempotency_key: idempotencyKey,
+      p_request_id: options.requestId ?? createClientId(),
+    },
+    "Penambahan media paket",
+    idempotencyKey,
+  );
+}
+
+export async function removeCatalogPackageMedia(
+  usahaId: string,
+  paketMediaId: string,
+  options: CatalogCommandOptions = {},
+) {
+  const idempotencyKey = commandKey("remove-katalog-package-media", options);
+  return executeCatalogCommand(
+    usahaId,
+    "remove_paket_media",
+    "command_remove_paket_media",
+    {
+      p_usaha_id: usahaId,
+      p_paket_media_id: paketMediaId,
+      p_idempotency_key: idempotencyKey,
+      p_request_id: options.requestId ?? createClientId(),
+    },
+    "Penghapusan media paket",
+    idempotencyKey,
+  );
+}
+
+export async function setCatalogPackageMediaCover(
+  usahaId: string,
+  paketMediaId: string,
+  isCover: boolean,
+  options: CatalogCommandOptions = {},
+) {
+  const idempotencyKey = commandKey("set-katalog-package-media-cover", options);
+  return executeCatalogCommand(
+    usahaId,
+    "set_paket_media_cover",
+    "command_set_paket_media_cover",
+    {
+      p_usaha_id: usahaId,
+      p_paket_media_id: paketMediaId,
+      p_is_cover: isCover,
+      p_idempotency_key: idempotencyKey,
+      p_request_id: options.requestId ?? createClientId(),
+    },
+    "Perubahan cover media paket",
+    idempotencyKey,
+  );
+}
+
+export async function reorderCatalogPackageMedia(
+  usahaId: string,
+  paketSewaId: string,
+  orders: Array<{ paket_media_id: string; urutan: number }>,
+  options: CatalogCommandOptions = {},
+) {
+  const idempotencyKey = commandKey("reorder-katalog-package-media", options);
+  return executeCatalogCommand(
+    usahaId,
+    "reorder_paket_media",
+    "command_reorder_paket_media",
+    {
+      p_usaha_id: usahaId,
+      p_paket_sewa_id: paketSewaId,
+      p_orders: orders,
+      p_idempotency_key: idempotencyKey,
+      p_request_id: options.requestId ?? createClientId(),
+    },
+    "Pengurutan media paket",
+    idempotencyKey,
+  );
+}
+
 export async function reconcileCatalogMutation(
   usahaId: string,
   commandName: string,
@@ -1007,16 +1151,27 @@ export async function listCatalogPackages(usahaId: string): Promise<import("./ty
 
   const now = new Date();
   const nowIso = now.toISOString();
-  const tariffResult = await supabase
-    .from("tarif_sewa")
-    .select("tarif_sewa_id,usaha_id,barang_id,varian_barang_id,paket_sewa_id,nama,durasi_unit,durasi_nilai,nominal,currency_code,berlaku_mulai,berlaku_sampai,status,updated_at")
-    .eq("usaha_id", usahaId)
-    .in("paket_sewa_id", packageIds)
-    .eq("status", "active")
-    .lte("berlaku_mulai", nowIso)
-    .or("berlaku_sampai.is.null,berlaku_sampai.gt." + nowIso)
-    .order("berlaku_mulai", { ascending: false });
+  const [tariffResult, mediaResult] = await Promise.all([
+    supabase
+      .from("tarif_sewa")
+      .select("tarif_sewa_id,usaha_id,barang_id,varian_barang_id,paket_sewa_id,nama,durasi_unit,durasi_nilai,nominal,currency_code,berlaku_mulai,berlaku_sampai,status,updated_at")
+      .eq("usaha_id", usahaId)
+      .in("paket_sewa_id", packageIds)
+      .eq("status", "active")
+      .lte("berlaku_mulai", nowIso)
+      .or("berlaku_sampai.is.null,berlaku_sampai.gt." + nowIso)
+      .order("berlaku_mulai", { ascending: false }),
+    supabase
+      .from("paket_media")
+      .select("paket_media_id,usaha_id,paket_sewa_id,storage_bucket,storage_path,media_type,urutan,is_cover,status")
+      .eq("usaha_id", usahaId)
+      .in("paket_sewa_id", packageIds)
+      .eq("status", "valid")
+      .eq("is_cover", true)
+      .order("urutan", { ascending: true }),
+  ]);
   if (tariffResult.error) throw tariffResult.error;
+  if (mediaResult.error) throw mediaResult.error;
 
   const activeTariffByPackage = new Map<string, CatalogTariff>();
   for (const tariff of (tariffResult.data ?? []) as CatalogTariff[]) {
@@ -1024,10 +1179,19 @@ export async function listCatalogPackages(usahaId: string): Promise<import("./ty
     if (isActiveCatalogTariff(tariff, now)) activeTariffByPackage.set(tariff.paket_sewa_id, tariff);
   }
 
-  return packages.map((pkg) => ({
-    ...pkg,
-    active_tariff: activeTariffByPackage.get(pkg.paket_sewa_id) ?? null,
-  }));
+  const coverByPackage = new Map<string, CatalogPackageMedia>();
+  for (const media of (mediaResult.data ?? []) as CatalogPackageMedia[]) {
+    if (!coverByPackage.has(media.paket_sewa_id)) coverByPackage.set(media.paket_sewa_id, media);
+  }
+
+  return packages.map((pkg) => {
+    const cover = coverByPackage.get(pkg.paket_sewa_id);
+    return {
+      ...pkg,
+      active_tariff: activeTariffByPackage.get(pkg.paket_sewa_id) ?? null,
+      cover_url: cover ? getCatalogMediaUrl(cover.storage_bucket, cover.storage_path) : null,
+    };
+  });
 }
 
 export async function listCatalogPackageComponents(usahaId: string, paketSewaId: string): Promise<import("./types").CatalogPackageComponent[]> {
@@ -1048,8 +1212,9 @@ export async function getCatalogPackageDetails(
   package: import("./types").CatalogPackage;
   components: import("./types").CatalogPackageComponentDetail[];
   tariffs: import("./types").CatalogTariff[];
+  media: CatalogPackageMedia[];
 }> {
-  const [packageResult, componentsResult, tariffsResult] = await Promise.all([
+  const [packageResult, componentsResult, tariffsResult, mediaResult] = await Promise.all([
     supabase
       .from("paket_sewa")
       .select("paket_sewa_id,usaha_id,nama,slug,deskripsi,harga_dasar,currency_code,status,is_public,metadata,updated_at")
@@ -1068,14 +1233,23 @@ export async function getCatalogPackageDetails(
       .eq("usaha_id", usahaId)
       .eq("paket_sewa_id", paketSewaId)
       .order("berlaku_mulai", { ascending: false }),
+    supabase
+      .from("paket_media")
+      .select("paket_media_id,usaha_id,paket_sewa_id,storage_bucket,storage_path,media_type,urutan,is_cover,status")
+      .eq("usaha_id", usahaId)
+      .eq("paket_sewa_id", paketSewaId)
+      .eq("status", "valid")
+      .order("urutan", { ascending: true }),
   ]);
   if (packageResult.error) throw packageResult.error;
   if (!packageResult.data) throw new Error("Paket sewa tidak ditemukan dalam Usaha aktif.");
   if (componentsResult.error) throw componentsResult.error;
   if (tariffsResult.error) throw tariffsResult.error;
+  if (mediaResult.error) throw mediaResult.error;
   return {
     package: packageResult.data as import("./types").CatalogPackage,
     components: (componentsResult.data ?? []) as unknown as import("./types").CatalogPackageComponentDetail[],
     tariffs: (tariffsResult.data ?? []) as import("./types").CatalogTariff[],
+    media: (mediaResult.data ?? []) as CatalogPackageMedia[],
   };
 }

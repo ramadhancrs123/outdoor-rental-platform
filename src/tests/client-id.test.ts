@@ -25,4 +25,21 @@ describe("createClientId", () => {
 
     expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
   });
+
+  test("does not depend on isSecureContext for fallback UUID generation", () => {
+    if (!globalThis.crypto) throw new Error("Web Crypto tidak tersedia pada test runtime.");
+
+    Object.defineProperty(globalThis.crypto, "randomUUID", {
+      value: undefined,
+      configurable: true,
+    });
+    Object.defineProperty(globalThis, "isSecureContext", {
+      value: false,
+      configurable: true,
+    });
+
+    const id = createClientId();
+
+    expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  });
 });

@@ -1,8 +1,9 @@
 # ADR-010 — Setiap Pengembalian Wajib Melalui Perawatan Sebelum Ready
 
-Status: ACCEPTED
+Status: SUPERSEDED IN POST-RENTAL MAINTENANCE RULE BY ADR-019
 Tanggal: 2026-10-02
-Supersedes: bagian readiness flow pada baseline pemeriksaan yang sebelumnya mengizinkan pemeriksaan selesai berhenti di tahap review.
+Superseded by: ADR-019 — Operational Workspace Backend Orchestration dan Readiness Parsial
+Scope retained: ownership, maintenance verification, dan readiness gate tetap berlaku; aturan bahwa setiap inspection normal wajib membuat maintenance sudah superseded.
 
 ## Konteks
 

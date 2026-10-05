@@ -26,7 +26,6 @@ import {
   Tag,
   Trash2,
   Upload,
-  UserRound,
   Video,
   X,
 } from "lucide-react";
@@ -117,7 +116,7 @@ export function InspectionShow() {
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraError, setCameraError] = useState("");
   const [cameraReady, setCameraReady] = useState(false);
-  const [completionResult, setCompletionResult] = useState<{ decision: string; findingCount: number; evidenceCount: number; maintenanceId: string | null } | null>(null);
+  const [completionResult, setCompletionResult] = useState<{ decision: string; findingCount: number; evidenceCount: number; maintenanceId: string | null; unitStatus: string | null } | null>(null);
   const [historyExpanded, setHistoryExpanded] = useState(false);
   const galleryInputRef = useRef<HTMLInputElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -243,8 +242,15 @@ export function InspectionShow() {
         findingCount: result.finding_count,
         evidenceCount: refreshedWorkspace.data?.currentInspection?.evidences.length ?? 0,
         maintenanceId: refreshedWorkspace.data?.linkedMaintenance?.perawatan_id ?? null,
+        unitStatus: refreshedWorkspace.data?.unit.status ?? null,
       });
-      setFeedback("Pemeriksaan tersimpan. Unit langsung masuk Perawatan.");
+      setFeedback(
+        refreshedWorkspace.data?.unit.status === "lost"
+          ? "Pemeriksaan tersimpan. Unit otomatis ditandai Hilang dan dikeluarkan dari pool penyewaan."
+          : refreshedWorkspace.data?.linkedMaintenance
+            ? "Pemeriksaan tersimpan. Unit masuk Perawatan."
+            : "Pemeriksaan tersimpan. Lanjutkan sesuai status readiness unit.",
+      );
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["pemeriksaan", "queue"] }),
         queryClient.invalidateQueries({ queryKey: ["inventaris"] }),
@@ -403,25 +409,36 @@ export function InspectionShow() {
               <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
                 <div><p className="text-xs text-muted-foreground">Temuan</p><p className="mt-1 font-semibold">{completionResult.findingCount}</p></div>
                 <div><p className="text-xs text-muted-foreground">Bukti Foto</p><p className="mt-1 font-semibold">{completionResult.evidenceCount}</p></div>
-                <div><p className="text-xs text-muted-foreground">Status</p><p className="mt-1 font-semibold">Masuk Perawatan</p></div>
+                <div><p className="text-xs text-muted-foreground">Status</p><p className="mt-1 font-semibold">
+                  {completionResult.unitStatus === "lost" ? "Hilang" : completionResult.maintenanceId ? "Masuk Perawatan" : completionResult.unitStatus === "ready" ? "Siap Disewakan" : "Menunggu Readiness"}
+                </p></div>
               </div>
             </div>
-            <Alert className="relative w-full max-w-md text-left">
-              <CheckCircle2 className="size-4" />
-              <AlertTitle>Pemeriksaan selesai</AlertTitle>
-              <AlertDescription>Unit sekarang masuk Perawatan. Setelah pekerjaan selesai, lakukan Verifikasi Kesiapan sebelum unit kembali Siap Disewakan.</AlertDescription>
-            </Alert>
+            {completionResult.unitStatus === "lost" ? (
+              <Alert className="relative w-full max-w-md border-red-200 bg-red-50/60 text-left dark:border-red-900/40 dark:bg-red-950/10">
+                <CircleAlert className="size-4 text-red-600" />
+                <AlertTitle>Unit ditandai Hilang</AlertTitle>
+                <AlertDescription>Unit sudah dipindahkan ke status Hilang dan tidak lagi tersedia untuk penyewaan baru. Tinjau Potensi Tanggungan Penyewa dari temuan kehilangan.</AlertDescription>
+              </Alert>
+            ) : completionResult.maintenanceId ? (
+              <Alert className="relative w-full max-w-md text-left">
+                <CheckCircle2 className="size-4" />
+                <AlertTitle>Pemeriksaan selesai</AlertTitle>
+                <AlertDescription>Unit masuk Perawatan. Setelah pekerjaan selesai, lakukan Verifikasi Kesiapan sebelum unit kembali Siap Disewakan.</AlertDescription>
+              </Alert>
+            ) : (
+              <Alert className="relative w-full max-w-md text-left">
+                <CheckCircle2 className="size-4" />
+                <AlertTitle>Pemeriksaan selesai</AlertTitle>
+                <AlertDescription>{completionResult.unitStatus === "ready" ? "Unit sudah Siap Disewakan." : "Pemeriksaan selesai. Lanjutkan proses sesuai status readiness unit."}</AlertDescription>
+              </Alert>
+            )}
             {completionResult.maintenanceId ? (
               <Button asChild className="relative w-full max-w-md h-11 rounded-xl">
                 <Link to={paths.perawatan + "/" + completionResult.maintenanceId}>Lanjutkan Perawatan <ArrowRight /></Link>
               </Button>
-            ) : (
-              <Alert variant="destructive" className="relative w-full max-w-md text-left">
-                <ShieldAlert className="size-4" />
-                <AlertTitle>Tugas Perawatan belum ditemukan</AlertTitle>
-                <AlertDescription>Muat ulang data sebelum melanjutkan. Pemeriksaan sudah tersimpan.</AlertDescription>
-              </Alert>
-            )}
+            ) : null}
+
             <div className="relative flex w-full max-w-md flex-col gap-2 sm:flex-row">
               <Button className="w-full rounded-xl" onClick={() => { setCompletionResult(null); setActiveSection("result"); void workspace.refetch(); }}>
                 Lihat Detail Pemeriksaan

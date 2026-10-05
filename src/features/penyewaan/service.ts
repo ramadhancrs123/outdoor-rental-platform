@@ -473,7 +473,7 @@ export async function getRental(usahaId: string, id: string): Promise<RentalDeta
     supabase.from("komponen_penyewaan").select("komponen_penyewaan_id,detail_penyewaan_id,barang_id,varian_barang_id,paket_sewa_id,jumlah,catatan").eq("usaha_id", usahaId).in("detail_penyewaan_id", await getDetailIds(usahaId, [id])).order("created_at", { ascending: true }),
     supabase.from("serah_terima").select("serah_terima_id,usaha_id,penyewaan_id,serah_terima_at,actor_admin_id,status,catatan").eq("usaha_id", usahaId).eq("penyewaan_id", id).order("serah_terima_at", { ascending: false }).limit(1),
     supabase.from("perpanjangan_sewa").select("perpanjangan_sewa_id,usaha_id,penyewaan_id,jadwal_kembali_sebelum,jadwal_kembali_sesudah,diminta_at,disetujui_at,disetujui_by_admin_id,status,tambahan_amount,currency_code,alasan").eq("usaha_id", usahaId).eq("penyewaan_id", id).order("diminta_at", { ascending: false }),
-    supabase.from("penyewa").select("penyewa_id,nama_lengkap").eq("usaha_id", usahaId).eq("penyewa_id", header.penyewa_id).maybeSingle(),
+    supabase.from("penyewa").select("penyewa_id,nama_lengkap,nomor_telepon").eq("usaha_id", usahaId).eq("penyewa_id", header.penyewa_id).maybeSingle(),
   ]);
   if (detailResult.error) throw detailResult.error;
   if (assignmentResult.error) throw assignmentResult.error;
@@ -504,6 +504,7 @@ export async function getRental(usahaId: string, id: string): Promise<RentalDeta
   return {
     ...header,
     penyewa_nama: renterResult.data?.nama_lengkap ?? null,
+    penyewa_telepon: renterResult.data?.nomor_telepon ?? null,
     detail_count: rawLines.length,
     assignment_count: rawAssignments.filter((row) => row.status === "assigned").length,
     lines: rawLines.map((line): RentalDetailLine => ({

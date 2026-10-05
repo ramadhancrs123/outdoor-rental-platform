@@ -293,3 +293,71 @@ export type InventoryPackageAvailability = {
   limiting_component_name: string | null;
   components: InventoryPackageComponentAvailability[];
 };
+
+
+export type InventoryProductOverview = {
+  barang_id: string;
+  nama: string;
+  slug: string;
+  status: string;
+  kategori_nama: string | null;
+  total_unit: number;
+  ready_unit: number;
+  rented_unit: number;
+  attention_unit: number;
+  inspection_pending_unit: number;
+  maintenance_unit: number;
+  damaged_unit: number;
+  lost_unit: number;
+  inactive_unit: number;
+  variant_count: number;
+  latest_unit_updated_at: string | null;
+  cover_url: string | null;
+};
+
+export type InventoryUnitMedia = {
+  unit_media_id: string;
+  usaha_id: string;
+  unit_barang_id: string;
+  storage_bucket: string;
+  storage_path: string;
+  media_type: string;
+  urutan: number;
+  is_cover: boolean;
+  status: "valid" | "deleted" | string;
+  created_at: string;
+  updated_at: string;
+  signed_url: string | null;
+};
+
+export type InventoryProductDetail = {
+  product: {
+    barang_id: string;
+    usaha_id: string;
+    kategori_barang_id: string | null;
+    nama: string;
+    slug: string;
+    deskripsi: string | null;
+    ringkasan_publik: string | null;
+    status: string;
+    is_public: boolean;
+    updated_at: string;
+    kategori: { kategori_barang_id: string; nama: string; status: string } | null;
+  };
+  variants: InventoryVariant[];
+  media: Array<{
+    barang_media_id: string;
+    storage_bucket: string;
+    storage_path: string;
+    media_type: string;
+    urutan: number;
+    is_cover: boolean;
+    status: string;
+    url: string;
+  }>;
+  summary: InventoryProductOverview;
+  units: { units: InventoryUnit[]; total: number };
+  recentHistory: Array<InventoryUnitHistory & {
+    unit_kode: string;
+  }>;
+};

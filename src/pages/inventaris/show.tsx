@@ -1,6 +1,6 @@
 import { createClientId } from "@/lib/client-id";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ArrowRight, Ban, Boxes, Check, CircleAlert, Clock3, FileText, History, MapPin, PackageCheck, QrCode, RefreshCw, Settings2, Tag, TriangleAlert, Wrench } from "lucide-react";
+import { ArrowLeft, ArrowRight, Ban, Boxes, Check, CircleAlert, Clock3, FileText, History, ImagePlus, MapPin, PackageCheck, QrCode, RefreshCw, Settings2, Star, Tag, Trash2, TriangleAlert, Wrench } from "lucide-react";
 import { useRef, useState } from "react";
 import { Link, useParams } from "react-router";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -26,8 +26,13 @@ import {
   getInventoryStateCapabilities,
   getInventoryUnit,
   listInventoryLocations,
+  listInventoryProductOverview,
+  listInventoryUnitMedia,
   markInventoryUnitReady,
+  removeInventoryUnitMedia,
+  setInventoryUnitMediaCover,
   setInventoryUnitOperationalStatus,
+  uploadInventoryUnitMediaFile,
   correctInventoryConditionSummary,
   moveInventoryUnit,
   reconcileInventoryCommand,
@@ -70,6 +75,7 @@ export function InventoryShow() {
   const [conflictReason, setConflictReason] = useState("");
   const moveCommandRef = useRef<string | null>(null);
   const readyCommandRef = useRef<string | null>(null);
+  const photoInputRef = useRef<HTMLInputElement | null>(null);
 
   const context = useQuery({
     queryKey: ["inventaris", "context"],
@@ -98,6 +104,18 @@ export function InventoryShow() {
     queryFn: () => getQrUnitRecord(context.data!.usahaId, id!),
     enabled: Boolean(context.data?.usahaId && id),
     staleTime: 5 * 60_000,
+  });
+  const unitMedia = useQuery({
+    queryKey: ["inventaris", "unit-media", context.data?.usahaId, id],
+    queryFn: () => listInventoryUnitMedia(context.data!.usahaId, id!),
+    enabled: Boolean(context.data?.usahaId && id),
+    staleTime: 15_000,
+  });
+  const productOverview = useQuery({
+    queryKey: ["inventaris", "product-overview", context.data?.usahaId],
+    queryFn: () => listInventoryProductOverview(context.data!.usahaId),
+    enabled: Boolean(context.data?.usahaId && detail.data?.unit.barang_id),
+    staleTime: 30_000,
   });
 
 
@@ -181,6 +199,48 @@ export function InventoryShow() {
         setActionFeedback(isConflictMessage(message) ? "" : message);
       }
     },
+  });
+
+  const uploadPhotoMutation = useMutation({
+    mutationFn: async (file: File) => {
+      if (!context.data || !id) throw new Error("Unit tidak ditemukan.");
+      const makeCover = (unitMedia.data?.length ?? 0) === 0;
+      return uploadInventoryUnitMediaFile(context.data.usahaId, id, file, {
+        isCover: makeCover,
+        urutan: (unitMedia.data?.length ?? 0) + 1,
+      });
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["inventaris", "unit-media", context.data?.usahaId, id] });
+      setActionFeedback("Foto unit berhasil ditambahkan. Foto utama digunakan untuk mengenali fisik unit secara cepat.");
+    },
+    onError: (error) => {
+      setActionFeedback(errorText(error, "Upload foto unit gagal."));
+    },
+  });
+
+  const setCoverMutation = useMutation({
+    mutationFn: async (unitMediaId: string) => {
+      if (!context.data) throw new Error("Usaha aktif belum tersedia.");
+      await setInventoryUnitMediaCover(context.data.usahaId, unitMediaId, true);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["inventaris", "unit-media", context.data?.usahaId, id] });
+      setActionFeedback("Foto utama unit berhasil diperbarui.");
+    },
+    onError: (error) => setActionFeedback(errorText(error, "Perubahan foto utama gagal.")),
+  });
+
+  const removePhotoMutation = useMutation({
+    mutationFn: async (unitMediaId: string) => {
+      if (!context.data) throw new Error("Usaha aktif belum tersedia.");
+      await removeInventoryUnitMedia(context.data.usahaId, unitMediaId);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["inventaris", "unit-media", context.data?.usahaId, id] });
+      setActionFeedback("Foto unit dihapus dari tampilan operasional. Riwayat unit tetap dipertahankan.");
+    },
+    onError: (error) => setActionFeedback(errorText(error, "Penghapusan foto unit gagal.")),
   });
 
   const operationalStatusMutation = useMutation({
@@ -318,6 +378,8 @@ export function InventoryShow() {
   const unit = detail.data.unit;
   const history = detail.data.history;
   const capabilities = getInventoryStateCapabilities();
+  const primaryUnitPhoto = (unitMedia.data ?? []).find((media) => media.is_cover) ?? (unitMedia.data ?? [])[0] ?? null;
+  const productCover = productOverview.data?.find((product) => product.barang_id === unit.barang_id)?.cover_url ?? null;
   const activeLocations = (locations.data ?? []).filter((location) => location.status === "active");
   const selectedLocation = activeLocations.find((location) => location.lokasi_id === moveTarget);
 
@@ -365,10 +427,31 @@ export function InventoryShow() {
         <CardContent className="p-3.5 sm:p-4">
           <div className="grid grid-cols-[82px_minmax(0,1fr)] gap-3">
             <div
-              className="grid size-[82px] shrink-0 place-items-center overflow-hidden rounded-2xl border border-primary/10 bg-primary/[0.045] text-primary sm:size-24"
-              aria-label={"Pratinjau " + (unit.barang?.nama ?? "barang")}
+              className="relative size-[82px] shrink-0 overflow-hidden rounded-2xl border border-primary/10 bg-primary/[0.045] text-primary sm:size-24"
+              aria-label={"Foto " + (unit.kode_unit)}
             >
-              <Boxes className="size-9 sm:size-11" aria-hidden="true" />
+              {primaryUnitPhoto?.signed_url ? (
+                <img
+                  src={primaryUnitPhoto.signed_url}
+                  alt={"Foto " + unit.kode_unit}
+                  className="size-full object-cover"
+                />
+              ) : productCover ? (
+                <img
+                  src={productCover}
+                  alt={unit.barang?.nama ?? "Barang"}
+                  className="size-full object-cover"
+                />
+              ) : (
+                <div className="grid size-full place-items-center">
+                  <Boxes className="size-9 sm:size-11" aria-hidden="true" />
+                </div>
+              )}
+              {!primaryUnitPhoto ? (
+                <span className="absolute inset-x-1.5 bottom-1.5 rounded-full bg-black/55 px-2 py-1 text-center text-[9px] font-medium text-white">
+                  Foto unit belum ada
+                </span>
+              ) : null}
             </div>
 
             <div className="min-w-0">
@@ -524,6 +607,146 @@ export function InventoryShow() {
             </CardContent>
           </Card>
 
+          <Card className="rounded-[22px] border-border/70 shadow-none">
+            <CardHeader className="flex flex-row items-center justify-between gap-3 p-4 pb-3">
+              <div>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <ImagePlus className="size-5 text-primary" />
+                  Foto Unit
+                </CardTitle>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Foto fisik unit membantu identifikasi cepat saat gudang, pickup, atau scan QR.
+                </p>
+              </div>
+              <Button
+                type="button"
+                className="h-9 shrink-0 rounded-xl px-3 text-xs"
+                onClick={() => photoInputRef.current?.click()}
+                disabled={uploadPhotoMutation.isPending}
+              >
+                <ImagePlus />
+                {uploadPhotoMutation.isPending ? "Mengunggah…" : "Tambah Foto"}
+              </Button>
+            </CardHeader>
+            <CardContent className="p-4 pt-0">
+              <input
+                ref={photoInputRef}
+                type="file"
+                accept="image/*"
+                className="sr-only"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  event.currentTarget.value = "";
+                  if (!file) return;
+                  uploadPhotoMutation.mutate(file);
+                }}
+              />
+
+              {unitMedia.isPending ? (
+                <div className="grid grid-cols-3 gap-2.5" aria-busy="true">
+                  <div className="aspect-square animate-pulse rounded-2xl bg-muted sm:col-span-2 sm:row-span-2" />
+                  <div className="aspect-square animate-pulse rounded-2xl bg-muted" />
+                  <div className="aspect-square animate-pulse rounded-2xl bg-muted" />
+                </div>
+              ) : unitMedia.error ? (
+                <Alert>
+                  <CircleAlert className="size-4" />
+                  <AlertTitle>Foto unit belum tersedia</AlertTitle>
+                  <AlertDescription>
+                    {errorText(unitMedia.error, "Media unit belum dapat dimuat.")}
+                  </AlertDescription>
+                </Alert>
+              ) : (unitMedia.data ?? []).length ? (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+                    {(unitMedia.data ?? []).map((media, index) => (
+                      <div
+                        key={media.unit_media_id}
+                        className={[
+                          "group relative overflow-hidden rounded-2xl border bg-muted/20",
+                          index === 0 ? "sm:col-span-2 sm:row-span-2" : "",
+                        ].join(" ")}
+                      >
+                        <div className={index === 0 ? "aspect-square sm:aspect-auto sm:h-full sm:min-h-[248px]" : "aspect-square"}>
+                          {media.signed_url ? (
+                            <img src={media.signed_url} alt={"Foto " + unit.kode_unit} className="size-full object-cover" />
+                          ) : (
+                            <div className="grid size-full place-items-center text-muted-foreground">
+                              <ImagePlus className="size-7" />
+                            </div>
+                          )}
+                        </div>
+                        <div className="absolute inset-x-2 bottom-2 flex items-center justify-between gap-2">
+                          <span className="rounded-full bg-black/60 px-2.5 py-1 text-[10px] font-medium text-white backdrop-blur">
+                            {media.is_cover ? "Foto utama" : "Foto unit"}
+                          </span>
+                          <div className="flex gap-1.5 opacity-100 sm:opacity-0 sm:transition sm:group-hover:opacity-100">
+                            {!media.is_cover ? (
+                              <Button
+                                type="button"
+                                size="icon"
+                                variant="secondary"
+                                className="size-8 rounded-full bg-background/90 shadow"
+                                aria-label="Jadikan foto utama"
+                                title="Jadikan foto utama"
+                                onClick={() => setCoverMutation.mutate(media.unit_media_id)}
+                                disabled={setCoverMutation.isPending}
+                              >
+                                <Star />
+                              </Button>
+                            ) : null}
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="secondary"
+                              className="size-8 rounded-full bg-background/90 shadow"
+                              aria-label="Hapus foto unit"
+                              title="Hapus foto unit"
+                              onClick={() => removePhotoMutation.mutate(media.unit_media_id)}
+                              disabled={removePhotoMutation.isPending}
+                            >
+                              <Trash2 />
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    <button
+                      type="button"
+                      className="grid min-h-28 place-items-center rounded-2xl border border-dashed bg-muted/15 text-xs font-medium text-muted-foreground transition hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      onClick={() => photoInputRef.current?.click()}
+                    >
+                      <span className="flex flex-col items-center gap-2">
+                        <ImagePlus className="size-5" />
+                        Tambah lagi
+                      </span>
+                    </button>
+                  </div>
+                  <p className="text-xs leading-5 text-muted-foreground">
+                    Foto unit adalah metadata visual. Bukti foto kondisi tetap dikelola melalui Pemeriksaan dan tidak digantikan oleh galeri ini.
+                  </p>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className="flex w-full flex-col items-center justify-center rounded-2xl border border-dashed bg-muted/[0.08] px-5 py-10 text-center transition hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  onClick={() => photoInputRef.current?.click()}
+                >
+                  <div className="grid size-12 place-items-center rounded-2xl bg-primary/[0.07] text-primary">
+                    <ImagePlus className="size-6" />
+                  </div>
+                  <p className="mt-3 text-sm font-semibold">Belum ada foto unit</p>
+                  <p className="mt-1 max-w-sm text-xs leading-5 text-muted-foreground">
+                    Tambahkan foto fisik unit ini. Foto utama akan muncul di bagian atas detail untuk mempercepat identifikasi.
+                  </p>
+                  <span className="mt-4 inline-flex h-9 items-center rounded-xl bg-primary px-3 text-xs font-semibold text-primary-foreground">
+                    Tambah Foto Pertama
+                  </span>
+                </button>
+              )}
+            </CardContent>
+          </Card>
+
           <section className="space-y-3" aria-label="Konteks operasional">
             <div className="flex items-end justify-between gap-3">
               <div>
@@ -635,6 +858,9 @@ export function InventoryShow() {
               ) : null}
 
               <div className="grid gap-2 sm:grid-cols-2">
+                <div className="rounded-2xl border border-sky-200/70 bg-sky-50/45 px-3.5 py-3 text-xs leading-5 text-sky-900 dark:border-sky-900/40 dark:bg-sky-950/10 dark:text-sky-200 sm:col-span-2">
+                  <span className="font-semibold">Koreksi Kondisi</span> memperbaiki ringkasan kondisi fisik yang menjadi konteks readiness. Perubahan dicatat ke audit/riwayat dan tidak otomatis mengubah status Siap Disewakan.
+                </div>
                 <Button
                   type="button"
                   variant="outline"

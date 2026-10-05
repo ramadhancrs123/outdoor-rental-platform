@@ -570,7 +570,7 @@ export function RentalList() {
                       </Button>
                       {canComplete ? (
                         <Button asChild className="min-h-10 rounded-xl">
-                          <Link to={paths.pengembalian + "/" + item.penyewaan_id}>Selesaikan Sewa</Link>
+                          <Link to={paths.penyewaan + "/" + item.penyewaan_id + "#rental-operational"}>Selesaikan Sewa</Link>
                         </Button>
                       ) : null}
                     </div>

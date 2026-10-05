@@ -9,7 +9,6 @@ import {
   Home,
   Package,
   Receipt,
-  RotateCcw,
   SearchCheck,
   ShoppingCart,
   TentTree,
@@ -38,8 +37,7 @@ const sections = [
       ["Permintaan", paths.permintaan, SearchCheck],
       ["Reservasi", paths.reservasi, ClipboardCheck],
       ["Penyewaan", paths.penyewaan, TentTree],
-      ["Pengembalian", paths.pengembalian, RotateCcw],
-      ["Perawatan/Pemeriksaan", paths.perawatan, Wrench],
+      ["Perawatan", paths.perawatan, Wrench],
     ],
   },
   {

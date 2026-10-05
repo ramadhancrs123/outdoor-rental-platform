@@ -65,7 +65,7 @@ describe("Penyewaan read-side",()=> {
     expect(screen.getByText("Tenda Dome 4P")).toBeInTheDocument();
     const completionLinks = screen.getAllByRole("link", { name: "Selesaikan Sewa" });
     expect(completionLinks).toHaveLength(1);
-    expect(completionLinks[0].getAttribute("href")).toBe("/pengembalian/rental-1");
+    expect(completionLinks[0].getAttribute("href")).toBe("/penyewaan/rental-1#rental-operational");
     expect(screen.getAllByRole("link", { name: "Lihat Detail Sewa" })).toHaveLength(1);
   });
   test("mobile rental list exposes compact filter controls without losing expandable cards",async()=> {

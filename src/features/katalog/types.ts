@@ -107,6 +107,18 @@ export const DEFAULT_CATALOG_FILTERS: CatalogListFilters = {
   pageSize: 20,
 };
 
+export type CatalogPackageMedia = {
+  paket_media_id: string;
+  usaha_id: string;
+  paket_sewa_id: string;
+  storage_bucket: string;
+  storage_path: string;
+  media_type: string;
+  urutan: number;
+  is_cover: boolean;
+  status: string;
+};
+
 export type CatalogPackage = {
   paket_sewa_id: string;
   usaha_id: string;
@@ -119,6 +131,7 @@ export type CatalogPackage = {
   status: string;
   is_public: boolean;
   metadata: Record<string, unknown> | null;
+  cover_url?: string | null;
   updated_at: string;
 };
 

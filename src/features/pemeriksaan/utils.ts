@@ -70,13 +70,14 @@ export function nextInspectionAction(decision: string | null) {
       return "Masuk Perawatan untuk perbaikan";
     case "cleaning_required":
       return "Masuk Perawatan untuk pembersihan";
-    case "unavailable":
     case "follow_up_required":
       return "Masuk Perawatan untuk tindak lanjut";
+    case "unavailable":
+      return "Unit ditandai Hilang/tidak tersedia. Tinjau Potensi Tanggungan Penyewa.";
     case "ready_review":
     case "readiness_review":
     case "no_action":
-      return "Masuk Perawatan untuk pembersihan standar";
+      return "Lanjutkan Verifikasi Kesiapan";
     default:
       return "Tinjau hasil pemeriksaan";
   }

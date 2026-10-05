@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { ArrowLeft, ArrowRight, ChevronDown, Clock3, CreditCard, Filter, Handshake, History, MoreHorizontal, Package, PackageCheck, Plus, QrCode, ReceiptText, RefreshCw, Search, ShieldCheck, WalletCards } from "lucide-react";
+import { ArrowLeft, ArrowRight, ChevronDown, Clock3, CreditCard, Filter, Handshake, History, MessageCircle, MoreHorizontal, Package, PackageCheck, Phone, Plus, QrCode, ReceiptText, RefreshCw, Search, ShieldCheck, WalletCards } from "lucide-react";
 import { Link, useParams } from "react-router";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -16,6 +16,8 @@ import { QrPreviewDialog, RentalReceiptDialog } from "@/components/qr-operasiona
 import { buildPenyewaanQrUrl, getQrPenyewaanRecord, getRentalReceiptSupport } from "@/features/qr-operasional";
 import { paths } from "@/routes/paths";
 import { RentalFinanceCard } from "@/components/penyewaan/rental-finance-card";
+import { RentalOperationalWorkspace } from "@/components/penyewaan/rental-operational-workspace";
+import { RentalPaymentDialog } from "@/components/penyewaan/rental-payment-dialog";
 import { RentalPhase2Actions } from "./phase2-actions";
 
 export function RentalShow() {
@@ -35,6 +37,7 @@ export function RentalShow() {
   });
   const [qrOpen, setQrOpen] = useState(false);
   const [receiptOpen, setReceiptOpen] = useState(false);
+  const [paymentOpen, setPaymentOpen] = useState(false);
   const [phase2Open, setPhase2Open] = useState(false);
   const rentalQr = useQuery({
     queryKey: ["qr-operasional", "penyewaan", context.data?.usahaId, id],
@@ -96,6 +99,9 @@ export function RentalShow() {
       ? "Paket"
       : "Campuran"
     : "Barang Satuan";
+  const renterName = item.penyewa_nama ?? "Penyewa tidak ditemukan";
+  const renterPhone = item.penyewa_telepon?.trim() || null;
+  const whatsappHref = renterPhone ? buildWhatsAppHref(renterPhone, renterName, item.nomor_penyewaan) : null;
   return (
     <div data-testid="rental-detail-root" className="mx-auto w-full max-w-3xl space-y-2.5 pb-28 sm:space-y-3.5 lg:pb-10">
       <section className="relative isolate overflow-hidden rounded-[24px] border border-white/70 shadow-[0_10px_32px_rgba(23,68,55,.10)]">
@@ -154,26 +160,63 @@ export function RentalShow() {
         </button>
       </nav>
 
+      <section className="rounded-[18px] border border-border/65 bg-card px-3.5 py-3 shadow-[0_3px_14px_rgba(28,67,56,.04)] sm:px-4">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[10px] font-semibold text-muted-foreground">Penyewa</p>
+            <p className="mt-0.5 truncate text-[13px] font-semibold">{renterName}</p>
+            <p className="mt-0.5 truncate text-[10px] text-muted-foreground">{renterPhone ?? "Nomor telepon belum dicatat."}</p>
+          </div>
+          {renterPhone ? (
+            <div className="flex shrink-0 items-center gap-1.5">
+              <Button asChild type="button" variant="outline" size="sm" className="h-9 rounded-xl px-2.5 text-[10px] font-semibold">
+                <a href={"tel:" + renterPhone} aria-label={"Telepon " + renterName}>
+                  <Phone className="size-3.5" />Telepon
+                </a>
+              </Button>
+              {whatsappHref ? (
+                <Button asChild type="button" size="sm" className="h-9 rounded-xl bg-[#0a6b55] px-2.5 text-[10px] font-semibold hover:bg-[#075944]">
+                  <a href={whatsappHref} target="_blank" rel="noreferrer" aria-label={"Hubungi WhatsApp " + renterName}>
+                    <MessageCircle className="size-3.5" />WhatsApp
+                  </a>
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      </section>
+
       <RentalFinanceCard
         context={{ ...context.data, timezone: context.data.timezone }}
         rental={item}
+        onRecordPayment={() => setPaymentOpen(true)}
       />
 
-      <section className="rounded-[22px] border border-border/65 bg-card shadow-[0_4px_18px_rgba(28,67,56,.055)]">
-        <div className="flex items-start justify-between gap-3 px-3.5 pb-2.5 pt-3.5 sm:px-4">
-          <div className="flex min-w-0 items-start gap-2.5">
-            <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">
-              <Package className="size-4.5" />
-            </span>
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-[15px] font-bold tracking-tight">Daftar Penyewaan</h2>
+      <RentalOperationalWorkspace
+        usahaId={context.data.usahaId}
+        penyewaanId={item.penyewaan_id}
+        rentalStatus={item.status}
+        enabled={item.status === "active" || item.status === "return_in_progress" || item.status === "completed"}
+        onChanged={async () => { await query.refetch(); }}
+      />
+
+      <details className="group overflow-hidden rounded-[22px] border border-border/65 bg-card shadow-[0_4px_18px_rgba(28,67,56,.055)]">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3.5 py-3.5 marker:hidden sm:px-4">
+          <span className="flex min-w-0 items-start gap-2.5">
+            <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300"><Package className="size-4.5" /></span>
+            <span className="min-w-0">
+              <span className="flex flex-wrap items-center gap-2">
+                <span className="text-[15px] font-bold tracking-tight">Daftar Penyewaan</span>
                 <Badge variant="secondary" className="rounded-full px-2 py-0.5 text-[9px]">{rentalMode}</Badge>
-              </div>
-              <p className="mt-0.5 text-[10px] text-muted-foreground">Pilih penyewaan untuk melihat detail pembayaran.</p>
-            </div>
-          </div>
-          <div className="flex shrink-0 items-center gap-1">
+              </span>
+              <span className="mt-0.5 block text-[10px] text-muted-foreground">{item.lines.length} detail · {item.assignments.length} unit · buka untuk rincian.</span>
+            </span>
+          </span>
+          <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
+        </summary>
+
+        <div className="border-t border-border/60 px-3.5 pb-3.5 pt-2.5 sm:px-4 sm:pb-4">
+          <div className="mb-2 flex justify-end gap-1">
             <Button type="button" variant="ghost" size="icon" className="size-8 rounded-xl text-muted-foreground" aria-label="Cari">
               <Search className="size-3.5" />
             </Button>
@@ -181,60 +224,48 @@ export function RentalShow() {
               <Filter className="size-3.5" />
             </Button>
           </div>
-        </div>
-
-        <div className="mx-3.5 mb-3.5 overflow-hidden rounded-2xl border border-border/65 bg-background sm:mx-4 sm:mb-4">
-          <div className="flex items-start justify-between gap-3 px-3 py-3">
-            <div className="flex min-w-0 items-start gap-2.5">
-              <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300">
-                <PackageCheck className="size-4.5" />
-              </span>
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <p className="truncate text-[13px] font-bold">{item.penyewa_nama ?? "Penyewa tidak ditemukan"}</p>
-                  <Badge variant="secondary" className="rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] text-emerald-700 dark:bg-emerald-950/25 dark:text-emerald-300">Sedang Sewa</Badge>
+          <div className="overflow-hidden rounded-2xl border border-border/65 bg-background">
+            <div className="flex items-start justify-between gap-3 px-3 py-3">
+              <div className="flex min-w-0 items-start gap-2.5">
+                <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300"><PackageCheck className="size-4.5" /></span>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <p className="truncate text-[13px] font-bold">{renterName}</p>
+                    <Badge variant="secondary" className="rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] text-emerald-700 dark:bg-emerald-950/25 dark:text-emerald-300">Sedang Sewa</Badge>
+                  </div>
+                  <p className="mt-0.5 truncate text-[9px] text-muted-foreground">{item.lines.length} detail · {item.assignments.length} unit ditetapkan</p>
                 </div>
-                <p className="mt-0.5 truncate text-[9px] text-muted-foreground">{item.lines.length} detail · {item.assignments.length} unit ditetapkan</p>
+              </div>
+              <div className="text-right">
+                <p className="text-[8px] text-muted-foreground">Total</p>
+                <p className="mt-0.5 text-[12px] font-bold">{formatRentalMoney(item.total_amount, item.currency_code)}</p>
               </div>
             </div>
-            <div className="text-right">
-              <p className="text-[8px] text-muted-foreground">Total</p>
-              <p className="mt-0.5 text-[12px] font-bold">{formatRentalMoney(item.total_amount, item.currency_code)}</p>
-            </div>
-          </div>
 
-          <div className="grid grid-cols-3 divide-x border-t border-border/60 bg-muted/10">
-            <div className="min-w-0 px-2.5 py-2.5">
-              <p className="text-[8px] text-muted-foreground">Mulai</p>
-              <p className="mt-0.5 truncate text-[10px] font-semibold">{formatRentalDateTime(item.jadwal_mulai)}</p>
-            </div>
-            <div className="min-w-0 px-2.5 py-2.5">
-              <p className="text-[8px] text-muted-foreground">Kembali</p>
-              <p className="mt-0.5 truncate text-[10px] font-semibold">{formatRentalDateTime(item.jadwal_kembali)}</p>
-            </div>
-            <div className="min-w-0 px-2.5 py-2.5">
-              <p className="text-[8px] text-muted-foreground">Unit</p>
-              <p className="mt-0.5 truncate text-[10px] font-semibold">{item.assignments.length}</p>
+            <div className="grid grid-cols-3 divide-x border-t border-border/60 bg-muted/10">
+              <div className="min-w-0 px-2.5 py-2.5"><p className="text-[8px] text-muted-foreground">Mulai</p><p className="mt-0.5 truncate text-[10px] font-semibold">{formatRentalDateTime(item.jadwal_mulai)}</p></div>
+              <div className="min-w-0 px-2.5 py-2.5"><p className="text-[8px] text-muted-foreground">Kembali</p><p className="mt-0.5 truncate text-[10px] font-semibold">{formatRentalDateTime(item.jadwal_kembali)}</p></div>
+              <div className="min-w-0 px-2.5 py-2.5"><p className="text-[8px] text-muted-foreground">Unit</p><p className="mt-0.5 truncate text-[10px] font-semibold">{item.assignments.length}</p></div>
             </div>
           </div>
         </div>
-      </section>
+      </details>
 
-      <section className="rounded-[22px] border border-border/65 bg-card p-3.5 shadow-[0_4px_18px_rgba(28,67,56,.04)] sm:p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex min-w-0 items-start gap-2.5">
-            <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">
-              <Clock3 className="size-4.5" />
-            </span>
-            <div className="min-w-0">
-              <h2 className="text-[15px] font-bold">Status Pengembalian</h2>
-              <p className="mt-0.5 text-[10px] text-muted-foreground">Pantau jadwal kembali dan batas toleransi.</p>
-            </div>
+      <details className="group overflow-hidden rounded-[22px] border border-border/65 bg-card shadow-[0_4px_18px_rgba(28,67,56,.04)]">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3.5 py-3.5 marker:hidden sm:px-4">
+          <span className="flex min-w-0 items-start gap-2.5">
+            <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300"><Clock3 className="size-4.5" /></span>
+            <span className="min-w-0"><span className="block text-[15px] font-bold">Status Pengembalian</span><span className="mt-0.5 block text-[10px] text-muted-foreground">Jadwal kembali · {formatRentalDateTime(item.jadwal_kembali)}</span></span>
+          </span>
+          <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
+        </summary>
+
+        <div className="border-t border-border/60 px-3.5 pb-3.5 pt-3.5 sm:px-4 sm:pb-4">
+          <div className="flex justify-end">
+            <Button type="button" variant="ghost" size="sm" className="h-8 rounded-lg px-2 text-[10px] font-semibold text-primary" onClick={() => document.getElementById("rental-history")?.scrollIntoView({ behavior: "smooth", block: "start" })}>
+              Lihat detail<ArrowRight className="size-3.5" />
+            </Button>
           </div>
-          <Button type="button" variant="ghost" size="sm" className="h-8 rounded-lg px-2 text-[10px] font-semibold text-primary" onClick={() => document.getElementById("rental-history")?.scrollIntoView({ behavior: "smooth", block: "start" })}>
-            Lihat detail<ArrowRight className="size-3.5" />
-          </Button>
-        </div>
 
         <RentalTimingSummary
           scheduleAt={item.jadwal_kembali}
@@ -265,7 +296,8 @@ export function RentalShow() {
             />
           </div>
         ) : null}
-      </section>
+        </div>
+      </details>
 
       <section className="rounded-[22px] border border-border/65 bg-card p-3.5 shadow-[0_4px_18px_rgba(28,67,56,.04)] sm:p-4">
         <div className="flex items-center justify-between gap-3">
@@ -282,10 +314,10 @@ export function RentalShow() {
         </div>
 
         <div className="mt-3 grid grid-cols-3 gap-1.5">
-          <Link to={item.status === "completed" ? "#" : paths.keuangan + "/pembayaran/create?sourceType=rental&sourceId=" + encodeURIComponent(item.penyewaan_id) + "&sourceNumber=" + encodeURIComponent(item.nomor_penyewaan)} className="flex min-h-[74px] flex-col items-center justify-center gap-1 rounded-xl bg-emerald-600 px-1.5 py-2 text-center text-white shadow-[0_7px_16px_rgba(10,107,85,.18)]">
+          <button type="button" onClick={() => setPaymentOpen(true)} className="flex min-h-[74px] flex-col items-center justify-center gap-1 rounded-xl bg-emerald-600 px-1.5 py-2 text-center text-white shadow-[0_7px_16px_rgba(10,107,85,.18)]">
             <CreditCard className="size-4.5" />
             <span className="text-[9px] font-semibold leading-3.5">Catat<br />Pembayaran</span>
-          </Link>
+          </button>
           <button type="button" onClick={() => document.getElementById("rental-tolerance")?.scrollIntoView({ behavior: "smooth", block: "center" })} className="flex min-h-[74px] flex-col items-center justify-center gap-1 rounded-xl border border-border/60 bg-muted/10 px-1.5 py-2 text-center text-foreground">
             <Clock3 className="size-4.5 text-primary" />
             <span className="text-[9px] font-semibold leading-3.5">Atur<br />Toleransi</span>
@@ -319,39 +351,41 @@ export function RentalShow() {
         </div>
       </section>
 
-      <section className="rounded-[22px] border border-border/65 bg-card p-3.5 shadow-[0_4px_18px_rgba(28,67,56,.04)] sm:p-4">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-start gap-2.5">
-            <span className="grid size-9 place-items-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300"><ReceiptText className="size-4.5" /></span>
-            <div>
-              <h2 className="text-[15px] font-bold">Detail Penyewaan</h2>
-              <p className="mt-0.5 text-[10px] text-muted-foreground">{item.lines.length} detail · {item.assignments.length} unit ditetapkan</p>
-            </div>
-          </div>
-          <Button asChild variant="ghost" size="icon" className="size-8 rounded-xl text-muted-foreground" aria-label="Opsi detail">
-            <Link to={paths.penyewaan}><MoreHorizontal className="size-4" /></Link>
-          </Button>
-        </div>
+      <details className="group overflow-hidden rounded-[22px] border border-border/65 bg-card shadow-[0_4px_18px_rgba(28,67,56,.04)]">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3.5 py-3.5 marker:hidden sm:px-4">
+          <span className="flex min-w-0 items-start gap-2.5">
+            <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300"><ReceiptText className="size-4.5" /></span>
+            <span className="min-w-0"><span className="block text-[15px] font-bold">Detail Penyewaan</span><span className="mt-0.5 block text-[10px] text-muted-foreground">{item.lines.length} detail · {item.assignments.length} unit ditetapkan · buka untuk rincian.</span></span>
+          </span>
+          <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
+        </summary>
 
-        <div className="mt-3 space-y-1.5">
-          {item.lines.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-border px-3 py-4 text-center text-[10px] text-muted-foreground">Belum ada detail penyewaan.</div>
-          ) : (
-            item.lines.map((line) => (
-              <div key={line.detail_penyewaan_id} className="flex items-center justify-between gap-3 rounded-2xl border border-border/60 bg-background px-3 py-2.5">
-                <div className="flex min-w-0 items-center gap-2.5">
-                  <span className="grid size-8 shrink-0 place-items-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/25 dark:text-emerald-300"><Package className="size-4" /></span>
-                  <div className="min-w-0">
-                    <p className="truncate text-[10px] font-semibold">{line.barang_nama ?? line.varian_nama ?? line.paket_nama ?? "Target tidak ditemukan"}</p>
-                    <p className="mt-0.5 truncate text-[9px] text-muted-foreground">{line.jumlah} unit · {formatRentalMoney(line.unit_price, line.currency_code)} / unit</p>
+        <div className="border-t border-border/60 px-3.5 pb-3.5 pt-3.5 sm:px-4 sm:pb-4">
+          <div className="mb-2.5 flex justify-end">
+            <Button asChild variant="ghost" size="sm" className="h-8 rounded-lg px-2 text-[10px] font-semibold text-primary">
+              <Link to={paths.penyewaan}>Kembali ke daftar<ArrowRight className="size-3.5" /></Link>
+            </Button>
+          </div>
+          <div className="space-y-1.5">
+            {item.lines.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-border px-3 py-4 text-center text-[10px] text-muted-foreground">Belum ada detail penyewaan.</div>
+            ) : (
+              item.lines.map((line) => (
+                <div key={line.detail_penyewaan_id} className="flex items-center justify-between gap-3 rounded-2xl border border-border/60 bg-background px-3 py-2.5">
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <span className="grid size-8 shrink-0 place-items-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/25 dark:text-emerald-300"><Package className="size-4" /></span>
+                    <div className="min-w-0">
+                      <p className="truncate text-[10px] font-semibold">{line.barang_nama ?? line.varian_nama ?? line.paket_nama ?? "Target tidak ditemukan"}</p>
+                      <p className="mt-0.5 truncate text-[9px] text-muted-foreground">{line.jumlah} unit · {formatRentalMoney(line.unit_price, line.currency_code)} / unit</p>
+                    </div>
                   </div>
+                  <p className="shrink-0 text-[10px] font-bold">{formatRentalMoney(line.subtotal, line.currency_code)}</p>
                 </div>
-                <p className="shrink-0 text-[10px] font-bold">{formatRentalMoney(line.subtotal, line.currency_code)}</p>
-              </div>
-            ))
-          )}
+              ))
+            )}
+          </div>
         </div>
-      </section>
+      </details>
 
       {packageLines.length ? (
         <details className="group rounded-[22px] border border-border/65 bg-card shadow-[0_4px_18px_rgba(28,67,56,.04)]">
@@ -481,11 +515,19 @@ export function RentalShow() {
 
       {receiptData ? <RentalReceiptDialog open={receiptOpen} onOpenChange={setReceiptOpen} receipt={receiptData} /> : null}
 
+      <RentalPaymentDialog
+        open={paymentOpen}
+        onOpenChange={setPaymentOpen}
+        context={{ ...context.data, timezone: context.data.timezone }}
+        rental={item}
+        onRecorded={async () => { await query.refetch(); }}
+      />
+
       {item.status === "active" || item.status === "return_in_progress" ? (
         <div className="fixed inset-x-3 bottom-16 z-40 lg:hidden">
           <div className="rounded-2xl border border-white/60 bg-background/92 p-2 shadow-[0_18px_50px_rgba(20,40,30,.16)] backdrop-blur">
             <Button asChild className="h-11 w-full rounded-xl bg-[#0a6b55] text-xs font-semibold hover:bg-[#075944]">
-              <Link to={paths.pengembalian + "/" + item.penyewaan_id}>Selesaikan Sewa<ArrowRight className="size-4" /></Link>
+              <a href="#rental-operational">Selesaikan Sewa<ArrowRight className="size-4" /></a>
             </Button>
           </div>
         </div>
@@ -493,4 +535,10 @@ export function RentalShow() {
     </div>
   );
 
+}
+function buildWhatsAppHref(phone: string, renterName: string, rentalNumber: string) {
+  const digits = phone.replace(/\D/g, "");
+  const normalized = digits.startsWith("62") ? digits : digits.replace(/^0+/, "62");
+  const message = encodeURIComponent("Halo " + renterName + ", terkait rental " + rentalNumber + ".");
+  return "https://wa.me/" + normalized + "?text=" + message;
 }

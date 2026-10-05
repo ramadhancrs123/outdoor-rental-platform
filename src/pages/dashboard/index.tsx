@@ -321,7 +321,7 @@ export function Dashboard() {
         type: "Pengembalian" as const,
         title: `${item.nomor_penyewaan} · ${item.penyewa_nama ?? "Penyewa"}`,
         meta: `Kembali ${formatTime(item.jadwal_kembali)}`,
-        href: `${paths.pengembalian}/${item.penyewaan_id}`,
+        href: `${paths.penyewaan}/${item.penyewaan_id}#rental-operational`,
       })),
       ...reservationsToday.map((item) => ({
         id: `reservation-${item.reservasi_id}`,
@@ -349,7 +349,7 @@ export function Dashboard() {
               ? `Pengembalian melewati toleransi · ${item.nomor_penyewaan}`
               : `Pengembalian perlu diproses · ${item.nomor_penyewaan}`,
           description: `${item.penyewa_nama ?? "Penyewa"} · ${humanStatus(item.due_state)}`,
-          href: `${paths.pengembalian}/${item.penyewaan_id}`,
+          href: `${paths.penyewaan}/${item.penyewaan_id}#rental-operational`,
           tone: item.due_state === "tolerance_expired" ? "danger" : "warning",
         });
       });
@@ -390,7 +390,7 @@ export function Dashboard() {
 
   const quickActions = [
     ["Rental Langsung", paths.penyewaanWalkIn, TentTree],
-    ["Proses Pengembalian", paths.pengembalian, RotateCcw],
+    ["Selesaikan Sewa", paths.penyewaan, TentTree],
     ["Buat Perawatan", paths.perawatan, Wrench],
     ["Tambah Unit", paths.inventarisCreate, Mountain],
     ["Tambah Barang", paths.katalogEdit, TentTree],

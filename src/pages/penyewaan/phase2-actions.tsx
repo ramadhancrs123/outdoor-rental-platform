@@ -9,11 +9,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import {
   assignRentalUnit,
   autoAssignRentalUnits,
-  completeRentalHandover,
+  activateRentalOperational,
   getRentalCapabilities,
   listAssignableUnits,
   reconcileRentalAssignment,
-  reconcileRentalHandover,
 } from "@/features/penyewaan";
 import type { RentalAssignmentTarget, RentalDetail, RentalTenantContext } from "@/features/penyewaan";
 import { createClientId } from "@/lib/client-id";
@@ -103,16 +102,16 @@ function QuickHandoverAction({
         };
       }
 
-      const handoverResult = await completeRentalHandover(
+      const activationResult = await activateRentalOperational(
         context.usahaId,
+        rental.penyewaan_id,
         {
-          penyewaanId: rental.penyewaan_id,
-          serahTerimaAt: null,
-          catatan: "Serah-terima dicatat dari alur operasional cepat.",
+          catatan: "Serah-terima dicatat dari workspace operasional Rental.",
+          idempotencyKey: handoverRef.current.key,
+          requestId: handoverRef.current.requestId,
         },
-        handoverRef.current,
       );
-      return { mode: "handover" as const, result: handoverResult };
+      return { mode: "handover" as const, result: activationResult };
     },
     onSuccess: async (result) => {
       assignmentRef.current = null;
@@ -147,29 +146,29 @@ function QuickHandoverAction({
       }
 
       try {
-        const reconciliation =
-          stage === "assignment"
-            ? await reconcileRentalAssignment(context.usahaId, key)
-            : await reconcileRentalHandover(context.usahaId, key);
+        if (stage !== "assignment") {
+          const message = error instanceof Error ? error.message : "Aktivasi rental gagal.";
+          if (message.toUpperCase().startsWith("UNKNOWN_OUTCOME:")) {
+            setFeedback({
+              kind: "unknown",
+              message: "Status aktivasi rental belum dapat dipastikan. Muat ulang workspace untuk memverifikasi apakah rental sudah aktif.",
+            });
+          } else {
+            handoverRef.current = null;
+            setFeedback({ kind: "error", message });
+          }
+          return;
+        }
+
+        const reconciliation = await reconcileRentalAssignment(context.usahaId, key);
 
         if (reconciliation.state === "committed") {
-          if (stage === "assignment") {
-            assignmentRef.current = null;
-            setStage("handover");
-            setFeedback({
-              kind: "success",
-              message: "Unit sudah berhasil disiapkan. Tekan Serahkan Barang untuk menyelesaikan serah-terima.",
-            });
-            return;
-          }
-
-          handoverRef.current = null;
-          setStage("done");
+          assignmentRef.current = null;
+          setStage("handover");
           setFeedback({
             kind: "success",
-            message: "Serah-terima sudah tercatat di server. Tidak ada pengulangan tindakan.",
+            message: "Unit sudah berhasil disiapkan. Tekan Serahkan Barang untuk menyelesaikan serah-terima.",
           });
-          await onChanged();
           return;
         }
 
@@ -521,11 +520,15 @@ export function RentalPhase2Actions({
           requestId: createClientId(),
         };
       }
-      return completeRentalHandover(context.usahaId, {
-        penyewaanId: rental.penyewaan_id,
-        serahTerimaAt: null,
-        catatan: handoverNote,
-      }, handoverRef.current);
+      return activateRentalOperational(
+        context.usahaId,
+        rental.penyewaan_id,
+        {
+          catatan: handoverNote,
+          idempotencyKey: handoverRef.current.key,
+          requestId: handoverRef.current.requestId,
+        },
+      );
     },
     onSuccess: async () => {
       handoverRef.current = null;
@@ -540,23 +543,15 @@ export function RentalPhase2Actions({
         setFeedback({ kind: "error", message: error instanceof Error ? error.message : "Serah-terima gagal." });
         return;
       }
-      try {
-        const reconciliation = await reconcileRentalHandover(context.usahaId, key);
-        if (reconciliation.state === "committed") {
-          handoverRef.current = null;
-          setFeedback({ kind: "success", message: "Request tidak mendapat respons, tetapi server sudah menyelesaikan pickup. Tidak ada retry otomatis." });
-          await onChanged();
-          await queryClient.invalidateQueries({ queryKey: ["penyewaan", "list"] });
-          return;
-        }
-        if (reconciliation.state === "not_found") {
-          handoverRef.current = null;
-          setFeedback({ kind: "error", message: error instanceof Error ? error.message : "Serah-terima belum berhasil. Anda dapat mencoba lagi." });
-          return;
-        }
-        setFeedback({ kind: "unknown", message: "Status serah-terima belum dapat dipastikan. Periksa detail penyewaan sebelum mencoba lagi." });
-      } catch (reconciliationError) {
-        setFeedback({ kind: "unknown", message: reconciliationError instanceof Error ? reconciliationError.message : "Rekonsiliasi pickup gagal." });
+      const message = error instanceof Error ? error.message : "Aktivasi rental gagal.";
+      if (message.toUpperCase().startsWith("UNKNOWN_OUTCOME:")) {
+        setFeedback({
+          kind: "unknown",
+          message: "Status aktivasi rental belum dapat dipastikan. Periksa detail penyewaan terbaru sebelum mencoba lagi.",
+        });
+      } else {
+        handoverRef.current = null;
+        setFeedback({ kind: "error", message });
       }
     },
   });

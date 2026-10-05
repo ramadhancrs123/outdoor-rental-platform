@@ -1,7 +1,7 @@
 import { createClientId } from "@/lib/client-id";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Loader2, Plus, RefreshCw, Save } from "lucide-react";
-import { useSearchParams, Link } from "react-router";
+import { Navigate, useSearchParams, Link } from "react-router";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -248,6 +248,10 @@ export function CatalogManage() {
   const productOptions = products.data?.products ?? [];
   const packageOptions = packages.data ?? [];
   const variantOptions = variants.data ?? [];
+
+  if (tab === "package") {
+    return <Navigate to={editingPackageId ? paths.katalogPackage + "/" + editingPackageId : paths.katalogPackageCreate} replace />;
+  }
 
   return (
     <div className="mx-auto w-full max-w-6xl space-y-4 pb-24 lg:pb-10">

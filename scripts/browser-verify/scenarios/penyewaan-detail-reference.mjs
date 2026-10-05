@@ -21,17 +21,43 @@ export default async function penyewaanDetailReference({ page, capture }) {
 
   await page.getByTestId("rental-detail-root").waitFor({ state: "visible", timeout: 15000 });
 
-  for (const label of ["Detail Penyewaan", "Keuangan", "Catat Pembayaran", "Penetapan Unit"]) {
+  for (const label of ["Detail Penyewaan", "Keuangan"]) {
     const loc = page.getByText(label, { exact: true }).first();
     if (!(await loc.count()) || !(await loc.isVisible().catch(() => false))) {
       throw new Error("Elemen tidak terlihat: " + label);
     }
   }
 
-  const paymentLink = page.getByRole("link", { name: /Catat Pembayaran/i }).first();
-  const paymentHref = await paymentLink.getAttribute("href");
-  if (!paymentHref?.includes("sourceType=rental") || !paymentHref?.includes("sourceId=")) {
-    throw new Error("CTA Catat Pembayaran belum terhubung ke rental source.");
+  const unitDetailsSummary = page.locator("details > summary").filter({ hasText: "Penetapan Unit" }).first();
+  await unitDetailsSummary.waitFor({ state: "visible", timeout: 10000 });
+
+  const paymentButton = page.getByRole("button", { name: /Catat Pembayaran/i }).first();
+  await paymentButton.waitFor({ state: "visible", timeout: 15000 });
+  const detailUrl = page.url();
+  await paymentButton.click();
+  const paymentDialog = page.getByRole("dialog").first();
+  await paymentDialog.waitFor({ state: "visible", timeout: 10000 });
+  if (!(await paymentDialog.getByText("Pembayaran untuk Penyewaan", { exact: false }).count())) {
+    throw new Error("Modal Catat Pembayaran tidak terbuka pada detail rental.");
+  }
+  if (page.url() !== detailUrl) {
+    throw new Error("URL berubah saat membuka modal Catat Pembayaran.");
+  }
+  if (!(await paymentDialog.getByText(/RNT-\d{4}-\d+/, { exact: false }).count())) {
+    throw new Error("Nomor rental tidak terlihat di modal pembayaran.");
+  }
+  await paymentDialog.getByRole("button", { name: "Batal" }).click();
+
+  const contactPhone = page.getByRole("link", { name: /^Telepon /i }).first();
+  const contactWhatsApp = page.getByRole("link", { name: /^Hubungi WhatsApp /i }).first();
+  if ((await contactPhone.count()) !== (await contactWhatsApp.count())) {
+    throw new Error("Aksi Telepon dan WhatsApp tidak konsisten pada kontak penyewa.");
+  }
+  if (await contactWhatsApp.count()) {
+    const href = await contactWhatsApp.getAttribute("href");
+    if (!href?.startsWith("https://wa.me/") || !href.includes("text=")) {
+      throw new Error("Aksi WhatsApp belum membuat draft komunikasi yang valid.");
+    }
   }
 
   const detailsCount = await page.locator("details").count();

@@ -204,6 +204,7 @@ export type RentalComponent = {
 };
 
 export type RentalDetail = Omit<RentalListItem, "lines"> & {
+  penyewa_telepon: string | null;
   lines: RentalDetailLine[];
   components: RentalComponent[];
   assignments: RentalAssignment[];

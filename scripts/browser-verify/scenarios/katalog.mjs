@@ -13,6 +13,30 @@ export default async function katalogScenario({ page, baseURL, capture }) {
   await waitApp();
   await page.getByRole("heading", { name: "Katalog", exact: true }).waitFor({ state: "visible", timeout: 15000 });
 
+  const productDetailLinks = page.getByRole("link", { name: /^Detail$/i });
+  if (await productDetailLinks.count() === 0) {
+    await page.goto(baseURL + "/katalog/paket/tambah", { waitUntil: "domcontentloaded" });
+    await waitApp();
+    await page.waitForTimeout(2000);
+    const packageBodyText = await page.locator("body").innerText();
+    if (!packageBodyText.includes("Buat Paket Sewa")) throw new Error("Paket route tidak merender form. Body: " + packageBodyText.slice(0, 3000));
+    await page.getByRole("textbox", { name: "Nama paket *" }).waitFor({ state: "visible", timeout: 5000 });
+    await page.getByRole("textbox", { name: "Deskripsi" }).waitFor({ state: "visible", timeout: 5000 });
+    await page.getByText("Harga Paket", { exact: true }).waitFor({ state: "visible", timeout: 5000 });
+    await page.getByText("Tampilkan di publik?", { exact: true }).waitFor({ state: "visible", timeout: 5000 });
+    await page.getByText("Tandai sebagai promo", { exact: true }).waitFor({ state: "visible", timeout: 5000 });
+    await page.getByRole("button", { name: "Simpan Paket", exact: true }).waitFor({ state: "visible", timeout: 5000 });
+    if (!(await page.locator('input[type="file"][accept="image/*"]').count())) throw new Error("Form Paket baru tidak menyediakan photo picker image/*.");
+    await capture("catalog-package-create-empty-catalog");
+
+    await page.goto(baseURL + "/katalog/manage?tab=package", { waitUntil: "domcontentloaded" });
+    await waitApp();
+    await page.waitForURL(baseURL + "/katalog/paket/tambah", { timeout: 10000 });
+    await capture("catalog-package-legacy-route-redirect");
+
+    return { state: "VERIFIED", interaction: ["clean-catalog-package-create", "package-photo-picker", "package-price-source", "package-promo-flag", "legacy-package-route-redirect"] };
+  }
+
   await page.locator("#catalog-search").fill("zz-visual-no-match");
   await page.getByText("Tidak ada produk yang cocok", { exact: true }).waitFor({ state: "visible", timeout: 15000 });
   await capture("catalog-list-empty-filter");
@@ -32,8 +56,26 @@ export default async function katalogScenario({ page, baseURL, capture }) {
   await capture("catalog-manage-variant");
 
   await page.getByRole("tab", { name: "Paket Sewa" }).click();
-  await page.getByText("Tambah Komponen", { exact: true }).first().waitFor({ state: "visible", timeout: 10000 });
-  await capture("catalog-manage-package");
+  await page.waitForURL(/\/katalog\/paket\/tambah$/, { timeout: 10000 });
+  await waitApp();
+  await page.getByRole("heading", { name: "Buat Paket Sewa", exact: true }).waitFor({ state: "visible", timeout: 10000 });
+  await page.getByRole("textbox", { name: "Nama paket *" }).waitFor({ state: "visible", timeout: 5000 });
+  await page.getByRole("textbox", { name: "Deskripsi" }).waitFor({ state: "visible", timeout: 5000 });
+  await page.getByText("Harga Paket", { exact: true }).waitFor({ state: "visible", timeout: 5000 });
+  await page.getByText("Tampilkan di publik?", { exact: true }).waitFor({ state: "visible", timeout: 5000 });
+  await page.getByText("Tandai sebagai promo", { exact: true }).waitFor({ state: "visible", timeout: 5000 });
+  await page.getByRole("button", { name: "Simpan Paket", exact: true }).waitFor({ state: "visible", timeout: 5000 });
+  const packagePhotoInput = page.locator('input[type="file"][accept="image/*"]').first();
+  if (!(await packagePhotoInput.count())) throw new Error("Form Paket baru tidak menyediakan photo picker image/*.");
+  await capture("catalog-package-create");
+
+  await page.goto(baseURL + "/katalog/manage?tab=package", { waitUntil: "domcontentloaded" });
+  await waitApp();
+  await page.waitForURL(/\/katalog\/paket\/tambah$/, { timeout: 10000 });
+
+  await page.goto(baseURL + "/katalog/manage?tab=tariff", { waitUntil: "domcontentloaded" });
+  await waitApp();
+  await page.getByText("Tambah Tarif", { exact: true }).first().waitFor({ state: "visible", timeout: 10000 });
 
   await page.getByRole("tab", { name: "Tarif" }).click();
   await page.getByText("Tambah Tarif", { exact: true }).first().waitFor({ state: "visible", timeout: 10000 });
