@@ -16,7 +16,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { toast } from "sonner";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -139,8 +139,11 @@ function CatalogProductCard({
 }
 
 export const CatalogList = () => {
+  const [searchParams] = useSearchParams();
   const [filters, setFilters] = useState<CatalogListFilters>(DEFAULT_CATALOG_FILTERS);
-  const [catalogView, setCatalogView] = useState<"products" | "packages">("products");
+  const [catalogView, setCatalogView] = useState<"products" | "packages">(
+    searchParams.get("view") === "packages" ? "packages" : "products",
+  );
   const [selectedPackageId, setSelectedPackageId] = useState<string | null>(null);
   const [filterOpen, setFilterOpen] = useState(false);
   const queryClient = useQueryClient();
@@ -282,6 +285,15 @@ export const CatalogList = () => {
   return (
     <ListView className="pb-24 lg:pb-8">
       <Tabs value={catalogView} onValueChange={(value) => { const next = value as "products" | "packages"; setCatalogView(next); if (next === "packages" && !selectedPackageId && packages.data?.[0]) setSelectedPackageId(packages.data[0].paket_sewa_id); }} className="space-y-4">
+        <TabsList className="grid w-full max-w-md grid-cols-2 rounded-2xl bg-muted/55 p-1">
+          <TabsTrigger value="products" className="h-10 rounded-xl text-sm font-semibold data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">
+            Barang <span className="ml-1 text-xs text-muted-foreground">{summary.data?.productCount ?? ""}</span>
+          </TabsTrigger>
+          <TabsTrigger value="packages" className="h-10 rounded-xl text-sm font-semibold data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">
+            Paket
+          </TabsTrigger>
+        </TabsList>
+
         <TabsContent value="products" className="space-y-4">
           <header className="space-y-2">
             <div className="flex items-start justify-between gap-3">
@@ -313,11 +325,6 @@ export const CatalogList = () => {
               </Link>
             </Button>
           </div>
-
-          <TabsList className="w-fit rounded-2xl bg-muted/45 p-1">
-            <TabsTrigger value="products" className="h-9 rounded-xl px-5">Barang</TabsTrigger>
-            <TabsTrigger value="packages" className="h-9 rounded-xl px-5">Paket</TabsTrigger>
-          </TabsList>
 
           <div className="flex gap-2 overflow-x-auto pb-1 sm:grid sm:grid-cols-3 sm:gap-3 sm:overflow-visible" aria-label="Ringkasan katalog">
             <Card className="min-w-[116px] flex-1 rounded-2xl border-emerald-200/70 bg-emerald-50/45 shadow-none dark:border-emerald-900/40 dark:bg-emerald-950/20 sm:min-w-0">
@@ -594,11 +601,6 @@ export const CatalogList = () => {
         </TabsContent>
 
         <TabsContent value="packages" className="space-y-4">
-          <TabsList className="w-fit rounded-2xl bg-muted/45 p-1">
-            <TabsTrigger value="products" className="h-9 rounded-xl px-5">Barang</TabsTrigger>
-            <TabsTrigger value="packages" className="h-9 rounded-xl px-5">Paket</TabsTrigger>
-          </TabsList>
-
           <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
               <p className="text-sm font-medium text-muted-foreground">Katalog · Paket Sewa</p>
