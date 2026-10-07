@@ -70,6 +70,15 @@ export type InspectionHistoryItem = {
   evidences: InspectionEvidence[];
 };
 
+export type InspectionLinkedMaintenance = {
+  perawatan_id: string;
+  pemeriksaan_id: string;
+  jenis_perawatan: string;
+  status: string;
+  deskripsi_pekerjaan: string;
+  updated_at: string;
+};
+
 export type InspectionWorkspace = {
   returnDetail: {
     detail_pengembalian_id: string;
@@ -100,6 +109,7 @@ export type InspectionWorkspace = {
     varian_nama: string | null;
   };
   currentInspection: InspectionHistoryItem | null;
+  linkedMaintenance: InspectionLinkedMaintenance | null;
   history: InspectionHistoryItem[];
 };
 

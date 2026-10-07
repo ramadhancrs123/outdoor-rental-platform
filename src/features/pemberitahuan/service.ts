@@ -1,4 +1,5 @@
 import { supabase } from "@/app/providers/supabase/client";
+import { createClientId } from "@/lib/client-id";
 import type { NotificationListResult, NotificationRecord, NotificationRevalidation } from "./types";
 
 const SELECT =
@@ -119,7 +120,7 @@ export function subscribeToAdminNotifications(
   onNotification: (notification: NotificationRecord) => void,
 ) {
   const channel = supabase
-    .channel("admin-notifications:" + usahaId + ":" + adminId + ":" + crypto.randomUUID())
+    .channel("admin-notifications:" + usahaId + ":" + adminId + ":" + createClientId())
     .on(
       "postgres_changes",
       { event: "INSERT", schema: "public", table: "pemberitahuan" },

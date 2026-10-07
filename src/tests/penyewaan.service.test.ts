@@ -123,6 +123,114 @@ describe("Penyewaan trusted command service", () => {
     }));
   });
 
+  test("create direct rental sends exactly one catalog target for a variant", async () => {
+    rpcMock.mockResolvedValue({
+      data: {
+        penyewaan_id: "rental-variant-1",
+        nomor_penyewaan: "RNT-2026-011",
+        status: "draft",
+        total_amount: 40000,
+        currency_code: "IDR",
+      },
+      error: null,
+    });
+
+    await createDirectRental("usaha-1", {
+      penyewa_id: "renter-1",
+      jadwal_mulai: "2026-10-10T01:00:00.000Z",
+      jadwal_kembali: "2026-10-11T01:00:00.000Z",
+      lines: [{
+        barang_id: "barang-eiger-40l",
+        varian_barang_id: "variant-eiger-cream",
+        tarif_sewa_id: "tariff-eiger-cream",
+        duration_periods: 1,
+        jumlah: 1,
+        unit_price: 40000,
+        subtotal: 40000,
+        currency_code: "IDR",
+      }],
+    }, {
+      idempotencyKey: "walkin-variant-create-test",
+      requestId: "request-walkin-variant-test",
+    });
+
+    expect(rpcMock).toHaveBeenCalledWith("command_create_direct_rental", expect.objectContaining({
+      p_lines: [{
+        barang_id: null,
+        varian_barang_id: "variant-eiger-cream",
+        paket_sewa_id: null,
+        jumlah: 1,
+        unit_price: 40000,
+        currency_code: "IDR",
+        subtotal: 40000,
+        tarif_sewa_id: "tariff-eiger-cream",
+        duration_periods: 1,
+        catatan: null,
+      }],
+    }));
+  });
+
+  test("create direct rental preserves distinct base and variant targets in one transaction", async () => {
+    rpcMock.mockResolvedValue({
+      data: {
+        penyewaan_id: "rental-mixed-1",
+        nomor_penyewaan: "RNT-2026-012",
+        status: "draft",
+        total_amount: 125000,
+        currency_code: "IDR",
+      },
+      error: null,
+    });
+
+    await createDirectRental("usaha-1", {
+      penyewa_id: "renter-1",
+      jadwal_mulai: "2026-10-10T01:00:00.000Z",
+      jadwal_kembali: "2026-10-11T01:00:00.000Z",
+      lines: [
+        {
+          barang_id: "barang-tenda-4p",
+          varian_barang_id: null,
+          tarif_sewa_id: "tariff-tenda-base",
+          duration_periods: 1,
+          jumlah: 1,
+          unit_price: 60000,
+          subtotal: 60000,
+          currency_code: "IDR",
+        },
+        {
+          barang_id: "barang-tenda-4p",
+          varian_barang_id: "variant-tenda-cream",
+          tarif_sewa_id: "tariff-tenda-cream",
+          duration_periods: 1,
+          jumlah: 1,
+          unit_price: 65000,
+          subtotal: 65000,
+          currency_code: "IDR",
+        },
+      ],
+    }, {
+      idempotencyKey: "walkin-mixed-create-test",
+      requestId: "request-walkin-mixed-test",
+    });
+
+    expect(rpcMock).toHaveBeenCalledWith("command_create_direct_rental", expect.objectContaining({
+      p_lines: [
+        expect.objectContaining({
+          barang_id: "barang-tenda-4p",
+          varian_barang_id: null,
+          tarif_sewa_id: "tariff-tenda-base",
+          jumlah: 1,
+        }),
+        expect.objectContaining({
+          barang_id: null,
+          varian_barang_id: "variant-tenda-cream",
+          tarif_sewa_id: "tariff-tenda-cream",
+          jumlah: 1,
+        }),
+      ],
+    }));
+  });
+
   test("availability preview only claims current physical readiness", async () => {
     fromMock.mockReturnValue({
       select: vi.fn(() => ({

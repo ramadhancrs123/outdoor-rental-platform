@@ -20,6 +20,7 @@ import {
   getInventoryStateCapabilities,
   markInventoryUnitInspectionPending,
   markInventoryUnitReady,
+  setInventoryUnitOperationalStatus,
   moveInventoryUnit,
   registerInventoryUnit,
 } from "@/features/inventaris/service";
@@ -41,6 +42,7 @@ describe("Inventaris trusted command service", () => {
       "move_inventory_unit",
       "mark_inventory_unit_ready",
       "command_mark_inventory_unit_inspection_pending",
+      "set_inventory_unit_operational_status",
       "command_reconcile_inventory_unit_mutation",
     ]));
     expect(capabilities.queries).toEqual(expect.arrayContaining([
@@ -178,6 +180,57 @@ describe("Inventaris trusted command service", () => {
       p_idempotency_key: "move-key",
     });
     expect(rpcMock).toHaveBeenCalledTimes(2);
+  });
+
+  test("operational status change uses trusted command and reconciles unknown outcome", async () => {
+    rpcMock
+      .mockResolvedValueOnce({ data: null, error: new Error("network timeout") })
+      .mockResolvedValueOnce({
+        data: {
+          state: "committed",
+          response: {
+            unit_barang_id: "unit-1",
+            status: "inactive",
+            state: "changed",
+          },
+        },
+        error: null,
+      });
+
+    await expect(setInventoryUnitOperationalStatus(
+      "usaha-1",
+      "unit-1",
+      {
+        status: "inactive",
+        reason: "Unit tidak ekonomis untuk digunakan.",
+        note: "Sudah tidak layak operasional.",
+        expectedUpdatedAt: "2026-09-28T02:00:00.000Z",
+      },
+      {
+        idempotencyKey: "unit-status-key",
+        requestId: "request-status",
+      },
+    )).resolves.toMatchObject({
+      unit_barang_id: "unit-1",
+      status: "inactive",
+      state: "changed",
+    });
+
+    expect(rpcMock).toHaveBeenNthCalledWith(1, "command_set_inventory_unit_operational_status", {
+      p_usaha_id: "usaha-1",
+      p_unit_barang_id: "unit-1",
+      p_status: "inactive",
+      p_alasan: "Unit tidak ekonomis untuk digunakan.",
+      p_catatan: "Sudah tidak layak operasional.",
+      p_expected_updated_at: "2026-09-28T02:00:00.000Z",
+      p_idempotency_key: "unit-status-key",
+      p_request_id: "request-status",
+    });
+    expect(rpcMock).toHaveBeenNthCalledWith(2, "command_reconcile_inventory_unit_mutation", {
+      p_usaha_id: "usaha-1",
+      p_command_name: "set_inventory_unit_operational_status",
+      p_idempotency_key: "unit-status-key",
+    });
   });
 
   test("unknown reconciliation state stops retry path", async () => {

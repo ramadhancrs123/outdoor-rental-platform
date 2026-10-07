@@ -1,3 +1,4 @@
+import { createClientId } from "@/lib/client-id";
 import {
   ArrowLeft,
   Camera,
@@ -405,7 +406,7 @@ export function RenterShow() {
     setEvidencePending(true);
     let uploadedPath = "";
     try {
-      const evidenceId = crypto.randomUUID();
+      const evidenceId = createClientId();
       uploadedPath =
         usaha.usahaId +
         "/" +
@@ -413,7 +414,7 @@ export function RenterShow() {
         "/identity/" +
         evidenceId +
         "/" +
-        crypto.randomUUID() +
+        createClientId() +
         "." +
         fileExtension(evidenceFile);
 
@@ -502,7 +503,7 @@ export function RenterShow() {
     setPhotoPending(true);
     let uploadedPath = "";
     try {
-      const photoId = crypto.randomUUID();
+      const photoId = createClientId();
       uploadedPath =
         usaha.usahaId +
         "/" +
@@ -510,7 +511,7 @@ export function RenterShow() {
         "/photo/" +
         photoId +
         "/" +
-        crypto.randomUUID() +
+        createClientId() +
         "." +
         fileExtension(photoFile);
 

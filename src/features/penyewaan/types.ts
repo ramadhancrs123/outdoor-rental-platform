@@ -32,12 +32,20 @@ export type RentalAssignmentTarget = {
 
 export type RentalListFilters = {
   search: string;
+  status: string;
+  dateFrom: string;
+  dateTo: string;
+  renterSearch: string;
   page: number;
   pageSize: number;
 };
 
 export const DEFAULT_RENTAL_LIST_FILTERS: RentalListFilters = {
   search: "",
+  status: "all",
+  dateFrom: "",
+  dateTo: "",
+  renterSearch: "",
   page: 1,
   pageSize: 20,
 };
@@ -53,6 +61,20 @@ export type RenterRentalListItem = {
   currency_code: string;
   detail_count: number;
   assignment_count: number;
+};
+
+export type RentalListLineComponent = {
+  label: string;
+  quantity: number;
+};
+
+export type RentalListLineSummary = {
+  detail_penyewaan_id: string;
+  kind: "barang" | "varian" | "paket";
+  label: string;
+  quantity: number;
+  component_count: number;
+  components: RentalListLineComponent[];
 };
 
 export type RentalListItem = {
@@ -76,6 +98,7 @@ export type RentalListItem = {
   penyewa_nama: string | null;
   detail_count: number;
   assignment_count: number;
+  lines: RentalListLineSummary[];
 };
 
 export type RentalDetailLine = {
@@ -180,7 +203,8 @@ export type RentalComponent = {
   varian_nama: string | null;
 };
 
-export type RentalDetail = RentalListItem & {
+export type RentalDetail = Omit<RentalListItem, "lines"> & {
+  penyewa_telepon: string | null;
   lines: RentalDetailLine[];
   components: RentalComponent[];
   assignments: RentalAssignment[];
@@ -193,6 +217,28 @@ export type RentalMutationCommand =
   | "create_rental_from_reservation"
   | "assign_rental_unit"
   | "complete_rental_handover";
+
+export type AutoAssignRentalTarget = {
+  detailPenyewaanId: string;
+  komponenPenyewaanId?: string | null;
+  requiredQuantity: number;
+  assignedQuantity: number;
+};
+
+export type AutoAssignRentalResult = {
+  state: "completed" | "partial";
+  assignedCount: number;
+  remainingCount: number;
+  assignedUnitIds: string[];
+  failedTargets: Array<{
+    detailPenyewaanId: string;
+    komponenPenyewaanId: string | null;
+    remaining: number;
+    reason: string;
+  }>;
+};
+
+
 
 export type RentalCapabilities = {
   read: true;

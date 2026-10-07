@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { InventoryList } from "@/pages/inventaris/list";
@@ -81,9 +81,31 @@ describe("Inventaris read-side", () => {
     mockViewport(375, 812); serviceMock.getInventarisContext.mockResolvedValue(context); serviceMock.listInventoryLocations.mockResolvedValue([location]); serviceMock.listInventoryUnits.mockResolvedValue({ units: [unit], total: 1 });
     const { container } = renderWithQuery(<InventoryList />);
     expect((await screen.findAllByText("TD4P-001")).length).toBeGreaterThan(0);
-    const mobileBranch = container.querySelector(".md\\:hidden"); const desktopBranch = container.querySelector(".hidden.md\\:block");
-    expect(mobileBranch).toBeInTheDocument(); expect(mobileBranch?.querySelector('a[href="/inventaris/unit-1"]')).toBeInTheDocument();
+    expect(container.querySelector('a[href="/inventaris/unit-1"]')).toBeInTheDocument();
+    const desktopBranch = container.querySelector(".hidden.lg\\:block");
     expect(desktopBranch).toBeInTheDocument(); expect(desktopBranch?.querySelector("table")).toBeInTheDocument();
+  });
+
+  test("mobile inventory vocabulary and compact actions follow the approved reference", async () => {
+    mockViewport(375, 812);
+    serviceMock.getInventarisContext.mockResolvedValue({ ...context, usahaNama: "Akasha Store" });
+    serviceMock.listInventoryLocations.mockResolvedValue([]);
+    serviceMock.listInventoryUnits.mockResolvedValue({ units: [unit], total: 1 });
+
+    renderWithQuery(<InventoryList />);
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Unit Barang" })).toBeInTheDocument();
+    expect(screen.getByText("Kondisi dan informasi fisik setiap unit dalam konteks Usaha yang dipilih.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Daftarkan Unit/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Kelola Lokasi/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Pindai QR/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^Unit$/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: /^Paket$/ })).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByPlaceholderText("Cari kode unit, serial, barang, varian, ...")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Semua unit$/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Sewakan$/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Sedang Disewa$/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Perhatian$/ })).toBeInTheDocument();
   });
 
   test("detail shows unit history and trusted command capability boundary", async () => {
@@ -91,8 +113,17 @@ describe("Inventaris read-side", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}><MemoryRouter initialEntries={["/inventaris/unit-1"]}><Routes><Route path="/inventaris/:id" element={<InventoryShow />} /></Routes></MemoryRouter></QueryClientProvider>);
     expect(await screen.findByRole("heading", { level: 1, name: "TD4P-001" })).toBeInTheDocument();
-    expect(screen.getByText("UNIT_REGISTERED")).toBeInTheDocument();
-    expect(screen.getByText("Tidak ada penyewaan aktif")).toBeInTheDocument();
-    expect(screen.getAllByText(/Aksi Inventaris/i).length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: /^Informasi$/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getAllByRole("button", { name: /^Aksi$/ }).length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: /^Riwayat$/ })).toBeInTheDocument();
+
+    const detailTabs = screen.getByRole("navigation", { name: "Bagian detail unit" });
+    expect(detailTabs).toBeInTheDocument();
+    const historyTab = within(detailTabs).getByRole("button", { name: /^Riwayat$/ });
+    fireEvent.click(historyTab);
+    expect(await screen.findByText("UNIT_REGISTERED")).toBeInTheDocument();
+
+    fireEvent.click(within(detailTabs).getByRole("button", { name: /^Aksi$/ }));
+    expect(screen.getAllByText(/Aksi Berikutnya/i).length).toBeGreaterThan(0);
   });
 });

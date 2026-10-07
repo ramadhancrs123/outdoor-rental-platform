@@ -2,8 +2,15 @@ export type MaintenanceStatus = "planned" | "in_progress" | "completed" | "cance
 
 export type MaintenanceContext = {
   akunAdminId: string;
+  akunAdminNama: string | null;
   usahaId: string;
   usahaNama: string;
+  businessTimezone: string;
+};
+
+export type MaintenanceCashoutAllocation = {
+  akunKeuanganId: string;
+  amount: number;
 };
 
 export type MaintenanceFinding = {
@@ -34,11 +41,15 @@ export type MaintenanceRow = {
   updated_at: string;
 };
 
+export type MaintenanceVerificationResult = "passed" | "failed" | null;
+
 export type MaintenanceQueueItem = MaintenanceRow & {
   kode_unit: string;
   barang_nama: string | null;
   unit_status: string;
   pemeriksaan_hasil: string | null;
+  verification_result: MaintenanceVerificationResult;
+  is_latest_for_unit: boolean;
 };
 
 export type MaintenanceWorkspace = {
@@ -70,6 +81,7 @@ export type MaintenanceWorkspace = {
     sumber_type: string | null;
     sumber_id: string | null;
   }>;
+  verification_result: MaintenanceVerificationResult;
 };
 
 export type MaintenanceUnitCandidate = {

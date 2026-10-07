@@ -1,3 +1,4 @@
+import { createClientId } from "@/lib/client-id";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, Check, CheckCircle2, Info, MoreVertical, Wrench } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -21,6 +22,20 @@ import { paths } from "@/routes/paths";
 
 function errorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
+}
+
+function defaultMaintenanceType(decision: string) {
+  if (decision === "cleaning_required") return "cleaning";
+  if (decision === "maintenance_required") return "repair";
+  return "inspection_follow_up";
+}
+
+function defaultMaintenanceDescription(decision: string, findingSummary: string | null) {
+  const summary = findingSummary?.trim();
+  const suffix = summary ? " Temuan: " + summary : "";
+  if (decision === "cleaning_required") return "Pembersihan setelah pemeriksaan." + suffix;
+  if (decision === "maintenance_required") return "Perbaikan setelah pemeriksaan." + suffix;
+  return "Tindak lanjut hasil pemeriksaan." + suffix;
 }
 
 export function PerawatanCreate() {
@@ -84,11 +99,21 @@ export function PerawatanCreate() {
   useEffect(() => {
     if (selectedInspection) {
       setUnitId(selectedInspection.unit_barang_id);
-      if (!description && selectedInspection.finding_summary) {
-        setDescription(selectedInspection.finding_summary);
-      }
+      setType(defaultMaintenanceType(selectedInspection.keputusan_operasional));
+      setDescription(
+        defaultMaintenanceDescription(
+          selectedInspection.keputusan_operasional,
+          selectedInspection.finding_summary,
+        ),
+      );
     }
-  }, [selectedInspection, description]);
+  }, [selectedInspection]);
+
+  useEffect(() => {
+    if (!executor.trim() && context.data?.akunAdminNama?.trim()) {
+      setExecutor(context.data.akunAdminNama.trim());
+    }
+  }, [context.data?.akunAdminNama, executor]);
 
   const selectedUnitLabel =
     source === "inspection"
@@ -107,7 +132,6 @@ export function PerawatanCreate() {
   const detailReady = Boolean(
     type.trim() &&
     description.trim() &&
-    executor.trim() &&
     (source === "inspection" || notes.trim()),
   );
   const reviewReady = sourceReady && detailReady;
@@ -120,7 +144,7 @@ export function PerawatanCreate() {
       if (parsedCost !== null && (!Number.isFinite(parsedCost) || parsedCost < 0)) {
         throw new Error("Biaya harus berupa angka nol atau lebih.");
       }
-      const key = "create-maintenance-" + crypto.randomUUID();
+      const key = "create-maintenance-" + createClientId();
       setUnknownKey(key);
       return createMaintenance(
         context.data.usahaId,

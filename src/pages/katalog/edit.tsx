@@ -1,3 +1,4 @@
+import { createClientId } from "@/lib/client-id";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDown, ArrowLeft, ArrowUp, ImagePlus, Loader2, MoreVertical, Plus, RefreshCw, Save, ShieldAlert, Trash2, Upload, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -102,7 +103,7 @@ function messageOf(error: unknown, fallback = "Perubahan Katalog gagal.") {
 }
 
 function commandKey(prefix: string) {
-  return prefix + "-" + crypto.randomUUID();
+  return prefix + "-" + createClientId();
 }
 
 function isUnknownOutcome(error: unknown) {

@@ -1,3 +1,4 @@
+import { createClientId } from "@/lib/client-id";
 import { supabase } from "@/app/providers/supabase/client";
 import type {
   ProcessUnitReturnInput,
@@ -34,6 +35,7 @@ type AssignmentRow = {
   penetapan_unit_id: string;
   usaha_id: string;
   detail_penyewaan_id: string;
+  komponen_penyewaan_id: string | null;
   unit_barang_id: string;
   status: string;
   ditetapkan_at: string;
@@ -43,6 +45,7 @@ type AssignmentRow = {
 type DetailRow = {
   detail_penyewaan_id: string;
   penyewaan_id: string;
+  paket_sewa_id: string | null;
 };
 
 type ReturnHeaderRow = {
@@ -196,7 +199,7 @@ async function getRentalDetailsForIds(usahaId: string, rentalIds: string[]) {
   if (!rentalIds.length) return [] as DetailRow[];
   const { data, error } = await supabase
     .from("detail_penyewaan")
-    .select("detail_penyewaan_id,penyewaan_id")
+    .select("detail_penyewaan_id,penyewaan_id,paket_sewa_id")
     .eq("usaha_id", usahaId)
     .in("penyewaan_id", rentalIds);
   if (error) throw error;
@@ -207,7 +210,7 @@ async function getAssignmentsForDetails(usahaId: string, detailIds: string[]) {
   if (!detailIds.length) return [] as AssignmentRow[];
   const { data, error } = await supabase
     .from("penetapan_unit")
-    .select("penetapan_unit_id,usaha_id,detail_penyewaan_id,unit_barang_id,status,ditetapkan_at,dibatalkan_at")
+    .select("penetapan_unit_id,usaha_id,detail_penyewaan_id,komponen_penyewaan_id,unit_barang_id,status,ditetapkan_at,dibatalkan_at")
     .eq("usaha_id", usahaId)
     .in("detail_penyewaan_id", detailIds);
   if (error) throw error;
@@ -412,22 +415,31 @@ export async function getReturnWorkspace(usahaId: string, rentalId: string): Pro
   const barangIds = Array.from(new Set((unitRows.data ?? []).map((row) => row.barang_id as string)));
   const variantIds = Array.from(new Set((unitRows.data ?? []).map((row) => row.varian_barang_id as string).filter(Boolean)));
 
-  const [barangResult, variantResult, renterResult] = await Promise.all([
+  const packageIds = Array.from(
+    new Set(details.map((row) => row.paket_sewa_id).filter((value): value is string => Boolean(value))),
+  );
+
+  const [barangResult, variantResult, packageResult, renterResult] = await Promise.all([
     barangIds.length
       ? supabase.from("barang").select("barang_id,nama").eq("usaha_id", usahaId).in("barang_id", barangIds)
       : Promise.resolve({ data: [], error: null }),
     variantIds.length
       ? supabase.from("varian_barang").select("varian_barang_id,nama").eq("usaha_id", usahaId).in("varian_barang_id", variantIds)
       : Promise.resolve({ data: [], error: null }),
+    packageIds.length
+      ? supabase.from("paket_sewa").select("paket_sewa_id,nama").eq("usaha_id", usahaId).in("paket_sewa_id", packageIds)
+      : Promise.resolve({ data: [], error: null }),
     renterPromise,
   ]);
   if (barangResult.error) throw barangResult.error;
   if (variantResult.error) throw variantResult.error;
+  if (packageResult.error) throw packageResult.error;
   if (renterResult.error) throw renterResult.error;
 
   const unitMap = new Map((unitRows.data ?? []).map((row) => [row.unit_barang_id as string, row as unknown as UnitRow]));
   const barangMap = new Map((barangResult.data ?? []).map((row) => [row.barang_id as string, row.nama as string]));
   const variantMap = new Map((variantResult.data ?? []).map((row) => [row.varian_barang_id as string, row.nama as string]));
+  const packageMap = new Map((packageResult.data ?? []).map((row) => [row.paket_sewa_id as string, row.nama as string]));
 
   const returnDetailByUnit = new Map<string, ReturnDetailRow>();
   for (const detail of returnDetails) {
@@ -439,6 +451,13 @@ export async function getReturnWorkspace(usahaId: string, rentalId: string): Pro
     const returnDetail = returnDetailByUnit.get(assignment.unit_barang_id) ?? null;
     return {
       unit_barang_id: assignment.unit_barang_id,
+      detail_penyewaan_id: assignment.detail_penyewaan_id,
+      komponen_penyewaan_id: assignment.komponen_penyewaan_id,
+      paket_sewa_id: details.find((row) => row.detail_penyewaan_id === assignment.detail_penyewaan_id)?.paket_sewa_id ?? null,
+      paket_nama: (() => {
+        const packageId = details.find((row) => row.detail_penyewaan_id === assignment.detail_penyewaan_id)?.paket_sewa_id ?? null;
+        return packageId ? packageMap.get(packageId) ?? null : null;
+      })(),
       kode_unit: unit?.kode_unit ?? assignment.unit_barang_id,
       barang_id: unit?.barang_id ?? "",
       barang_nama: unit ? barangMap.get(unit.barang_id) ?? null : null,
@@ -529,7 +548,7 @@ export async function lookupReturnRentalByQr(usahaId: string, stableUnitIdentifi
 }
 
 function newRequestId() {
-  return crypto.randomUUID();
+  return createClientId();
 }
 
 function normalizeRpcError(error: unknown, label: string) {
@@ -559,7 +578,7 @@ export async function processUnitReturn(
     throw new Error("Status penyewaan terbaru wajib diverifikasi sebelum menerima pengembalian.");
   }
 
-  const idempotencyKey = options.idempotencyKey ?? "process-return-" + crypto.randomUUID();
+  const idempotencyKey = options.idempotencyKey ?? "process-return-" + createClientId();
   const { data, error } = await supabase.rpc("command_process_unit_return", {
     p_usaha_id: usahaId,
     p_penyewaan_id: input.rentalId,

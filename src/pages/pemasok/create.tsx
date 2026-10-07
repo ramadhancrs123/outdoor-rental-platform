@@ -1,3 +1,4 @@
+import { createClientId } from "@/lib/client-id";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, Building2, Check, Loader2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -66,16 +67,16 @@ export function SupplierCreate() {
   const mutation = useMutation({
     mutationFn: async () => {
       if (!context.data) throw new Error("Konteks Usaha belum siap.");
-      commandRef.current ??= crypto.randomUUID();
+      commandRef.current ??= createClientId();
       if (editing) {
         return updateSupplier(
           context.data.usahaId,
           id!,
           { ...form, expectedUpdatedAt },
-          { idempotencyKey: commandRef.current, requestId: crypto.randomUUID() },
+          { idempotencyKey: commandRef.current, requestId: createClientId() },
         );
       }
-      return createSupplier(context.data.usahaId, form, { idempotencyKey: commandRef.current, requestId: crypto.randomUUID() });
+      return createSupplier(context.data.usahaId, form, { idempotencyKey: commandRef.current, requestId: createClientId() });
     },
     onMutate: () => { setFeedback(""); setMode("processing"); },
     onSuccess: async (result) => {

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, test, vi } from "vitest";
@@ -28,6 +28,9 @@ const rental = {
   actual_pickup_at:"2026-10-01T10:15:00Z", actual_return_started_at:null, actual_return_completed_at:null, status:"active",
   total_amount:"750000", currency_code:"IDR", catatan:null, created_at:"2026-10-01T09:00:00Z", updated_at:"2026-10-01T10:15:00Z",
   penyewa_nama:"Ahmad Outdoor", detail_count:1, assignment_count:2,
+  lines:[{
+    detail_penyewaan_id:"detail-1", kind:"barang", label:"Tenda Dome 4P", quantity:2, component_count:0, components:[],
+  }],
 };
 
 function wrapper(element: React.ReactNode, route: string) { return render(<QueryClientProvider client={new QueryClient({ defaultOptions:{queries:{retry:false}} })}><MemoryRouter initialEntries={[route]}>{element}</MemoryRouter></QueryClientProvider>); }
@@ -39,14 +42,49 @@ describe("Penyewaan read-side",()=> {
     serviceMock.getRental.mockReset();
     serviceMock.getRentalCapabilities.mockReturnValue({read:true,mutation:false,reason:"Trusted rental command belum tersedia."});
   });
-  test("rental list stays tenant-scoped and separates assignment from pickup",async()=> {
+  test("rental list keeps draft rows and only exposes completion action for active rental",async()=> {
     serviceMock.getPenyewaanContext.mockResolvedValue(context);
-    serviceMock.listRentals.mockResolvedValue({rentals:[rental],total:1});
+    serviceMock.listRentals.mockResolvedValue({
+      rentals:[
+        rental,
+        {...rental, penyewaan_id:"rental-2", nomor_penyewaan:"RNT-002", status:"draft", actual_pickup_at:null, assignment_count:0},
+      ],
+      total:2,
+    });
     wrapper(<RentalList/>,"/penyewaan");
+
     expect((await screen.findAllByText("RNT-001")).length).toBeGreaterThan(0);
-    expect(screen.getByText(/Data Penyewaan/)).toBeInTheDocument();
-    expect(screen.getByText("2")).toBeInTheDocument();
+    expect((await screen.findAllByText("RNT-002")).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Penyewaan dikelompokkan berdasarkan penyewa/)).toBeInTheDocument();
+    const activeRentalTrigger = screen.getByRole("button", { name: /Ahmad Outdoor.*RNT-001/ });
+    expect(activeRentalTrigger).toBeInTheDocument();
+    expect(screen.queryByText("Tenda Dome 4P")).not.toBeInTheDocument();
+
+    fireEvent.click(activeRentalTrigger);
+
+    expect(screen.getByText("Tenda Dome 4P")).toBeInTheDocument();
+    const completionLinks = screen.getAllByRole("link", { name: "Selesaikan Sewa" });
+    expect(completionLinks).toHaveLength(1);
+    expect(completionLinks[0].getAttribute("href")).toBe("/penyewaan/rental-1#rental-operational");
+    expect(screen.getAllByRole("link", { name: "Lihat Detail Sewa" })).toHaveLength(1);
   });
+  test("mobile rental list exposes compact filter controls without losing expandable cards",async()=> {
+    serviceMock.getPenyewaanContext.mockResolvedValue({ ...context, timezone:"Asia/Jakarta" });
+    serviceMock.listRentals.mockResolvedValue({ rentals:[rental], total:1 });
+    wrapper(<RentalList/>,"/penyewaan");
+
+    expect(await screen.findByRole("heading",{level:1,name:"Daftar Penyewaan"})).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Nama penyewa, nomor rental, atau unit...")).toBeInTheDocument();
+    expect(screen.getByRole("button",{name:/Semua/})).toBeInTheDocument();
+    expect(screen.getByRole("button",{name:/Tanggal/})).toBeInTheDocument();
+    expect(screen.getByRole("button",{name:/^Penyewa$/})).toBeInTheDocument();
+    expect(screen.getByRole("button",{name:/^Status$/})).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button",{name:/^Status$/}));
+    expect(await screen.findByText("Filter Penyewaan")).toBeInTheDocument();
+    expect(screen.getByText("Status penyewaan")).toBeInTheDocument();
+    expect(screen.getByRole("combobox")).toBeInTheDocument();
+  });
+
   test("rental detail keeps inventory and finance ownership boundaries",async()=> {
     serviceMock.getPenyewaanContext.mockResolvedValue(context);
     serviceMock.getRental.mockResolvedValue({

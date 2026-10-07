@@ -27,9 +27,8 @@ const navigation = [
   "Permintaan",
   "Reservasi",
   "Penyewaan",
-  "Pengembalian",
   "Inventaris",
-  "Perawatan/Pemeriksaan",
+  "Perawatan",
   "Penyewa",
   "Katalog",
   "Pemasok",
@@ -48,7 +47,7 @@ describe("scenario A — app boot", () => {
     await waitFor(() => expect(window.location.pathname).toBe("/dashboard"));
 
     expect(await screen.findByTestId("dashboard-root")).toBeInTheDocument();
-    expect(await screen.findByText("Perlu Perhatian")).toBeInTheDocument();
+    expect(await screen.findByText("Perlu Tindakan")).toBeInTheDocument();
   });
 
   test("router boot — unknown route renders the error component", async () => {
@@ -68,5 +67,8 @@ describe("scenario A — app boot", () => {
         expect(screen.getAllByRole("link", { name: new RegExp(`^${label}$`) })).not.toHaveLength(0);
       }, { timeout: 10000 });
     }
+
+    expect(screen.queryByRole("link", { name: /^Pengembalian$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /^Pemeriksaan$/ })).not.toBeInTheDocument();
   }, 30000);
 });

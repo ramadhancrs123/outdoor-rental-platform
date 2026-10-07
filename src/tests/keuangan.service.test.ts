@@ -12,6 +12,8 @@ import {
   getFinanceUnitRevenue,
   getFinanceHealth,
   correctPayment,
+  recordExpenseWithFinanceCashout,
+  reconcileExpenseCashoutCommand,
 } from "@/features/keuangan/service";
 
 describe("Finance F3 server-side contracts", () => {
@@ -127,6 +129,126 @@ describe("Finance F3 server-side contracts", () => {
       p_reason: "Duplicate entry",
       p_idempotency_key: "correct-payment-test",
       p_request_id: "request-correct-payment-test",
+    });
+  });
+});
+
+
+describe("Manual expense cash-out command", () => {
+  test("maps multi-account cash-out allocations to the trusted RPC", async () => {
+    rpcMock.mockResolvedValueOnce({
+      data: {
+        pengeluaran_id: "expense-cashout-1",
+        nomor_pengeluaran: "EXP-2026-001",
+        transaksi_keuangan_id: "trx-cashout-1",
+        nomor_transaksi: "TRX-2026-001",
+        status: "recorded",
+        source_type: "operational",
+        source_id: null,
+        amount: 125000,
+        currency_code: "IDR",
+        tanggal_pengeluaran: "2026-10-04",
+        cash_out_recorded: true,
+        settlement: {
+          allocations: [
+            { akun_keuangan_id: "account-1", amount: 75000 },
+            { akun_keuangan_id: "account-2", amount: 50000 },
+          ],
+        },
+      },
+      error: null,
+    });
+
+    await expect(
+      recordExpenseWithFinanceCashout(
+        "usaha-1",
+        {
+          sourceType: "operational",
+          kategoriBiaya: "Operasional",
+          deskripsi: "Pembelian perlengkapan",
+          amount: 125000,
+          tanggalPengeluaran: "2026-10-04",
+          allocations: [
+            { akunKeuanganId: "account-1", amount: 75000 },
+            { akunKeuanganId: "account-2", amount: 50000 },
+          ],
+        },
+        {
+          idempotencyKey: "expense-cashout-test",
+          requestId: "request-expense-cashout-test",
+        },
+      ),
+    ).resolves.toMatchObject({
+      pengeluaran_id: "expense-cashout-1",
+      cash_out_recorded: true,
+    });
+
+    expect(rpcMock).toHaveBeenCalledWith("command_record_expense_with_finance_cashout", {
+      p_usaha_id: "usaha-1",
+      p_source_type: "operational",
+      p_source_id: null,
+      p_pemasok_id: null,
+      p_kategori_biaya: "Operasional",
+      p_deskripsi: "Pembelian perlengkapan",
+      p_amount: 125000,
+      p_tanggal_pengeluaran: "2026-10-04",
+      p_bukti_storage_path: null,
+      p_catatan: null,
+      p_allocations: [
+        { akun_keuangan_id: "account-1", amount: 75000 },
+        { akun_keuangan_id: "account-2", amount: 50000 },
+      ],
+      p_idempotency_key: "expense-cashout-test",
+      p_request_id: "request-expense-cashout-test",
+    });
+  });
+
+  test("rejects incomplete allocations before calling the RPC", async () => {
+    await expect(
+      recordExpenseWithFinanceCashout(
+        "usaha-1",
+        {
+          sourceType: "manual",
+          kategoriBiaya: "Manual",
+          deskripsi: "Biaya kecil",
+          amount: 100000,
+          allocations: [{ akunKeuanganId: "account-1", amount: 25000 }],
+        },
+      ),
+    ).rejects.toThrow("Total alokasi akun harus sama dengan nominal pengeluaran.");
+
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
+
+  test("reconciles unknown manual expense cash-out outcome through its command boundary", async () => {
+    rpcMock.mockResolvedValueOnce({
+      data: {
+        state: "committed",
+        response: {
+          pengeluaran_id: "expense-cashout-2",
+          nomor_pengeluaran: "EXP-2026-002",
+          transaksi_keuangan_id: "trx-cashout-2",
+          nomor_transaksi: "TRX-2026-002",
+          status: "recorded",
+          source_type: "manual",
+          source_id: null,
+          amount: 50000,
+          currency_code: "IDR",
+        },
+      },
+      error: null,
+    });
+
+    await expect(
+      reconcileExpenseCashoutCommand("usaha-1", "expense-cashout-reconcile"),
+    ).resolves.toMatchObject({
+      state: "committed",
+      response: { pengeluaran_id: "expense-cashout-2" },
+    });
+
+    expect(rpcMock).toHaveBeenCalledWith("command_reconcile_expense_with_finance_cashout", {
+      p_usaha_id: "usaha-1",
+      p_idempotency_key: "expense-cashout-reconcile",
     });
   });
 });

@@ -1,3 +1,4 @@
+import { createClientId } from "@/lib/client-id";
 import { supabase } from "@/app/providers/supabase/client";
 import type {
   CompleteMaintenanceInput,
@@ -6,6 +7,7 @@ import type {
   MaintenanceCapabilities,
   MaintenanceCommandResult,
   MaintenanceContext,
+  MaintenanceCashoutAllocation,
   MaintenanceFinding,
   MaintenanceInspectionCandidate,
   MaintenanceQueueItem,
@@ -19,7 +21,7 @@ import { normalizeMaintenanceText } from "./utils";
 type MembershipRow = { usaha_id: string; status: string; revoked_at: string | null };
 
 function requestId() {
-  return crypto.randomUUID();
+  return createClientId();
 }
 
 function unknownOutcome(message: string) {
@@ -33,7 +35,7 @@ export async function getPerawatanContext(): Promise<MaintenanceContext> {
 
   const { data: admin, error: adminError } = await supabase
     .from("akun_admin")
-    .select("akun_admin_id")
+    .select("akun_admin_id,nama_tampilan")
     .eq("auth_user_id", userData.user.id)
     .eq("status", "active")
     .maybeSingle();
@@ -54,14 +56,20 @@ export async function getPerawatanContext(): Promise<MaintenanceContext> {
 
   const { data: usaha, error: usahaError } = await supabase
     .from("usaha")
-    .select("usaha_id,nama,status")
+    .select("usaha_id,nama,status,timezone")
     .eq("usaha_id", rows[0].usaha_id)
     .eq("status", "active")
     .maybeSingle();
   if (usahaError) throw usahaError;
   if (!usaha) throw new Error("Usaha aktif tidak ditemukan.");
 
-  return { akunAdminId: admin.akun_admin_id as string, usahaId: usaha.usaha_id as string, usahaNama: usaha.nama as string };
+  return {
+    akunAdminId: admin.akun_admin_id as string,
+    akunAdminNama: (admin.nama_tampilan as string | null) ?? null,
+    usahaId: usaha.usaha_id as string,
+    usahaNama: usaha.nama as string,
+    businessTimezone: (usaha.timezone as string | null) ?? "Asia/Jakarta",
+  };
 }
 
 export async function listMaintenanceQueue(
@@ -82,14 +90,26 @@ export async function listMaintenanceQueue(
   const unitIds = [...new Set(rows.map((row) => row.unit_barang_id))];
   const inspectionIds = [...new Set(rows.map((row) => row.pemeriksaan_id).filter(Boolean) as string[])];
 
-  const [{ data: units, error: unitError }, { data: inspections, error: inspectionError }] = await Promise.all([
-    supabase.from("unit_barang").select("unit_barang_id,kode_unit,status,barang:barang(barang_id,nama)").eq("usaha_id", usahaId).in("unit_barang_id", unitIds),
+  const verificationEventIds = rows.map((row) => row.perawatan_id);
+  const [{ data: units, error: unitError }, { data: inspections, error: inspectionError }, { data: verificationEvents, error: verificationError }] = await Promise.all([
+    supabase.from("unit_barang").select("unit_barang_id,kode_unit,status,barang:barang!unit_barang_tenant_fk(barang_id,nama)").eq("usaha_id", usahaId).in("unit_barang_id", unitIds),
     inspectionIds.length
       ? supabase.from("pemeriksaan").select("pemeriksaan_id,hasil").eq("usaha_id", usahaId).in("pemeriksaan_id", inspectionIds)
+      : Promise.resolve({ data: [], error: null }),
+    verificationEventIds.length
+      ? supabase
+          .from("riwayat_unit")
+          .select("sumber_id,jenis_kejadian,terjadi_at")
+          .eq("usaha_id", usahaId)
+          .eq("sumber_type", "perawatan")
+          .in("sumber_id", verificationEventIds)
+          .in("jenis_kejadian", ["maintenance_verification_passed", "maintenance_verification_failed"])
+          .order("terjadi_at", { ascending: false })
       : Promise.resolve({ data: [], error: null }),
   ]);
   if (unitError) throw unitError;
   if (inspectionError) throw inspectionError;
+  if (verificationError) throw verificationError;
 
   const unitMap = new Map<string, { kode_unit: string; status: string; barang_nama: string | null }>();
   for (const unit of (units ?? []) as Array<{ unit_barang_id: string; kode_unit: string; status: string; barang?: { nama?: string | null } | null }>) {
@@ -102,16 +122,46 @@ export async function listMaintenanceQueue(
   const inspectionMap = new Map<string, string>();
   for (const inspection of (inspections ?? []) as Array<{ pemeriksaan_id: string; hasil: string }>) inspectionMap.set(inspection.pemeriksaan_id, inspection.hasil);
 
+  const verificationMap = new Map<string, "passed" | "failed">();
+  for (const event of (verificationEvents ?? []) as Array<{ sumber_id: string; jenis_kejadian: string }>) {
+    if (!verificationMap.has(event.sumber_id)) {
+      verificationMap.set(
+        event.sumber_id,
+        event.jenis_kejadian === "maintenance_verification_passed" ? "passed" : "failed",
+      );
+    }
+  }
+
+  const latestMaintenanceByUnit = new Map<string, string>();
+  for (const row of rows) {
+    if (!latestMaintenanceByUnit.has(row.unit_barang_id)) {
+      latestMaintenanceByUnit.set(row.unit_barang_id, row.perawatan_id);
+    }
+  }
+
   const search = input.search?.trim().toLowerCase() ?? "";
   return rows
-    .filter((row) => !input.status || input.status === "all" || row.status === input.status)
     .map((row) => ({
       ...row,
       kode_unit: unitMap.get(row.unit_barang_id)?.kode_unit ?? "-",
       barang_nama: unitMap.get(row.unit_barang_id)?.barang_nama ?? null,
       unit_status: unitMap.get(row.unit_barang_id)?.status ?? "-",
       pemeriksaan_hasil: row.pemeriksaan_id ? inspectionMap.get(row.pemeriksaan_id) ?? null : null,
+      verification_result: verificationMap.get(row.perawatan_id) ?? null,
+      is_latest_for_unit: latestMaintenanceByUnit.get(row.unit_barang_id) === row.perawatan_id,
     }))
+    .filter((row) =>
+      !input.status ||
+      input.status === "all" ||
+      (input.status === "active" &&
+        (row.status === "planned" ||
+          row.status === "in_progress" ||
+          (row.status === "completed" &&
+            row.is_latest_for_unit &&
+            row.unit_status === "maintenance" &&
+            row.verification_result !== "passed"))) ||
+      (input.status !== "active" && input.status !== "all" && row.status === input.status),
+    )
     .filter((row) => {
       if (!search) return true;
       return [row.kode_unit, row.barang_nama, row.jenis_perawatan, row.deskripsi_pekerjaan, row.pelaksana, row.pemeriksaan_id]
@@ -122,7 +172,7 @@ export async function listMaintenanceQueue(
 export async function listMaintenanceUnitCandidates(usahaId: string, search = ""): Promise<MaintenanceUnitCandidate[]> {
   const { data, error } = await supabase
     .from("unit_barang")
-    .select("unit_barang_id,kode_unit,status,barang:barang(barang_id,nama)")
+    .select("unit_barang_id,kode_unit,status,barang:barang!unit_barang_tenant_fk(barang_id,nama)")
     .eq("usaha_id", usahaId)
     .in("status", ["ready", "inspection_pending"])
     .order("kode_unit", { ascending: true })
@@ -147,7 +197,7 @@ export async function listMaintenanceInspectionCandidates(
   const { data, error } = await supabase
     .from("pemeriksaan")
     .select(
-      "pemeriksaan_id,unit_barang_id,hasil,kelengkapan_status,keputusan_operasional,diperiksa_at,unit:unit_barang(unit_barang_id,kode_unit,status,barang:barang(barang_id,nama),varian:varian_barang(varian_barang_id,nama))",
+      "pemeriksaan_id,unit_barang_id,hasil,kelengkapan_status,keputusan_operasional,diperiksa_at,unit:unit_barang!pemeriksaan_unit_tenant_fk(unit_barang_id,kode_unit,status,barang:barang!unit_barang_tenant_fk(barang_id,nama),varian:varian_barang!unit_variant_product_tenant_fk(varian_barang_id,nama))",
     )
     .eq("usaha_id", usahaId)
     .eq("hasil", "issue_found")
@@ -175,6 +225,21 @@ export async function listMaintenanceInspectionCandidates(
 
   const ids = rows.map((row) => row.pemeriksaan_id);
   const findingMap = new Map<string, { count: number; summary: string | null }>();
+  const linkedInspectionIds = new Set<string>();
+
+  if (ids.length) {
+    const { data: linkedMaintenances, error: linkedMaintenanceError } = await supabase
+      .from("perawatan")
+      .select("pemeriksaan_id")
+      .eq("usaha_id", usahaId)
+      .in("pemeriksaan_id", ids);
+
+    if (linkedMaintenanceError) throw linkedMaintenanceError;
+
+    for (const row of (linkedMaintenances ?? []) as Array<{ pemeriksaan_id: string | null }>) {
+      if (row.pemeriksaan_id) linkedInspectionIds.add(row.pemeriksaan_id);
+    }
+  }
 
   if (ids.length) {
     const { data: findings, error: findingError } = await supabase
@@ -196,6 +261,7 @@ export async function listMaintenanceInspectionCandidates(
 
   const term = search.trim().toLowerCase();
   return rows
+    .filter((row) => !linkedInspectionIds.has(row.pemeriksaan_id))
     .map((row) => {
       const finding = findingMap.get(row.pemeriksaan_id) ?? { count: 0, summary: null };
       return {
@@ -232,7 +298,7 @@ export async function getMaintenanceWorkspace(usahaId: string, perawatanId: stri
   const [unitResult, inspectionResult, historyResult] = await Promise.all([
     supabase
       .from("unit_barang")
-      .select("unit_barang_id,kode_unit,status,updated_at,barang:barang(barang_id,nama),varian:varian_barang(varian_barang_id,nama)")
+      .select("unit_barang_id,kode_unit,status,updated_at,barang:barang!unit_barang_tenant_fk(barang_id,nama),varian:varian_barang!unit_variant_product_tenant_fk(varian_barang_id,nama)")
       .eq("usaha_id", usahaId)
       .eq("unit_barang_id", maintenance.unit_barang_id)
       .maybeSingle(),
@@ -252,6 +318,14 @@ export async function getMaintenanceWorkspace(usahaId: string, perawatanId: stri
   if (findingsResult.error) throw findingsResult.error;
 
   const unit = unitResult.data as { unit_barang_id: string; kode_unit: string; status: string; updated_at: string; barang?: { nama?: string | null } | null; varian?: { nama?: string | null } | null };
+  const history = (historyResult.data ?? []) as MaintenanceWorkspace["history"];
+  const verificationEvent = history.find(
+    (entry) =>
+      entry.sumber_type === "perawatan" &&
+      entry.sumber_id === maintenance.perawatan_id &&
+      (entry.jenis_kejadian === "maintenance_verification_passed" ||
+        entry.jenis_kejadian === "maintenance_verification_failed"),
+  );
   return {
     maintenance: maintenance as MaintenanceRow,
     unit: {
@@ -264,7 +338,12 @@ export async function getMaintenanceWorkspace(usahaId: string, perawatanId: stri
     },
     sourceInspection: inspectionResult.data ? inspectionResult.data as MaintenanceWorkspace["sourceInspection"] : null,
     findings: (findingsResult.data ?? []) as MaintenanceFinding[],
-    history: (historyResult.data ?? []) as MaintenanceWorkspace["history"],
+    history,
+    verification_result: verificationEvent
+      ? verificationEvent.jenis_kejadian === "maintenance_verification_passed"
+        ? "passed"
+        : "failed"
+      : null,
   };
 }
 
@@ -292,7 +371,7 @@ async function reconcileOrThrow(usahaId: string, commandName: string, idempotenc
   }
 }
 
-export async function createMaintenance(usahaId: string, input: CreateMaintenanceInput, idempotencyKey = "create-maintenance-" + crypto.randomUUID()) {
+export async function createMaintenance(usahaId: string, input: CreateMaintenanceInput, idempotencyKey = "create-maintenance-" + createClientId()) {
   if (!input.unitBarangId.trim()) throw new Error("Unit wajib dipilih.");
   if (!input.jenisPerawatan.trim()) throw new Error("Jenis perawatan wajib diisi.");
   if (!input.deskripsiPekerjaan.trim()) throw new Error("Deskripsi pekerjaan wajib diisi.");
@@ -317,7 +396,7 @@ export async function createMaintenance(usahaId: string, input: CreateMaintenanc
   return reconcileOrThrow(usahaId, "create_maintenance", idempotencyKey, error);
 }
 
-export async function startMaintenance(usahaId: string, perawatanId: string, expectedUpdatedAt: string, expectedUnitUpdatedAt: string, idempotencyKey = "start-maintenance-" + crypto.randomUUID()) {
+export async function startMaintenance(usahaId: string, perawatanId: string, expectedUpdatedAt: string, expectedUnitUpdatedAt: string, idempotencyKey = "start-maintenance-" + createClientId()) {
   const { data, error } = await supabase.rpc("command_start_maintenance", {
     p_usaha_id: usahaId,
     p_perawatan_id: perawatanId,
@@ -330,7 +409,7 @@ export async function startMaintenance(usahaId: string, perawatanId: string, exp
   return reconcileOrThrow(usahaId, "start_maintenance", idempotencyKey, error);
 }
 
-export async function completeMaintenance(usahaId: string, input: CompleteMaintenanceInput, expectedUpdatedAt: string, expectedUnitUpdatedAt: string, idempotencyKey = "complete-maintenance-" + crypto.randomUUID()) {
+export async function completeMaintenance(usahaId: string, input: CompleteMaintenanceInput, expectedUpdatedAt: string, expectedUnitUpdatedAt: string, idempotencyKey = "complete-maintenance-" + createClientId()) {
   const { data, error } = await supabase.rpc("command_complete_maintenance", {
     p_usaha_id: usahaId,
     p_perawatan_id: input.perawatanId,
@@ -347,12 +426,54 @@ export async function completeMaintenance(usahaId: string, input: CompleteMainte
   return reconcileOrThrow(usahaId, "complete_maintenance", idempotencyKey, error);
 }
 
+export async function completeMaintenanceWithFinanceCashout(
+  usahaId: string,
+  input: CompleteMaintenanceInput & {
+    allocations: MaintenanceCashoutAllocation[];
+    diselesaikanAt?: string | null;
+  },
+  expectedUpdatedAt: string,
+  expectedUnitUpdatedAt: string,
+  idempotencyKey = "complete-maintenance-finance-cashout-" + createClientId(),
+) {
+  if (!Number.isFinite(input.biaya ?? NaN) || (input.biaya ?? -1) < 0) {
+    throw new Error("Biaya aktual wajib diisi dengan angka nol atau lebih.");
+  }
+  const cost = Number(input.biaya ?? 0);
+  if (cost > 0 && input.allocations.length === 0) {
+    throw new Error("Biaya aktual membutuhkan minimal satu akun uang untuk cash out.");
+  }
+  if (cost > 0 && Math.abs(input.allocations.reduce((sum, item) => sum + Number(item.amount || 0), 0) - cost) > 0.000001) {
+    throw new Error("Total alokasi akun harus sama dengan biaya aktual.");
+  }
+
+  const { data, error } = await supabase.rpc("command_complete_maintenance_with_finance_cashout", {
+    p_usaha_id: usahaId,
+    p_perawatan_id: input.perawatanId,
+    p_expected_updated_at: expectedUpdatedAt,
+    p_expected_unit_updated_at: expectedUnitUpdatedAt,
+    p_pelaksana: normalizeMaintenanceText(input.pelaksana),
+    p_biaya: cost,
+    p_currency_code: input.currencyCode?.trim().toUpperCase() || "IDR",
+    p_catatan: normalizeMaintenanceText(input.catatan),
+    p_allocations: input.allocations.map((item) => ({
+      akun_keuangan_id: item.akunKeuanganId,
+      amount: Number(item.amount),
+    })),
+    p_diselesaikan_at: input.diselesaikanAt ?? null,
+    p_idempotency_key: idempotencyKey,
+    p_request_id: requestId(),
+  });
+  if (!error && data) return data as MaintenanceCommandResult;
+  return reconcileOrThrow(usahaId, "complete_maintenance_with_finance_cashout", idempotencyKey, error);
+}
+
 export async function verifyMaintenanceReadiness(
   usahaId: string,
   input: VerifyMaintenanceReadinessInput,
   expectedMaintenanceUpdatedAt: string,
   expectedUnitUpdatedAt: string,
-  idempotencyKey = "verify-maintenance-" + crypto.randomUUID(),
+  idempotencyKey = "verify-maintenance-" + createClientId(),
 ) {
   if (!input.perawatanId.trim()) throw new Error("Perawatan wajib dipilih.");
   if (!["passed", "failed"].includes(input.verificationResult)) {
@@ -375,7 +496,7 @@ export async function verifyMaintenanceReadiness(
 
 export async function reconcileMaintenanceCommand(
   usahaId: string,
-  commandName: "create_maintenance" | "start_maintenance" | "complete_maintenance" | "verify_maintenance_readiness",
+  commandName: "create_maintenance" | "start_maintenance" | "complete_maintenance" | "complete_maintenance_with_finance_cashout" | "verify_maintenance_readiness",
   idempotencyKey: string,
 ) {
   if (!usahaId.trim() || !idempotencyKey.trim()) throw new Error("Usaha dan idempotency key wajib diisi.");
@@ -390,6 +511,7 @@ export function getMaintenanceCapabilities(): MaintenanceCapabilities {
       "create_maintenance",
       "start_maintenance",
       "complete_maintenance",
+      "complete_maintenance_with_finance_cashout",
       "verify_maintenance_readiness",
       "command_reconcile_maintenance_mutation",
     ],

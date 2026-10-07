@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { ClipboardCheck, Filter, RefreshCw, Search, SlidersHorizontal } from "lucide-react";
+import { ArrowRight, CheckCircle2, ClipboardCheck, Filter, RefreshCw, Search, SlidersHorizontal, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -25,6 +25,93 @@ function resultLabel(value: string | null) {
   if (value === "normal") return "Normal";
   if (value === "issue_found") return "Ada Temuan";
   return "Belum Ada";
+}
+
+const CARD_TONES = [
+  "bg-card",
+  "bg-emerald-50/40 dark:bg-emerald-950/10",
+  "bg-sky-50/40 dark:bg-sky-950/10",
+  "bg-amber-50/40 dark:bg-amber-950/10",
+] as const;
+
+function FilterChip({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      className={[
+        "h-10 shrink-0 rounded-full px-4 shadow-none",
+        active ? "border-primary bg-primary/[0.04] text-primary ring-1 ring-primary/10" : "bg-background",
+      ].join(" ")}
+      onClick={onClick}
+    >
+      {label}
+    </Button>
+  );
+}
+
+function InspectionQueueCard({ item, index }: { item: Awaited<ReturnType<typeof listInspectionQueue>>[number]; index: number }) {
+  const inProgress = item.inspection_state === "in_progress";
+  const completed = item.inspection_state === "completed";
+
+  return (
+    <Card className={`overflow-hidden rounded-[20px] border-border/70 ${CARD_TONES[index % CARD_TONES.length]} shadow-[0_1px_3px_rgba(0,0,0,0.05)] transition hover:-translate-y-px`}>
+      <CardContent className="p-3.5">
+        <div className="grid grid-cols-[42px_minmax(0,1fr)_auto] items-start gap-3">
+          <div className="grid size-10 place-items-center rounded-2xl bg-primary/[0.08] text-primary">
+            <ClipboardCheck className="size-5" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <p className="truncate text-[15px] font-semibold">{item.kode_unit}</p>
+              <Badge variant={completed ? "outline" : "secondary"} className="shrink-0 rounded-full px-2.5 py-1 text-[11px]">
+                {stateLabel(item.inspection_state)}
+              </Badge>
+            </div>
+            <p className="mt-0.5 truncate text-[12px] text-muted-foreground">
+              {item.barang_nama ?? "Barang tidak ditemukan"}{item.varian_nama ? " · " + item.varian_nama : ""}
+            </p>
+            <p className="mt-1 truncate text-[12px] text-muted-foreground">{item.nomor_pengembalian} · {item.penyewa_nama ?? "Penyewa tidak ditemukan"}</p>
+          </div>
+          <CheckCircle2 className={completed ? "mt-1 size-4 text-primary" : "mt-1 size-4 text-muted-foreground"} />
+        </div>
+
+        <div className="mt-2.5 grid grid-cols-2 gap-2">
+          <div className="rounded-xl bg-background/70 px-2.5 py-2.5">
+            <p className="text-[11px] text-muted-foreground">Diterima</p>
+            <p className="mt-1 truncate text-[12px] font-semibold">{formatInspectionDateTime(item.diterima_at)}</p>
+          </div>
+          <div className="rounded-xl bg-background/70 px-2.5 py-2.5">
+            <p className="text-[11px] text-muted-foreground">Hasil</p>
+            <p className="mt-1 truncate text-[12px] font-semibold">{resultLabel(item.latest_hasil)}</p>
+          </div>
+        </div>
+
+        <div className="mt-2 flex items-center justify-between gap-2 border-t border-border/60 pt-2.5">
+          <div className="min-w-0">
+            <p className="text-[11px] text-muted-foreground">Keputusan</p>
+            <p className="truncate text-[12px] font-medium">
+              {item.latest_keputusan_operasional ? semanticInspectionLabel(item.latest_keputusan_operasional) : "Belum ditetapkan"}
+            </p>
+          </div>
+          <Button asChild className="h-9 shrink-0 rounded-xl px-3">
+            <Link to={paths.pemeriksaan + "/" + item.detail_pengembalian_id}>
+              {inProgress ? "Lanjutkan" : completed ? "Lihat" : "Periksa"}
+              <ArrowRight />
+            </Link>
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
 }
 
 export function InspectionList() {
@@ -63,104 +150,100 @@ export function InspectionList() {
 
   return (
     <div className="space-y-4 pb-28 sm:space-y-5 lg:pb-10">
-      <header className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-        <div className="space-y-1">
-          <p className="text-sm font-medium text-muted-foreground">Pemeriksaan</p>
-          <h1 className="text-[28px] font-bold tracking-tight">Antrian Pemeriksaan</h1>
-          <p className="max-w-3xl text-sm leading-6 text-muted-foreground">Periksa kondisi unit yang benar-benar sudah diterima sebelum keputusan operasional berikutnya.</p>
+      <header className="space-y-2">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-primary">Pemeriksaan</p>
+            <h1 className="text-[25px] font-bold leading-tight tracking-tight sm:text-[28px]">Antrian Pemeriksaan</h1>
+          </div>
+          <div className="inline-flex h-10 items-center gap-2 rounded-full border bg-background px-3.5 text-sm font-medium">
+            <ClipboardCheck className="size-4 text-primary" />
+            Usaha: {context.data.usahaNama}
+          </div>
         </div>
-        <Badge variant="secondary" className="w-fit rounded-full px-3 py-1">Usaha Aktif · {context.data.usahaNama}</Badge>
+        <p className="max-w-2xl text-sm leading-5 text-muted-foreground">Periksa kondisi unit yang benar-benar sudah diterima sebelum keputusan operasional berikutnya.</p>
       </header>
 
-      <Card className="rounded-2xl shadow-sm">
+      <Card className="overflow-hidden rounded-2xl border-border/70 shadow-[0_1px_3px_rgba(0,0,0,0.05)]">
         <CardContent className="space-y-3 p-3 sm:p-4">
-          <div className="flex flex-col gap-2 lg:flex-row">
-            <label className="relative min-w-0 flex-1" htmlFor="inspection-search">
-              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-              <Input id="inspection-search" value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void queue.refetch(); }} className="h-11 rounded-xl pl-9" placeholder="Cari kode unit, barang, nomor pengembalian, atau nama penyewa..." />
-            </label>
-            <Button type="button" className="h-11 rounded-xl lg:w-auto" onClick={() => void queue.refetch()}><Search /> Cari</Button>
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+            <Input
+              id="inspection-search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") void queue.refetch(); }}
+              className="h-11 rounded-xl bg-background pl-10 pr-10"
+              placeholder="Cari kode unit, barang, nomor pengembalian, atau nama penyewa..."
+              autoComplete="off"
+            />
+            {search ? (
+              <Button type="button" variant="ghost" size="icon" className="absolute right-1 top-1/2 size-9 -translate-y-1/2 rounded-full text-muted-foreground" aria-label="Hapus pencarian pemeriksaan" onClick={() => setSearch("")}>
+                <X />
+              </Button>
+            ) : null}
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground"><SlidersHorizontal className="size-4" aria-hidden="true" />Saring berdasarkan status</div>
-            {([
-              ["all", "Semua"],
-              ["waiting", "Menunggu"],
-              ["in_progress", "Dalam Proses"],
-              ["completed", "Selesai"],
-            ] as const).map(([value, label]) => (
-              <Button key={value} type="button" size="sm" variant={activeState === value ? "default" : "outline"} className="rounded-xl" onClick={() => setActiveState(value)}>{label}</Button>
-            ))}
-            <Button type="button" variant="ghost" size="sm" className="rounded-xl" onClick={() => { setSearch(""); setActiveState("all"); }}>Atur Ulang</Button>
+
+          <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+            <FilterChip label="Semua" active={activeState === "all"} onClick={() => setActiveState("all")} />
+            <FilterChip label="Menunggu" active={activeState === "waiting"} onClick={() => setActiveState("waiting")} />
+            <FilterChip label="Dalam Proses" active={activeState === "in_progress"} onClick={() => setActiveState("in_progress")} />
+            <FilterChip label="Selesai" active={activeState === "completed"} onClick={() => setActiveState("completed")} />
+            <Button type="button" variant="outline" className="h-10 shrink-0 rounded-full px-4 shadow-none" onClick={() => { setSearch(""); setActiveState("all"); }}>
+              <Filter />
+              Reset
+            </Button>
           </div>
+
+          {search || activeState !== "all" ? (
+            <div className="flex items-center justify-between gap-2 px-1 text-xs">
+              <span className="text-muted-foreground">Saringan aktif diterapkan pada antrean pemeriksaan.</span>
+              <Button type="button" variant="ghost" className="h-7 rounded-full px-2.5 text-xs text-primary" onClick={() => { setSearch(""); setActiveState("all"); }}>
+                Reset
+              </Button>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 
       {queue.isPending ? (
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-44 rounded-2xl" />)}</div>
+        <div className="grid gap-2.5 lg:grid-cols-2">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-40 rounded-[20px]" />)}</div>
       ) : queue.error ? (
         <Alert variant="destructive">
           <AlertTitle>Queue gagal dimuat</AlertTitle>
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><span>{errorMessage(queue.error)}</span><Button variant="outline" size="sm" onClick={() => void queue.refetch()}><RefreshCw /> Coba lagi</Button></AlertDescription>
+          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <span>{errorMessage(queue.error)}</span>
+            <Button variant="outline" size="sm" onClick={() => void queue.refetch()}><RefreshCw />Coba lagi</Button>
+          </AlertDescription>
         </Alert>
       ) : rows.length === 0 ? (
-        <Card className="rounded-2xl">
-          <CardContent className="flex min-h-64 flex-col items-center justify-center gap-3 p-6 text-center">
+        <Card className="rounded-2xl border-dashed">
+          <CardContent className="flex min-h-56 flex-col items-center justify-center gap-3 p-6 text-center">
             <div className="grid size-12 place-items-center rounded-2xl bg-primary/10 text-primary"><ClipboardCheck className="size-6" /></div>
-            <p className="font-semibold">{activeState === "all" && !search ? "Tidak ada unit menunggu pemeriksaan" : "Tidak ada hasil sesuai filter"}</p>
-            <p className="max-w-md text-sm leading-6 text-muted-foreground">{activeState === "all" && !search ? "Unit yang benar-benar sudah diterima dan menunggu pemeriksaan akan muncul di sini." : "Ubah kata pencarian atau saringan untuk melihat unit lain."}</p>
+            <div>
+              <p className="font-semibold">{activeState === "all" && !search ? "Tidak ada unit menunggu pemeriksaan" : "Tidak ada hasil sesuai filter"}</p>
+              <p className="mt-1 max-w-lg text-sm leading-6 text-muted-foreground">
+                {activeState === "all" && !search ? "Unit yang benar-benar sudah diterima dan menunggu pemeriksaan akan muncul di sini." : "Ubah kata pencarian atau saringan untuk melihat unit lain."}
+              </p>
+            </div>
           </CardContent>
         </Card>
       ) : (
         <>
-          <div className="grid gap-3 lg:hidden">
-            {rows.map((item) => (
-              <Link key={item.detail_pengembalian_id} to={paths.pemeriksaan + "/" + item.detail_pengembalian_id} className="block rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
-                <Card className="rounded-2xl shadow-sm transition-colors hover:bg-accent/25">
-                  <CardContent className="space-y-4 p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0"><p className="text-base font-bold">{item.kode_unit}</p><p className="mt-1 text-sm text-muted-foreground">{item.barang_nama ?? "Barang tidak ditemukan"}</p><p className="text-xs text-muted-foreground">{item.varian_nama ?? "Tanpa varian"} · {item.nomor_pengembalian}</p></div>
-                      <Badge variant={item.inspection_state === "completed" ? "outline" : "secondary"} className="shrink-0 rounded-full">{stateLabel(item.inspection_state)}</Badge>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3 text-sm">
-                      <div className="rounded-xl bg-muted/30 p-3"><p className="text-xs text-muted-foreground">Penyewa</p><p className="mt-1 font-medium">{item.penyewa_nama ?? "-"}</p></div>
-                      <div className="rounded-xl bg-muted/30 p-3"><p className="text-xs text-muted-foreground">Diterima</p><p className="mt-1 font-medium">{formatInspectionDateTime(item.diterima_at)}</p></div>
-                    </div>
-                    <div className="flex flex-wrap gap-2"><Badge variant="outline" className="rounded-full">Hasil: {resultLabel(item.latest_hasil)}</Badge>{item.latest_keputusan_operasional ? <Badge variant="secondary" className="rounded-full">{semanticInspectionLabel(item.latest_keputusan_operasional)}</Badge> : null}</div>
-                    <div className="inline-flex h-10 w-full items-center justify-center rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground">{item.inspection_state === "in_progress" ? "Lanjutkan Pemeriksaan" : item.inspection_state === "completed" ? "Lihat Pemeriksaan" : "Periksa Unit"}</div>
-                  </CardContent>
-                </Card>
-              </Link>
-            ))}
+          <div className="flex items-center justify-between px-0.5 text-sm">
+            <span className="text-muted-foreground">{rows.length} unit pemeriksaan</span>
+            <span className="hidden text-xs text-muted-foreground sm:inline">Sumber: Pengembalian</span>
           </div>
-
-          <Card className="hidden rounded-2xl shadow-sm lg:block">
-            <CardHeader className="border-b py-4"><CardTitle className="text-base">Daftar Pemeriksaan</CardTitle></CardHeader>
-            <CardContent className="p-0">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-muted/35 text-left"><tr>
-                    <th className="px-5 py-3 font-medium">No. Pengembalian</th><th className="px-5 py-3 font-medium">Kode Unit</th><th className="px-5 py-3 font-medium">Barang / Varian</th><th className="px-5 py-3 font-medium">Penyewa</th><th className="px-5 py-3 font-medium">Diterima</th><th className="px-5 py-3 font-medium">Hasil Terakhir</th><th className="px-5 py-3 font-medium">Keputusan</th><th className="px-5 py-3 font-medium">Status</th><th className="px-5 py-3 text-right font-medium">Aksi</th>
-                  </tr></thead>
-                  <tbody>{rows.map((item) => <tr key={item.detail_pengembalian_id} className="border-b last:border-0">
-                    <td className="px-5 py-4 font-medium">{item.nomor_pengembalian}</td>
-                    <td className="px-5 py-4"><p className="font-semibold">{item.kode_unit}</p><p className="text-xs text-muted-foreground">Unit fisik</p></td>
-                    <td className="px-5 py-4"><p className="font-medium">{item.barang_nama ?? "-"}</p><p className="text-xs text-muted-foreground">{item.varian_nama ?? "Tanpa varian"}</p></td>
-                    <td className="px-5 py-4">{item.penyewa_nama ?? "-"}</td>
-                    <td className="px-5 py-4 whitespace-nowrap">{formatInspectionDateTime(item.diterima_at)}</td>
-                    <td className="px-5 py-4"><Badge variant="outline" className="rounded-full">{resultLabel(item.latest_hasil)}</Badge></td>
-                    <td className="px-5 py-4">{item.latest_keputusan_operasional ? semanticInspectionLabel(item.latest_keputusan_operasional) : "-"}</td>
-                    <td className="px-5 py-4"><Badge variant={item.inspection_state === "completed" ? "outline" : "secondary"} className="rounded-full">{stateLabel(item.inspection_state)}</Badge></td>
-                    <td className="px-5 py-4 text-right"><Button asChild size="sm" className="rounded-xl"><Link to={paths.pemeriksaan + "/" + item.detail_pengembalian_id}>{item.inspection_state === "in_progress" ? "Lanjutkan" : item.inspection_state === "completed" ? "Lihat" : "Periksa"}</Link></Button></td>
-                  </tr>)}</tbody>
-                </table>
-              </div>
-            </CardContent>
-          </Card>
+          <div className="grid gap-2.5 lg:grid-cols-2">
+            {rows.map((item, index) => <InspectionQueueCard key={item.detail_pengembalian_id} item={item} index={index} />)}
+          </div>
         </>
       )}
 
-      <div className="flex items-center justify-between text-xs text-muted-foreground"><span>Menampilkan {rows.length} unit pemeriksaan</span><span className="hidden sm:inline-flex items-center gap-1"><Filter className="size-3.5" /> Saringan hanya membantu menemukan data.</span></div>
+      <div className="hidden items-center justify-between border-t pt-3 text-xs text-muted-foreground sm:flex">
+        <span>Warna card membantu membedakan item dengan cepat.</span>
+        <span>Alur tetap: Pengembalian → Pemeriksaan → Perawatan → verifikasi kesiapan.</span>
+      </div>
     </div>
   );
 }

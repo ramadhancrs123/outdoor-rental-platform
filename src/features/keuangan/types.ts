@@ -64,6 +64,13 @@ export type FinancePayment = {
   source_label: string | null;
 };
 
+export type FinanceRentalPaymentSummary = {
+  totalRental: number;
+  recordedPaymentTotal: number;
+  paymentCount: number;
+  payments: FinancePayment[];
+};
+
 export type FinanceExpense = {
   pengeluaran_id: string;
   usaha_id: string;
@@ -99,17 +106,78 @@ export type FinanceCapabilities = {
 export type FinanceCommandOptions = {
   idempotencyKey?: string;
   requestId?: string;
+  businessTimezone?: string;
+};
+
+export type FinanceAccount = {
+  akun_keuangan_id: string;
+  usaha_id: string;
+  kode_akun: string;
+  nama_akun: string;
+  jenis_akun: "kas" | "bank" | "e_wallet" | "lainnya";
+  mata_uang: string;
+  status: "active" | "inactive";
+  catatan: string | null;
+  saldo_awal: number;
+  uang_masuk: number;
+  uang_keluar: number;
+  saldo: number;
+  tanggal_saldo_awal: string | null;
+};
+
+export type FinanceAccountSummary = {
+  accounts: FinanceAccount[];
+  totals: {
+    saldo: number;
+    saldo_awal: number;
+    uang_masuk: number;
+    uang_keluar: number;
+  };
+};
+
+export type FinanceAccountMovement = {
+  pergerakan_akun_keuangan_id: string;
+  akun_keuangan_id: string;
+  transaksi_keuangan_id: string;
+  arah: "masuk" | "keluar";
+  amount: string | number;
+  mata_uang: string;
+  terjadi_at: string;
+  sumber_type: string;
+  sumber_id: string;
+  status: string;
+  dicatat_by_admin_id: string;
+  request_id: string;
+  catatan: string | null;
+  transaksi_nomor: string | null;
+  transaksi_jenis: string | null;
+  transaksi_status: string | null;
+  payment_id: string | null;
+  payment_number: string | null;
+  payment_type: string | null;
+  payment_method: string | null;
+  rental_id: string | null;
+  rental_number: string | null;
+  expense_id: string | null;
+  expense_category: string | null;
+  expense_description: string | null;
 };
 
 export type RecordPaymentInput = {
   reservasiId?: string | null;
   penyewaanId?: string | null;
+  akunKeuanganId: string;
   jenis: "dp" | "pelunasan" | "pembayaran_tambahan";
   metode: "cash" | "bank_transfer" | "qris_manual" | "other";
   amount: number;
   dibayarAt?: string | null;
   referenceText?: string | null;
   catatan?: string | null;
+};
+
+export type FinanceExpenseCashoutAllocation = {
+  akunKeuanganId: string;
+  amount: number;
 };
 
 export type RecordExpenseInput = {
@@ -122,6 +190,7 @@ export type RecordExpenseInput = {
   tanggalPengeluaran?: string | null;
   buktiStoragePath?: string | null;
   catatan?: string | null;
+  allocations?: FinanceExpenseCashoutAllocation[];
 };
 
 export type FinanceCommandResult = {
@@ -172,3 +241,25 @@ export type FinanceHealth = { status:"HEALTHY"|"ATTENTION"|"UNHEALTHY"; critical
 export type FinanceFinding = { code:string; severity:"critical"|"attention"; [key:string]:unknown; };
 export type FinanceReconciliationFindings = { items:FinanceFinding[]; limit:number; };
 export type FinanceCorrectionResult = { pembayaran_id?:string; pengeluaran_id?:string; status:"voided"|"reversed"; correction_id:string; nomor_koreksi:string; replacement_transaksi_keuangan_id:string|null; };
+
+export type RentalConsequenceReview = {
+  evaluasi_konsekuensi_id: string;
+  usaha_id: string;
+  penyewaan_id: string;
+  penyewa_id: string;
+  unit_barang_id: string | null;
+  sumber_type: string;
+  sumber_id: string;
+  jenis_konsekuensi: "late_fee" | "damage" | "loss" | "missing_component" | "other";
+  pihak_tanggung_jawab: "penyewa" | "usaha" | "belum_ditentukan";
+  nominal_kandidat: number | null;
+  nominal_disetujui: number | null;
+  currency_code: string;
+  status: "pending_review" | "approved" | "rejected";
+  alasan: string;
+  catatan_review: string | null;
+  reviewed_by_admin_id: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};

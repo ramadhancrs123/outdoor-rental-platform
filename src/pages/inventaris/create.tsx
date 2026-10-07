@@ -1,3 +1,4 @@
+import { createClientId } from "@/lib/client-id";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, Check, CircleAlert, PackagePlus, Search, ShieldCheck } from "lucide-react";
 import { useRef, useState } from "react";
@@ -101,17 +102,16 @@ export function InventoryCreate() {
   const readyToReview = Boolean(
     context.data?.usahaId &&
     form.barangId &&
-    form.kodeUnit.trim() &&
     capabilities.mutation,
   );
 
   const mutation = useMutation({
     mutationFn: async () => {
       if (!context.data?.usahaId) throw new Error("Konteks Usaha belum siap.");
-      if (!commandRef.current) commandRef.current = crypto.randomUUID();
+      if (!commandRef.current) commandRef.current = createClientId();
       return registerInventoryUnit(context.data.usahaId, form, {
         idempotencyKey: commandRef.current,
-        requestId: crypto.randomUUID(),
+        requestId: createClientId(),
       });
     },
     onMutate: () => {
@@ -120,6 +120,7 @@ export function InventoryCreate() {
     },
     onSuccess: async (result) => {
       setCreatedId(result.unit_barang_id);
+      setForm((current) => ({ ...current, kodeUnit: result.kode_unit ?? current.kodeUnit }));
       commandRef.current = null;
       setMode("success");
       await queryClient.invalidateQueries({ queryKey: ["inventaris"] });
@@ -396,30 +397,31 @@ export function InventoryCreate() {
                 </Select>
               </div>
 
-              <div className={formStep === 1 ? "space-y-1.5" : "hidden"}>
-                <label htmlFor="inventory-code" className="text-xs font-semibold">Kode unit</label>
-                <Input
-                  id="inventory-code"
-                  value={form.kodeUnit}
-                  onChange={(event) => update("kodeUnit", event.target.value)}
-                  placeholder="Contoh: TD4P-001"
-                  className="h-11 rounded-xl"
-                  autoComplete="off"
-                />
-              </div>
+              <div className={formStep === 1 ? "space-y-3 sm:col-span-2" : "hidden"}>
+                <div className="rounded-2xl border border-primary/15 bg-primary/[0.035] p-4">
+                  <div className="flex items-start gap-3">
+                    <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+                      <PackagePlus className="size-5" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold">Identitas unit dibuat otomatis</p>
+                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                        Kode unit akan dibuat sistem berdasarkan kategori + barang dan nomor urut Usaha saat pendaftaran disimpan.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-3 rounded-xl bg-background/80 px-3 py-2.5">
+                    <p className="text-[11px] text-muted-foreground">Kode unit</p>
+                    <p className="mt-0.5 text-sm font-semibold text-primary">Otomatis saat disimpan</p>
+                  </div>
+                </div>
 
-              <div className={formStep === 1 ? "space-y-1.5" : "hidden"}>
-                <label htmlFor="inventory-serial" className="text-xs font-semibold">
-                  Serial number <span className="font-normal text-muted-foreground">(opsional)</span>
-                </label>
-                <Input
-                  id="inventory-serial"
-                  value={form.serialNumber ?? ""}
-                  onChange={(event) => update("serialNumber", event.target.value)}
-                  placeholder="Nomor seri produsen"
-                  className="h-11 rounded-xl"
-                  autoComplete="off"
-                />
+                <div className="rounded-2xl border bg-muted/20 px-4 py-3">
+                  <p className="text-xs font-semibold">Serial number produsen</p>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                    Tidak dibuat secara artifisial oleh sistem. Bila unit memiliki serial number fisik, data dapat dilengkapi kemudian pada detail unit.
+                  </p>
+                </div>
               </div>
 
               <div className={formStep === 2 ? "space-y-1.5" : "hidden"}>
@@ -531,13 +533,13 @@ export function InventoryCreate() {
                   <p className="text-xs text-muted-foreground">Varian</p>
                   <p className="mt-1 font-semibold">{selectedVariant?.nama ?? "Tanpa varian"}</p>
                 </div>
-                <div className="rounded-2xl border bg-muted/20 p-4">
+                <div className="rounded-2xl border bg-primary/[0.03] p-4">
                   <p className="text-xs text-muted-foreground">Kode unit</p>
-                  <p className="mt-1 font-semibold">{form.kodeUnit}</p>
+                  <p className="mt-1 font-semibold text-primary">Dibuat otomatis saat disimpan</p>
                 </div>
                 <div className="rounded-2xl border bg-muted/20 p-4">
-                  <p className="text-xs text-muted-foreground">Serial</p>
-                  <p className="mt-1 font-semibold">{form.serialNumber || "Belum dicatat"}</p>
+                  <p className="text-xs text-muted-foreground">Serial number</p>
+                  <p className="mt-1 font-semibold">Dicatat kemudian bila tersedia</p>
                 </div>
                 <div className="rounded-2xl border bg-muted/20 p-4">
                   <p className="text-xs text-muted-foreground">Lokasi awal</p>

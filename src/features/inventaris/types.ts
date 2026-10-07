@@ -132,6 +132,16 @@ export type InventoryCommandResult = {
   lokasi_sebelum_id?: string | null;
   inspection_id?: string;
   detail_pengembalian_id?: string;
+  state?: "changed" | "unchanged";
+};
+
+export type InventoryOperationalStatus = "damaged" | "lost" | "inactive";
+
+export type InventoryOperationalStatusInput = {
+  status: InventoryOperationalStatus;
+  reason: string;
+  note?: string | null;
+  expectedUpdatedAt: string;
 };
 
 export type InventoryReconciliationResult = {
@@ -218,6 +228,17 @@ export type InventoryOperationalContext = {
     pelaksana: string | null;
     catatan: string | null;
   }>;
+  latestMaintenance: {
+    perawatan_id: string;
+    pemeriksaan_id: string | null;
+    jenis_perawatan: string;
+    deskripsi_pekerjaan: string;
+    status: string;
+    dimulai_at: string | null;
+    selesai_at: string | null;
+    pelaksana: string | null;
+    catatan: string | null;
+  } | null;
 };
 
 export type InspectionPendingCommandInput = {
@@ -246,4 +267,97 @@ export type InventoryCapabilities = {
   commands: string[];
   queries: string[];
   reason: string;
+};
+export type InventoryPackageComponentAvailability = {
+  komponen_paket_id: string;
+  barang_id: string | null;
+  varian_barang_id: string | null;
+  nama: string;
+  required_quantity: number;
+  ready_quantity: number;
+  rented_quantity: number;
+  maintenance_quantity: number;
+  inspection_pending_quantity: number;
+  blocked_quantity: number;
+  shortfall_quantity: number;
+};
+
+export type InventoryPackageAvailability = {
+  paket_sewa_id: string;
+  nama: string;
+  deskripsi: string | null;
+  harga_dasar: number | null;
+  currency_code: string;
+  available_package_quantity: number;
+  status: "available" | "insufficient";
+  limiting_component_name: string | null;
+  components: InventoryPackageComponentAvailability[];
+};
+
+
+export type InventoryProductOverview = {
+  barang_id: string;
+  nama: string;
+  slug: string;
+  status: string;
+  kategori_nama: string | null;
+  total_unit: number;
+  ready_unit: number;
+  rented_unit: number;
+  attention_unit: number;
+  inspection_pending_unit: number;
+  maintenance_unit: number;
+  damaged_unit: number;
+  lost_unit: number;
+  inactive_unit: number;
+  variant_count: number;
+  latest_unit_updated_at: string | null;
+  cover_url: string | null;
+};
+
+export type InventoryUnitMedia = {
+  unit_media_id: string;
+  usaha_id: string;
+  unit_barang_id: string;
+  storage_bucket: string;
+  storage_path: string;
+  media_type: string;
+  urutan: number;
+  is_cover: boolean;
+  status: "valid" | "deleted" | string;
+  created_at: string;
+  updated_at: string;
+  signed_url: string | null;
+};
+
+export type InventoryProductDetail = {
+  product: {
+    barang_id: string;
+    usaha_id: string;
+    kategori_barang_id: string | null;
+    nama: string;
+    slug: string;
+    deskripsi: string | null;
+    ringkasan_publik: string | null;
+    status: string;
+    is_public: boolean;
+    updated_at: string;
+    kategori: { kategori_barang_id: string; nama: string; status: string } | null;
+  };
+  variants: InventoryVariant[];
+  media: Array<{
+    barang_media_id: string;
+    storage_bucket: string;
+    storage_path: string;
+    media_type: string;
+    urutan: number;
+    is_cover: boolean;
+    status: string;
+    url: string;
+  }>;
+  summary: InventoryProductOverview;
+  units: { units: InventoryUnit[]; total: number };
+  recentHistory: Array<InventoryUnitHistory & {
+    unit_kode: string;
+  }>;
 };

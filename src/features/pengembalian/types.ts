@@ -9,7 +9,7 @@ export type ReturnListFilters = {
   search: string;
   page: number;
   pageSize: number;
-  rentalStatus?: "all" | "active" | "return_in_progress";
+  rentalStatus?: "all" | "active" | "return_in_progress" | "completed";
   dueState?: "all" | "not_due" | "due" | "late_within_tolerance" | "tolerance_expired";
 };
 
@@ -39,6 +39,10 @@ export type ReturnQueueItem = {
 
 export type ReturnUnitRow = {
   unit_barang_id: string;
+  detail_penyewaan_id: string;
+  komponen_penyewaan_id: string | null;
+  paket_sewa_id: string | null;
+  paket_nama: string | null;
   kode_unit: string;
   barang_id: string;
   barang_nama: string | null;

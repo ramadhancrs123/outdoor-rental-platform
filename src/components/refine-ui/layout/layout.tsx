@@ -7,13 +7,15 @@ import { ThemeProvider } from "@/components/refine-ui/theme/theme-provider";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
 import { paths } from "@/routes/paths";
+import { useState } from "react";
 import type { PropsWithChildren } from "react";
+import { QrScanDialog } from "@/components/qr-operasional/qr-operasional";
 import { Sidebar } from "./sidebar";
 
 const mobileNav = [
   ["Beranda", paths.dashboard, Home],
   ["Operasional", paths.penyewaan, Search],
-  ["Inventaris", paths.inventaris, QrCode],
+  ["Scan QR", "", QrCode],
   ["Notifikasi", paths.pemberitahuan, Bell],
 ] as const;
 
@@ -22,6 +24,7 @@ const financeNav = [
   ["Pembayaran", paths.keuangan + "/pembayaran", CreditCard],
   ["Pengeluaran", paths.keuangan + "/pengeluaran", ReceiptText],
   ["Transaksi", paths.keuangan + "/transaksi", FileText],
+  ["Akun", paths.keuangan + "/akun", WalletCards],
 ] as const;
 
 const returnNav = [
@@ -93,6 +96,7 @@ export function Layout({ children }: PropsWithChildren) {
 
 function MobileBottomNav() {
   const location = useLocation();
+  const [qrOpen, setQrOpen] = useState(false);
   if (
     isFocusedTransactionPath(location.pathname) ||
     isFocusedInspectionPath(location.pathname) ||
@@ -107,19 +111,34 @@ function MobileBottomNav() {
   const items = financeMode ? financeNav : returnMode ? returnNav : mobileNav;
 
   return (
-    <nav
-      className={cn(
-        "fixed inset-x-3 bottom-3 z-50 grid grid-cols-5 items-center rounded-xl border bg-background/95 p-1 shadow-[0_14px_44px_rgba(20,40,30,.16)] backdrop-blur-md lg:hidden",
-        isFinancePath(location.pathname) && !financeMode && "hidden",
-      )}
-      aria-label="Navigasi mobile"
-    >
+    <>
+      <nav
+        className={cn(
+          "fixed inset-x-3 bottom-3 z-50 grid grid-cols-5 items-center rounded-xl border bg-background/95 p-1 shadow-[0_14px_44px_rgba(20,40,30,.16)] backdrop-blur-md lg:hidden",
+          isFinancePath(location.pathname) && !financeMode && "hidden",
+        )}
+        aria-label="Navigasi mobile"
+      >
       {items.map(([label, path, Icon]) => {
+        const isScan = label === "Scan QR";
         const cleanPath = path.split("?")[0];
-        const active = path.includes("?")
+        const active = !isScan && (path.includes("?")
           ? location.search.includes("scan=1") && location.pathname === cleanPath
-          : location.pathname === cleanPath || (cleanPath !== paths.dashboard && location.pathname.startsWith(cleanPath + "/"));
-        return (
+          : location.pathname === cleanPath || (cleanPath !== paths.dashboard && location.pathname.startsWith(cleanPath + "/")));
+        return isScan ? (
+          <button
+            key={label}
+            type="button"
+            onClick={() => setQrOpen(true)}
+            className={cn(
+              "flex min-h-11 flex-col items-center justify-center gap-0.5 rounded-lg text-[10px] font-semibold text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              qrOpen && "bg-primary/10",
+            )}
+          >
+            <Icon className="size-4 shrink-0" aria-hidden="true" />
+            <span>{label}</span>
+          </button>
+        ) : (
           <Link
             key={path}
             to={path}
@@ -141,7 +160,17 @@ function MobileBottomNav() {
         {financeMode ? <MoreVertical className="size-4" aria-hidden="true" /> : <Menu className="size-4" aria-hidden="true" />}
         <span>Menu</span>
       </button>
-    </nav>
+      </nav>
+      <QrScanDialog
+        open={qrOpen}
+        onOpenChange={setQrOpen}
+        onResolved={(result) => {
+          window.location.assign(result.jenis === "unit"
+            ? paths.inventaris + "/" + result.id
+            : paths.penyewaan + "/" + result.id);
+        }}
+      />
+    </>
   );
 }
 

@@ -1,3 +1,4 @@
+import { createClientId } from "@/lib/client-id";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ChevronRight, Edit3, Info, MoreVertical, Phone, Mail, MapPin, ShoppingBag } from "lucide-react";
 import { useState } from "react";
@@ -56,7 +57,7 @@ export function SupplierShow() {
         id,
         nextStatus,
         supplier.data.updated_at,
-        { idempotencyKey: crypto.randomUUID(), requestId: crypto.randomUUID() },
+        { idempotencyKey: createClientId(), requestId: createClientId() },
       );
     },
     onSuccess: async () => {

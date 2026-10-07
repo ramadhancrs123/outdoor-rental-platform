@@ -123,6 +123,44 @@ describe("Pengembalian read/mutation UI", () => {
     expect(container.querySelector('a[href="/pengembalian/rental-1"]')).toBeInTheDocument();
   });
 
+  test("return list uses compact filter chips and expandable mobile card", async () => {
+    mockViewport(390, 844);
+    serviceMock.listReturnQueue.mockResolvedValue({
+      returns: [{
+        penyewaan_id: "rental-1",
+        nomor_penyewaan: "RNT-2026-001",
+        penyewa_id: "renter-1",
+        penyewa_nama: "Ahmad",
+        jadwal_kembali: rental.jadwal_kembali,
+        tolerance_deadline: rental.tolerance_deadline,
+        rental_status: "active",
+        total_unit_count: 3,
+        returned_unit_count: 1,
+        outstanding_unit_count: 2,
+        return_progress: 1 / 3,
+        due_state: "due",
+      }],
+      total: 1,
+    });
+
+    renderWithQuery(<ReturnList />);
+    expect(await screen.findByRole("heading", { name: "Antrian Pengembalian" })).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Cari nomor penyewaan, nama penyewa, nomor telepon, atau kode unit...")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Semua$/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Batas$/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Status$/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Penyewa$/ })).toBeInTheDocument();
+    expect((await screen.findAllByText("RNT-2026-001")).length).toBeGreaterThan(0);
+
+    const toggle = screen.getByRole("button", { name: "Buka detail pengembalian" });
+    fireEvent.click(toggle);
+    expect(screen.getAllByRole("link", { name: /Proses Pengembalian/ }).length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("button", { name: /^Status$/ }));
+    expect(await screen.findByText("Filter Pengembalian")).toBeInTheDocument();
+    expect(screen.getAllByText("Status Penyewaan").length).toBeGreaterThan(0);
+  });
+
   test("detail exposes renter context, unit-level return and inspection-pending distinction", async () => {
     serviceMock.getReturnWorkspace.mockResolvedValue(workspace);
     renderWithQuery(

@@ -22,6 +22,8 @@ function financeHeader(pathname: string) {
   if (pathname.startsWith(paths.keuangan + "/pengeluaran/")) return { title: "Detail Pengeluaran", back: paths.keuangan + "/pengeluaran" };
   if (pathname === paths.keuangan + "/transaksi") return { title: "Transaksi", back: paths.keuangan };
   if (pathname.startsWith(paths.keuangan + "/transaksi/")) return { title: "Detail Transaksi", back: paths.keuangan + "/transaksi" };
+  if (pathname === paths.keuangan + "/akun") return { title: "Akun Uang", back: paths.keuangan };
+  if (pathname.startsWith(paths.keuangan + "/akun/")) return { title: "Detail Akun", back: paths.keuangan + "/akun" };
   return { title: "Keuangan", back: paths.dashboard };
 }
 

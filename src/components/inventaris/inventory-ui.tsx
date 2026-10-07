@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, ArrowRight, Boxes, CheckCircle2, ChevronRight, Clock3, History, MapPin, QrCode, Search, Wrench } from "lucide-react";
+import { AlertTriangle, ArrowRight, Boxes, CheckCircle2, ChevronRight, Clock3, FileText, History, MapPin, QrCode, Search, Wrench } from "lucide-react";
 import { Link, useNavigate } from "react-router";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -380,21 +380,21 @@ export function UnitCard({
   return (
     <Link
       to={href}
-      className="group block rounded-2xl border border-border/80 bg-card p-4 shadow-sm outline-none transition hover:-translate-y-px hover:bg-accent/30 focus-visible:ring-2 focus-visible:ring-ring"
+      className="group block rounded-2xl border border-border/70 bg-card px-3 py-3.5 shadow-[0_1px_2px_rgba(0,0,0,0.04)] outline-none transition hover:bg-accent/25 focus-visible:ring-2 focus-visible:ring-ring sm:px-4 sm:py-4"
     >
-      <div className="flex items-start gap-3">
+      <div className="grid grid-cols-[60px_minmax(0,1fr)] gap-3 sm:grid-cols-[64px_minmax(0,1fr)]">
         <div
-          className="grid size-14 shrink-0 place-items-center overflow-hidden rounded-2xl border bg-muted/40 text-primary"
+          className="grid size-[60px] shrink-0 place-items-center overflow-hidden rounded-2xl border border-primary/10 bg-primary/[0.06] text-primary sm:size-16"
           aria-label={"Pratinjau " + (unit.barang?.nama ?? "barang")}
         >
           <Boxes className="size-6" aria-hidden="true" />
         </div>
 
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0">
           <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              <p className="truncate font-semibold">{unit.kode_unit}</p>
-              <p className="truncate text-sm text-muted-foreground">
+            <div className="min-w-0 pr-1">
+              <p className="truncate text-[15px] font-semibold leading-5">{unit.kode_unit}</p>
+              <p className="truncate text-[13px] leading-5 text-muted-foreground">
                 {unit.barang?.nama ?? "Barang tidak ditemukan"}
                 {unit.varian?.nama ? " · " + unit.varian.nama : ""}
               </p>
@@ -402,27 +402,34 @@ export function UnitCard({
             <InventoryStatusBadge status={unit.status} />
           </div>
 
-          <div className="mt-3 grid gap-1.5 text-sm">
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-muted-foreground">Lokasi</span>
-              <span className="truncate font-medium">{unit.lokasi?.nama ?? "Belum ditentukan"}</span>
+          <div className="mt-2 grid gap-1.5 text-[13px] leading-5">
+            <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2">
+              <span className="inline-flex min-w-0 items-center gap-1.5 text-muted-foreground">
+                <MapPin className="size-3.5 shrink-0" aria-hidden="true" />
+                <span>Lokasi</span>
+              </span>
+              <span className="min-w-0 truncate text-right font-medium">
+                {unit.lokasi?.nama ?? "Belum ditentukan"}
+              </span>
             </div>
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-muted-foreground">Kondisi</span>
-              <span className="truncate font-medium">{unit.kondisi_ringkas ?? "Belum dicatat"}</span>
+            <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2">
+              <span className="inline-flex min-w-0 items-center gap-1.5 text-muted-foreground">
+                <FileText className="size-3.5 shrink-0" aria-hidden="true" />
+                <span>Kondisi</span>
+              </span>
+              <span className="min-w-0 truncate text-right font-medium">
+                {unit.kondisi_ringkas ?? "Belum dicatat"}
+              </span>
             </div>
           </div>
+
+          {unit.status === "rented" ? (
+            <div className="mt-1.5 text-xs font-medium text-primary">Penyewaan aktif</div>
+          ) : null}
         </div>
       </div>
 
-      {unit.status === "rented" ? (
-        <div className="mt-3 flex items-center gap-2 rounded-xl bg-primary/5 px-3 py-2 text-xs font-medium text-primary">
-          <Clock3 className="size-3.5" aria-hidden="true" />
-          Penyewaan aktif
-        </div>
-      ) : null}
-
-      <div className="mt-4 flex items-center justify-end gap-1 text-sm font-medium text-primary">
+      <div className="mt-2.5 flex items-center justify-end gap-1 text-sm font-medium text-primary">
         Lihat detail
         <ChevronRight className="size-4 transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
       </div>
