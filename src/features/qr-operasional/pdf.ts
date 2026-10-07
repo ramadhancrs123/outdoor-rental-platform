@@ -368,5 +368,3 @@ function paymentLabel(status: NonNullable<RentalReceiptData["pembayaran"]>["stat
   if (status === "sebagian") return "SEBAGIAN";
   return "BELUM DIBAYAR";
 }
-
-

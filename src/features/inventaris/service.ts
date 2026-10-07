@@ -1105,3 +1105,97 @@ export async function setInventoryUnitMediaCover(
   if (error) throw normalizeRpcError(error, "Perubahan foto utama unit");
   if (!data) throw new Error("Perubahan foto utama unit tidak mengembalikan hasil.");
 }
+
+
+export type InventoryReadyUnitCover = {
+  barang_id: string;
+  varian_barang_id: string | null;
+  unit_barang_id: string;
+  url: string | null;
+};
+
+export async function listInventoryReadyUnitCovers(
+  usahaId: string,
+  productIds: string[],
+): Promise<InventoryReadyUnitCover[]> {
+  const ids = [...new Set(productIds.filter(Boolean))];
+  if (!ids.length) return [];
+
+  const { data: units, error: unitsError } = await supabase
+    .from("unit_barang")
+    .select("unit_barang_id,barang_id,varian_barang_id,updated_at")
+    .eq("usaha_id", usahaId)
+    .in("barang_id", ids)
+    .eq("status", "ready")
+    .order("updated_at", { ascending: false })
+    .limit(Math.max(50, ids.length * 5));
+
+  if (unitsError) throw normalizeRpcError(unitsError, "Foto unit siap disewakan");
+
+  const unitRows = (units ?? []) as Array<{
+    unit_barang_id: string;
+    barang_id: string;
+    varian_barang_id: string | null;
+    updated_at: string;
+  }>;
+  if (!unitRows.length) {
+    return ids.map((barangId) => ({
+      barang_id: barangId,
+      varian_barang_id: null,
+      unit_barang_id: "",
+      url: null,
+    }));
+  }
+
+  const unitIds = unitRows.map((row) => row.unit_barang_id);
+  const { data: media, error: mediaError } = await supabase
+    .from("unit_media")
+    .select("unit_media_id,unit_barang_id,storage_bucket,storage_path,is_cover,urutan,status")
+    .eq("usaha_id", usahaId)
+    .in("unit_barang_id", unitIds)
+    .eq("status", "valid")
+    .order("is_cover", { ascending: false })
+    .order("urutan", { ascending: true });
+
+  if (mediaError) throw normalizeRpcError(mediaError, "Foto unit siap disewakan");
+
+  const signedRows = await signUnitMediaRows(
+    (media ?? []) as Array<Omit<InventoryUnitMedia, "signed_url">>,
+  );
+
+  const unitById = new Map(unitRows.map((row) => [row.unit_barang_id, row]));
+  const chosenProduct = new Map<string, InventoryReadyUnitCover>();
+  const chosenVariant = new Map<string, InventoryReadyUnitCover>();
+
+  for (const row of signedRows) {
+    if (!row.signed_url) continue;
+    const unit = unitById.get(row.unit_barang_id);
+    if (!unit) continue;
+
+    const cover: InventoryReadyUnitCover = {
+      barang_id: unit.barang_id,
+      varian_barang_id: unit.varian_barang_id,
+      unit_barang_id: unit.unit_barang_id,
+      url: row.signed_url,
+    };
+
+    if (!chosenProduct.has(unit.barang_id)) {
+      chosenProduct.set(unit.barang_id, cover);
+    }
+    if (unit.varian_barang_id && !chosenVariant.has(unit.varian_barang_id)) {
+      chosenVariant.set(unit.varian_barang_id, cover);
+    }
+  }
+
+  return [
+    ...ids.map((barangId) =>
+      chosenProduct.get(barangId) ?? {
+        barang_id: barangId,
+        varian_barang_id: null,
+        unit_barang_id: "",
+        url: null,
+      },
+    ),
+    ...Array.from(chosenVariant.values()),
+  ];
+}

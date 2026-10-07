@@ -1,7 +1,7 @@
 # ADR-017 — Status Operasional Unit Inventaris
 
-**Status:** Accepted  
-**Tanggal:** 2026-10-03  
+**Status:** Accepted
+**Tanggal:** 2026-10-03
 **Scope:** Inventaris + Penyewaan + Perawatan
 
 ## Keputusan

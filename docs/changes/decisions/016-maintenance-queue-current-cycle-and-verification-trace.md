@@ -1,7 +1,7 @@
 # ADR-016 — Maintenance Queue Current Cycle & Verification Trace
 
-**Status:** Accepted  
-**Tanggal:** 2026-10-03  
+**Status:** Accepted
+**Tanggal:** 2026-10-03
 **Scope:** Perawatan + Pemeriksaan + Inventaris
 
 ## Context

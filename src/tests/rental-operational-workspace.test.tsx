@@ -95,7 +95,13 @@ describe("Rental operational workspace", () => {
   it("requires explicit condition before processing a unit", async () => {
     renderWorkspace();
     await screen.findByText("TD4P-001 · Tenda Dome 4P");
+    expect(screen.queryAllByRole("radio")).toHaveLength(0);
+    const pickers = screen.getAllByRole("button", { name: /Pilih kondisi/ });
+    expect(pickers).toHaveLength(2);
     const actions = screen.getAllByRole("button", { name: /Terima Unit \+ Proses Kondisi/ });
+    expect(actions[0]).toBeDisabled();
+    fireEvent.click(pickers[0]);
+    expect(screen.getAllByRole("radio")).toHaveLength(5);
     expect(actions[0]).toBeDisabled();
     expect(screen.getAllByText(/Sistem tidak menganggap unit normal/)).toHaveLength(2);
   });
@@ -140,6 +146,7 @@ describe("Rental operational workspace", () => {
     renderWorkspace();
     await screen.findByText("TD4P-001 · Tenda Dome 4P");
 
+    fireEvent.click(screen.getAllByRole("button", { name: /Pilih kondisi/ })[0]);
     fireEvent.click(screen.getAllByRole("radio")[0]);
     const firstProcessButton = screen.getAllByRole("button", { name: /Terima Unit \+ Proses Kondisi/ })[0];
     expect(firstProcessButton).toBeEnabled();
@@ -158,6 +165,7 @@ describe("Rental operational workspace", () => {
     await waitFor(() => expect(screen.getByText("Siap Disewakan")).toBeInTheDocument());
     expect(screen.getByText("Unit sudah dikembalikan ke pool siap disewakan.")).toBeInTheDocument();
 
+    fireEvent.click(screen.getAllByRole("button", { name: /Pilih kondisi/ })[0]);
     fireEvent.click(screen.getAllByRole("radio")[2]);
     const processButtons = screen.getAllByRole("button", { name: /Terima Unit \+ Proses Kondisi/ });
     fireEvent.click(processButtons[0]);
@@ -231,6 +239,7 @@ describe("Rental operational workspace", () => {
     renderWorkspace();
     await screen.findByText("CARRIER-EIGER-005 · Tenda Dome 4P");
 
+    fireEvent.click(screen.getByRole("button", { name: /Pilih kondisi/ }));
     fireEvent.click(screen.getAllByRole("radio")[4]);
     const processButton = screen.getByRole("button", { name: /Terima Unit \+ Proses Kondisi/ });
     fireEvent.click(processButton);

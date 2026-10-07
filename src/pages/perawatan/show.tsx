@@ -3,8 +3,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
   ArrowRight,
-  CalendarDays,
+  Check,
   CheckCircle2,
+  ChevronDown,
   Circle,
   Clock3,
   ExternalLink,
@@ -15,19 +16,31 @@ import {
   Package,
   PackageCheck,
   RefreshCw,
+  Search,
   ShieldAlert,
-  Tag,
   UserRound,
+  WalletCards,
   Wrench,
+  X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router";
+import { Link, useNavigate, useParams } from "react-router";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Drawer,
+  DrawerClose,
+  DrawerContent,
+  DrawerDescription,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
+} from "@/components/ui/drawer";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
+import { listInventoryUnitMedia } from "@/features/inventaris";
 import {
   completeMaintenanceWithFinanceCashout,
   getMaintenanceWorkspace,
@@ -47,34 +60,164 @@ type CommandRef = {
   key: string;
 };
 
-type CompletionSuccess = {
-  findingCount: number;
-  cost: number | null;
-  decision: string;
-  pengeluaranId: string | null;
-  settlementAllocations: Array<{ akun_keuangan_id: string; amount: number }>;
-};
-
 function errorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
+function durationLabel(startedAt: string | null, finishedAt: string | null) {
+  if (!startedAt) return null;
+  const end = finishedAt ? new Date(finishedAt).getTime() : Date.now();
+  const start = new Date(startedAt).getTime();
+  const minutes = Math.max(0, Math.round((end - start) / 60_000));
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  if (hours === 0) return remainder + "m";
+  return hours + "j " + String(remainder).padStart(2, "0") + "m";
+}
+
+function prettyDate(value: string | null) {
+  if (!value) return "-";
+  return formatMaintenanceDateTime(value);
+}
+
+function StatusTimeline({
+  maintenanceStatus,
+  unitStatus,
+  startedAt,
+  finishedAt,
+  createdAt,
+}: {
+  maintenanceStatus: "planned" | "in_progress" | "completed" | "cancelled";
+  unitStatus: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdAt: string;
+}) {
+  const stages = [
+    { label: "Direncanakan", short: createdAt ? prettyDate(createdAt) : "-", at: null, active: true },
+    { label: "Dikerjakan", short: startedAt ? prettyDate(startedAt) : "-", active: maintenanceStatus !== "planned" && maintenanceStatus !== "cancelled" },
+    { label: "Selesai", short: finishedAt ? prettyDate(finishedAt) : "-", active: maintenanceStatus === "completed" },
+    { label: "Verifikasi", short: unitStatus === "ready" ? "Lulus" : "-", active: unitStatus === "ready" },
+  ];
+
+  const currentIndex =
+    maintenanceStatus === "planned"
+      ? 0
+      : maintenanceStatus === "in_progress"
+        ? 1
+        : maintenanceStatus === "completed"
+          ? 2
+          : 0;
+
+  return (
+    <div className="px-1 py-1">
+      <div className="grid grid-cols-4">
+        {stages.map((stage, index) => {
+          const passed = stage.active && index < currentIndex;
+          const current = index === currentIndex;
+          return (
+            <div key={stage.label} className="relative min-w-0">
+              {index < stages.length - 1 ? (
+                <span
+                  className={[
+                    "absolute left-[calc(50%+9px)] right-[calc(-50%+9px)] top-2.5 h-px",
+                    index < currentIndex ? "bg-emerald-500" : "bg-border",
+                  ].join(" ")}
+                  aria-hidden="true"
+                />
+              ) : null}
+              <div className="relative z-10 flex flex-col items-center text-center">
+                <div
+                  className={[
+                    "grid size-5 place-items-center rounded-full border-2 bg-background",
+                    current
+                      ? maintenanceStatus === "planned"
+                        ? "border-amber-500 bg-amber-50 text-amber-600 dark:bg-amber-950/25"
+                        : maintenanceStatus === "in_progress"
+                          ? "border-blue-500 bg-blue-50 text-blue-600 dark:bg-blue-950/25"
+                          : "border-emerald-500 bg-emerald-50 text-emerald-600 dark:bg-emerald-950/25"
+                      : passed
+                        ? "border-emerald-500 text-emerald-600"
+                        : "border-border text-muted-foreground",
+                  ].join(" ")}
+                >
+                  {passed || current && maintenanceStatus === "completed" ? (
+                    <Check className="size-3" />
+                  ) : current ? (
+                    <span className="size-1.5 rounded-full bg-current" />
+                  ) : (
+                    <Circle className="size-2.5" />
+                  )}
+                </div>
+                <p className={["mt-1.5 text-[10px]", current ? "font-semibold text-foreground" : "text-muted-foreground"].join(" ")}>
+                  {stage.label}
+                </p>
+                <p className="mt-0.5 max-w-[78px] truncate text-[9px] text-muted-foreground">{stage.short}</p>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function CompactRow({
+  icon,
+  title,
+  meta,
+  value,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  meta?: string;
+  value?: string;
+  onClick?: () => void;
+}) {
+  const body = (
+    <div className="flex min-w-0 items-center gap-3 py-3">
+      <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-muted/45 text-foreground/80">{icon}</div>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-semibold">{title}</p>
+        {meta ? <p className="mt-0.5 truncate text-xs text-muted-foreground">{meta}</p> : null}
+      </div>
+      {value ? <span className="max-w-[45%] truncate text-xs font-medium text-muted-foreground">{value}</span> : null}
+      {onClick ? <ChevronDown className="size-4 shrink-0 -rotate-90 text-muted-foreground" /> : null}
+    </div>
+  );
+
+  return onClick ? (
+    <button type="button" onClick={onClick} className="block w-full text-left">
+      {body}
+    </button>
+  ) : (
+    <div>{body}</div>
+  );
+}
+
 export function PerawatanShow() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
+
   const [feedback, setFeedback] = useState("");
   const [errorFeedback, setErrorFeedback] = useState("");
   const [unknownFeedback, setUnknownFeedback] = useState("");
   const [commandRef, setCommandRef] = useState<CommandRef | null>(null);
   const [executor, setExecutor] = useState("");
+  const [executorSearch, setExecutorSearch] = useState("");
+  const [executorOpen, setExecutorOpen] = useState(false);
+  const [completionOpen, setCompletionOpen] = useState(false);
   const [cost, setCost] = useState("");
   const [note, setNote] = useState("");
   const [verificationNote, setVerificationNote] = useState("");
   const [cashoutAt, setCashoutAt] = useState("");
   const [accountAllocations, setAccountAllocations] = useState<Record<string, string>>({});
+  const [selectedAccountId, setSelectedAccountId] = useState("");
   const [reconciling, setReconciling] = useState(false);
-  const [completionSuccess, setCompletionSuccess] = useState<CompletionSuccess | null>(null);
-  const [timelineExpanded, setTimelineExpanded] = useState(false);
+  const [timelineOpen, setTimelineOpen] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(false);
 
   const context = useQuery({
     queryKey: ["perawatan", "context"],
@@ -87,6 +230,13 @@ export function PerawatanShow() {
     queryFn: () => getMaintenanceWorkspace(context.data!.usahaId, id!),
     enabled: Boolean(context.data?.usahaId && id),
     staleTime: 5_000,
+  });
+
+  const unitMedia = useQuery({
+    queryKey: ["perawatan", "unit-media", context.data?.usahaId, workspace.data?.unit.unit_barang_id],
+    queryFn: () => listInventoryUnitMedia(context.data!.usahaId, workspace.data!.unit.unit_barang_id),
+    enabled: Boolean(context.data?.usahaId && workspace.data?.unit.unit_barang_id),
+    staleTime: 30_000,
   });
 
   const financeAccounts = useQuery({
@@ -118,12 +268,6 @@ export function PerawatanShow() {
     if (!cashoutAt && currentBusinessDateTime) setCashoutAt(currentBusinessDateTime);
   }, [cashoutAt, currentBusinessDateTime]);
 
-  useEffect(() => {
-    if (!executor.trim() && context.data?.akunAdminNama?.trim()) {
-      setExecutor(context.data.akunAdminNama.trim());
-    }
-  }, [context.data?.akunAdminNama, executor]);
-
   const invalidate = async () => {
     await Promise.all([
       workspace.refetch(),
@@ -148,12 +292,23 @@ export function PerawatanShow() {
         key,
       );
     },
-    onMutate: () => { setFeedback(""); setErrorFeedback(""); setUnknownFeedback(""); },
-    onSuccess: async () => { setCommandRef(null); setFeedback("Perawatan dimulai."); await invalidate(); },
+    onMutate: () => {
+      setFeedback("");
+      setErrorFeedback("");
+      setUnknownFeedback("");
+    },
+    onSuccess: async () => {
+      setCommandRef(null);
+      setFeedback("Perawatan dimulai.");
+      await invalidate();
+    },
     onError: (error) => {
       const message = errorMessage(error, "Perawatan gagal dimulai.");
-      if (message.startsWith("UNKNOWN_OUTCOME:")) setUnknownFeedback("Hasil mulai perawatan belum dapat dipastikan. Jangan memulai perawatan kedua.");
-      else setErrorFeedback(message);
+      if (message.startsWith("UNKNOWN_OUTCOME:")) {
+        setUnknownFeedback("Hasil mulai perawatan belum dapat dipastikan. Jangan memulai perawatan kedua.");
+      } else {
+        setErrorFeedback(message);
+      }
     },
   });
 
@@ -173,9 +328,11 @@ export function PerawatanShow() {
       if (parsedCost > 0 && Math.abs(allocations.reduce((sum, item) => sum + item.amount, 0) - parsedCost) > 0.000001) {
         throw new Error("Total alokasi akun harus sama dengan biaya aktual.");
       }
+
       const key = "complete-maintenance-finance-cashout-" + createClientId();
       setCommandRef({ command: "complete_maintenance_with_finance_cashout", key });
       const diselesaikanAt = cashoutAt ? localDateTimeToUtcIso(cashoutAt, context.data.businessTimezone) : null;
+
       return completeMaintenanceWithFinanceCashout(
         context.data.usahaId,
         {
@@ -192,25 +349,26 @@ export function PerawatanShow() {
         key,
       );
     },
-    onMutate: () => { setFeedback(""); setErrorFeedback(""); setUnknownFeedback(""); },
-    onSuccess: async (result) => {
+    onMutate: () => {
+      setFeedback("");
+      setErrorFeedback("");
+      setUnknownFeedback("");
+    },
+    onSuccess: async () => {
       setCommandRef(null);
-      const settlement = (result.settlement as { allocations?: Array<{ akun_keuangan_id: string; amount: number }> } | null) ?? null;
-      setCompletionSuccess({
-        findingCount: workspace.data?.findings.length ?? 0,
-        cost: typeof result.biaya === "number" ? result.biaya : Number(cost),
-        decision: "maintenance_completed",
-        pengeluaranId: typeof result.pengeluaran_id === "string" ? result.pengeluaran_id : null,
-        settlementAllocations: settlement?.allocations ?? [],
-      });
+      setCompletionOpen(false);
+      setFeedback("Perawatan selesai dicatat. Lanjutkan ke verifikasi kesiapan.");
       setAccountAllocations({});
       await invalidate();
     },
     onError: async (error) => {
       const message = errorMessage(error, "Perawatan gagal diselesaikan.");
       await financeAccounts.refetch();
-      if (message.startsWith("UNKNOWN_OUTCOME:")) setUnknownFeedback("Hasil penyelesaian, pengeluaran, atau cash out belum dapat dipastikan. Jangan mengulang tindakan.");
-      else setErrorFeedback(message);
+      if (message.startsWith("UNKNOWN_OUTCOME:")) {
+        setUnknownFeedback("Hasil penyelesaian, pengeluaran, atau cash out belum dapat dipastikan. Jangan mengulang tindakan.");
+      } else {
+        setErrorFeedback(message);
+      }
     },
   });
 
@@ -221,23 +379,39 @@ export function PerawatanShow() {
       setCommandRef({ command: "verify_maintenance_readiness", key });
       return verifyMaintenanceReadiness(
         context.data.usahaId,
-        { perawatanId: workspace.data.maintenance.perawatan_id, verificationResult, catatan: verificationNote },
+        {
+          perawatanId: workspace.data.maintenance.perawatan_id,
+          verificationResult,
+          catatan: verificationNote,
+        },
         workspace.data.maintenance.updated_at,
         workspace.data.unit.updated_at,
         key,
       );
     },
-    onMutate: () => { setFeedback(""); setErrorFeedback(""); setUnknownFeedback(""); },
+    onMutate: () => {
+      setFeedback("");
+      setErrorFeedback("");
+      setUnknownFeedback("");
+    },
     onSuccess: async (result) => {
       setCommandRef(null);
-      setFeedback(result.verification_result === "passed" ? "Verifikasi LULUS. Inventaris menetapkan unit Siap Disewakan." : "Verifikasi GAGAL. Unit tetap belum Siap Disewakan.");
+      setFeedback(
+        result.verification_result === "passed"
+          ? "Verifikasi LULUS. Inventaris menetapkan unit Siap Disewakan."
+          : "Verifikasi GAGAL. Unit tetap belum Siap Disewakan.",
+      );
       setVerificationNote("");
       await invalidate();
+      navigate(paths.perawatan, { replace: true });
     },
     onError: (error) => {
       const message = errorMessage(error, "Verifikasi gagal diproses.");
-      if (message.startsWith("UNKNOWN_OUTCOME:")) setUnknownFeedback("Hasil verifikasi belum dapat dipastikan. Periksa status tindakan.");
-      else setErrorFeedback(message);
+      if (message.startsWith("UNKNOWN_OUTCOME:")) {
+        setUnknownFeedback("Hasil verifikasi belum dapat dipastikan. Periksa status tindakan.");
+      } else {
+        setErrorFeedback(message);
+      }
     },
   });
 
@@ -267,113 +441,65 @@ export function PerawatanShow() {
   };
 
   if (context.isPending || workspace.isPending) {
-    return <div className="space-y-4"><Skeleton className="h-16 rounded-2xl" /><Skeleton className="h-48 rounded-2xl" /><Skeleton className="h-[500px] rounded-2xl" /></div>;
-  }
-
-  if (context.error || workspace.error || !context.data || !workspace.data) {
-    return <Alert variant="destructive"><AlertTitle>Workspace perawatan tidak tersedia</AlertTitle><AlertDescription className="flex flex-col gap-3"><span>{context.error?.message ?? errorMessage(workspace.error, "Data perawatan tidak ditemukan.")}</span><Button variant="outline" size="sm" onClick={() => void workspace.refetch()}><RefreshCw />Muat ulang</Button></AlertDescription></Alert>;
-  }
-
-  const { maintenance, unit, sourceInspection, findings, history, verification_result } = workspace.data;
-  const isStartable = maintenance.status === "planned";
-  const isCompletable = maintenance.status === "in_progress";
-  const progressIndex =
-    maintenance.status === "planned"
-      ? 0
-      : maintenance.status === "in_progress"
-        ? 1
-        : maintenance.status === "completed"
-          ? 2
-          : 0;
-  const reasonText =
-    sourceInspection?.catatan?.trim() ||
-    findings[0]?.deskripsi?.trim() ||
-    maintenance.catatan?.trim() ||
-    null;
-  const visibleHistory = timelineExpanded ? history : history.slice(0, 4);
-  const hasHiddenHistory = history.length > 4;
-
-  if (completionSuccess) {
     return (
-      <div className="min-h-[calc(100dvh-8rem)] pb-24">
-        <Card className="relative min-h-[620px] overflow-hidden rounded-3xl shadow-sm">
-          <CardContent className="relative flex min-h-[620px] flex-col items-center justify-center gap-4 p-6 text-center sm:p-10">
-            <div className="pointer-events-none absolute inset-0" aria-hidden="true">
-              <span className="absolute left-[12%] top-[18%] size-2 rounded-full bg-emerald-400/60" />
-              <span className="absolute left-[24%] top-[74%] size-2 rounded-full bg-sky-400/50" />
-              <span className="absolute right-[18%] top-[24%] size-2 rounded-full bg-amber-400/60" />
-              <span className="absolute right-[28%] bottom-[18%] size-1.5 rounded-full bg-fuchsia-400/50" />
-            </div>
-            <div className="relative grid size-24 place-items-center rounded-full bg-emerald-100 text-emerald-700"><CheckCircle2 className="size-12" /></div>
-            <div className="relative">
-              <h1 className="text-2xl font-bold tracking-tight sm:text-[30px]">Perawatan Selesai</h1>
-              <p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">Pekerjaan perawatan telah dicatat sebagai selesai.</p>
-            </div>
-            <div className="relative w-full max-w-md rounded-2xl border bg-background p-4 text-left">
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                <div><p className="text-xs text-muted-foreground">No. Perawatan</p><p className="mt-1 text-sm font-semibold">{maintenance.perawatan_id.slice(0, 8).toUpperCase()}</p></div>
-                <div><p className="text-xs text-muted-foreground">Unit</p><p className="mt-1 text-sm font-semibold">{unit.kode_unit}</p></div>
-                <div><p className="text-xs text-muted-foreground">Biaya</p><p className="mt-1 text-sm font-semibold">{completionSuccess.cost == null ? "-" : "Rp " + new Intl.NumberFormat("id-ID").format(completionSuccess.cost)}</p></div>
-              </div>
-            </div>
-            {completionSuccess.pengeluaranId ? (
-              <Alert className="relative w-full max-w-md text-left">
-                <CheckCircle2 className="size-4" />
-                <AlertTitle>Pengeluaran & cash out sudah tercatat</AlertTitle>
-                <AlertDescription>
-                  <p>Biaya aktual sudah menjadi pengeluaran Finance dan dibayar dari akun uang sebelum status perawatan diselesaikan.</p>
-                  {completionSuccess.settlementAllocations.length > 0 ? (
-                    <div className="mt-2 space-y-1 text-xs">
-                      {completionSuccess.settlementAllocations.map((item) => <p key={item.akun_keuangan_id}>Akun {item.akun_keuangan_id.slice(0, 8).toUpperCase()} · Rp {new Intl.NumberFormat("id-ID").format(Number(item.amount))}</p>)}
-                    </div>
-                  ) : null}
-                  <Button asChild variant="outline" size="sm" className="mt-3 rounded-xl">
-                    <Link to={paths.keuangan + "/pengeluaran/" + completionSuccess.pengeluaranId}>Buka Pengeluaran Finance <ExternalLink /></Link>
-                  </Button>
-                </AlertDescription>
-              </Alert>
-            ) : null}
-            <Alert className="relative w-full max-w-md text-left">
-              <Info className="size-4" />
-              <AlertTitle>Pekerjaan selesai — tinggal konfirmasi kesiapan</AlertTitle>
-              <AlertDescription>Konfirmasi ini menjalankan Verifikasi Kesiapan. Bila lulus, Inventaris langsung menetapkan unit menjadi Siap Disewakan.</AlertDescription>
-            </Alert>
-            <div className="relative flex w-full max-w-md flex-col gap-2 sm:flex-row">
-              <Button
-                className="flex-1 rounded-xl"
-                disabled={verificationMutation.isPending}
-                onClick={() => {
-                  verificationMutation.mutate("passed");
-                }}
-              >
-                <PackageCheck />
-                {verificationMutation.isPending ? "Menetapkan Siap Disewakan…" : "Konfirmasi Siap Disewakan"}
-              </Button>
-              <Button variant="outline" className="flex-1 rounded-xl" onClick={() => setCompletionSuccess(null)}><Wrench />Lihat Detail</Button>
-            </div>
-            <Button asChild variant="ghost" className="relative w-full max-w-md rounded-xl">
-              <Link to={paths.pemeriksaan + "?unit_id=" + encodeURIComponent(unit.unit_barang_id)}><ExternalLink />Buka Pemeriksaan Ulang</Link>
-            </Button>
-            <Button asChild variant="ghost" className="relative rounded-xl"><Link to={paths.perawatan}>Kembali ke Daftar</Link></Button>
-          </CardContent>
-        </Card>
+      <div className="mx-auto w-full max-w-xl space-y-3 pb-20">
+        <Skeleton className="h-8 rounded-xl" />
+        <Skeleton className="h-28 rounded-2xl" />
+        <Skeleton className="h-20 rounded-2xl" />
+        <Skeleton className="h-48 rounded-2xl" />
       </div>
     );
   }
 
+  if (context.error || workspace.error || !context.data || !workspace.data) {
+    return (
+      <Alert variant="destructive">
+        <AlertTitle>Workspace perawatan tidak tersedia</AlertTitle>
+        <AlertDescription className="flex flex-col gap-3">
+          <span>{context.error?.message ?? errorMessage(workspace.error, "Data perawatan tidak ditemukan.")}</span>
+          <Button variant="outline" size="sm" onClick={() => void workspace.refetch()}>
+            <RefreshCw />
+            Muat ulang
+          </Button>
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
+  const { maintenance, unit, sourceInspection, findings, history, verification_result } = workspace.data;
+  const isPlanned = maintenance.status === "planned";
+  const isInProgress = maintenance.status === "in_progress";
+  const isCompleted = maintenance.status === "completed";
+  const duration = durationLabel(maintenance.dimulai_at, maintenance.selesai_at);
+  const coverUrl = unitMedia.data?.find((media) => media.is_cover)?.signed_url ?? unitMedia.data?.[0]?.signed_url ?? null;
+  const reasonText = sourceInspection?.catatan?.trim() || findings[0]?.deskripsi?.trim() || maintenance.catatan?.trim() || "-";
+  const activeAccounts = availableFinanceAccounts.filter((account) => account.status === "active" && account.mata_uang === "IDR");
+  const selectedAccount = activeAccounts.find((account) => account.akun_keuangan_id === selectedAccountId) ?? activeAccounts[0] ?? null;
+  const visibleHistory = timelineOpen ? history : history.slice(0, 4);
+  const executorOptions = Array.from(
+    new Set(
+      [context.data.akunAdminNama, maintenance.pelaksana, executor]
+        .map((value) => value?.trim())
+        .filter((value): value is string => Boolean(value)),
+    ),
+  );
+
+  const filteredExecutorOptions = executorOptions.filter((value) =>
+    value.toLowerCase().includes(executorSearch.trim().toLowerCase()),
+  );
+
   return (
-    <div className="mx-auto w-full max-w-3xl space-y-3 pb-28 sm:space-y-4 lg:pb-10">
-      <header className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-start gap-2">
-          <Button asChild variant="ghost" size="icon" className="-ml-2 size-9 rounded-xl" aria-label="Kembali ke Perawatan">
-            <Link to={paths.perawatan}><ArrowLeft /></Link>
+    <div className="mx-auto w-full max-w-xl pb-28 sm:pb-10">
+      <header className="flex items-center justify-between gap-3 py-1">
+        <div className="flex min-w-0 items-center gap-2">
+          <Button asChild variant="ghost" size="icon" className="size-9 shrink-0 rounded-xl" aria-label="Kembali ke Perawatan">
+            <Link to={paths.perawatan}>
+              <ArrowLeft />
+            </Link>
           </Button>
           <div className="min-w-0">
-            <p className="text-xs font-medium text-muted-foreground">Detail Perawatan</p>
-            <h1 className="truncate text-[20px] font-bold leading-6 tracking-tight">{unit.kode_unit}</h1>
-            <p className="truncate text-sm text-muted-foreground">
-              {unit.barang_nama ?? "Barang"}{unit.varian_nama ? " · " + unit.varian_nama : ""}
-            </p>
+            <p className="truncate text-base font-semibold">Detail Perawatan</p>
+            <p className="truncate text-[11px] text-muted-foreground">{unit.kode_unit}</p>
           </div>
         </div>
         <Button type="button" variant="ghost" size="icon" className="size-9 rounded-xl" aria-label="Menu perawatan">
@@ -382,28 +508,30 @@ export function PerawatanShow() {
       </header>
 
       {feedback ? (
-        <Alert>
-          <CheckCircle2 className="size-4" />
-          <AlertTitle>Status diperbarui</AlertTitle>
-          <AlertDescription>{feedback}</AlertDescription>
-        </Alert>
+        <div className="mt-2 rounded-2xl border border-emerald-200 bg-emerald-50/70 px-3.5 py-3 text-xs text-emerald-900 dark:border-emerald-900/40 dark:bg-emerald-950/20 dark:text-emerald-100">
+          <div className="flex items-start gap-2">
+            <CheckCircle2 className="mt-0.5 size-4 shrink-0" />
+            <p>{feedback}</p>
+          </div>
+        </div>
       ) : null}
 
       {errorFeedback ? (
-        <Alert variant="destructive">
+        <Alert variant="destructive" className="mt-2 rounded-2xl">
           <ShieldAlert className="size-4" />
           <AlertTitle>Perawatan belum diperbarui</AlertTitle>
           <AlertDescription className="space-y-3">
             <p>{errorFeedback}</p>
             <Button variant="outline" size="sm" onClick={() => void workspace.refetch()}>
-              <RefreshCw />Muat Data Terbaru
+              <RefreshCw />
+              Muat Data Terbaru
             </Button>
           </AlertDescription>
         </Alert>
       ) : null}
 
       {unknownFeedback ? (
-        <Alert variant="destructive">
+        <Alert variant="destructive" className="mt-2 rounded-2xl">
           <ShieldAlert className="size-4" />
           <AlertTitle>Permintaan belum dapat dipastikan</AlertTitle>
           <AlertDescription className="space-y-3">
@@ -415,344 +543,400 @@ export function PerawatanShow() {
         </Alert>
       ) : null}
 
-      <Card className="overflow-hidden rounded-[22px] border-border/70 bg-card shadow-[0_1px_3px_rgba(0,0,0,0.05)]">
-        <CardContent className="p-3.5 sm:p-4">
-          <div className="grid grid-cols-[62px_minmax(0,1fr)_auto] items-center gap-3">
-            <div className="grid size-[62px] shrink-0 place-items-center overflow-hidden rounded-2xl border border-border/70 bg-muted/35 text-primary">
-              <Package className="size-7" aria-hidden="true" />
-            </div>
-
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <p className="truncate text-[17px] font-bold leading-5">{unit.kode_unit}</p>
-                <Badge variant="secondary" className="rounded-full px-2.5 py-1 text-[11px]">
-                  {semanticMaintenanceLabel(unit.status)}
-                </Badge>
-              </div>
-              <p className="mt-1 truncate text-sm text-muted-foreground">
-                {unit.barang_nama ?? "Barang"}{unit.varian_nama ? " · " + unit.varian_nama : ""}
-              </p>
-            </div>
-
-            <Badge
-              variant={maintenance.status === "completed" ? "outline" : "secondary"}
-              className="max-w-[118px] justify-center rounded-xl px-2.5 py-2 text-[11px] font-semibold"
-            >
-              {semanticMaintenanceLabel(maintenance.status)}
-            </Badge>
+      <section className="mt-2 rounded-2xl border border-border/70 bg-background px-3.5 py-3.5">
+        <div className="flex items-center gap-3">
+          <div className="grid size-[64px] shrink-0 place-items-center overflow-hidden rounded-2xl border bg-muted/30">
+            {coverUrl ? (
+              <img src={coverUrl} alt="" className="size-full object-cover" />
+            ) : (
+              <Package className="size-7 text-primary" />
+            )}
           </div>
-
-          <div className="mt-3 grid grid-cols-3 divide-x rounded-2xl bg-muted/25">
-            <div className="min-w-0 px-2.5 py-2.5">
-              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <Tag className="size-3.5 shrink-0" />
-                <span>Jenis</span>
-              </div>
-              <p className="mt-1 truncate text-[12px] font-semibold">
-                {semanticMaintenanceLabel(maintenance.jenis_perawatan)}
-              </p>
-            </div>
-            <div className="min-w-0 px-2.5 py-2.5">
-              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <PackageCheck className="size-3.5 shrink-0" />
-                <span>Unit</span>
-              </div>
-              <p className="mt-1 truncate text-[12px] font-semibold">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <p className="truncate text-[16px] font-bold">{unit.kode_unit}</p>
+              <Badge variant="secondary" className="rounded-full px-2 py-0.5 text-[10px]">
                 {semanticMaintenanceLabel(unit.status)}
-              </p>
+              </Badge>
             </div>
-            <div className="min-w-0 px-2.5 py-2.5">
-              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <CalendarDays className="size-3.5 shrink-0" />
-                <span>Dibuat</span>
-              </div>
-              <p className="mt-1 truncate text-[12px] font-semibold">
-                {formatMaintenanceDateTime(maintenance.created_at)}
-              </p>
+            <p className="mt-0.5 truncate text-sm text-muted-foreground">
+              {unit.barang_nama ?? "Barang"}{unit.varian_nama ? " · " + unit.varian_nama : ""}
+            </p>
+          </div>
+          <Button asChild variant="outline" size="sm" className="h-9 shrink-0 rounded-xl px-3 text-xs">
+            <Link to={paths.inventaris + "/" + unit.unit_barang_id}>
+              Lihat Unit <ArrowRight className="size-3.5" />
+            </Link>
+          </Button>
+        </div>
+
+        <div className="mt-4">
+          <StatusTimeline
+            maintenanceStatus={maintenance.status}
+            unitStatus={unit.status}
+            startedAt={maintenance.dimulai_at}
+            finishedAt={maintenance.selesai_at}
+            createdAt={maintenance.created_at}
+          />
+        </div>
+      </section>
+
+      {isInProgress ? (
+        <div className="mt-3 flex items-center justify-between gap-3 rounded-2xl border border-blue-200/70 bg-blue-50/55 px-3.5 py-3 dark:border-blue-900/40 dark:bg-blue-950/20">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-200">
+              <Wrench className="size-4" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold">Sedang Dikerjakan</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">Perawatan sedang berlangsung.</p>
             </div>
           </div>
-        </CardContent>
-      </Card>
-
-      <nav aria-label="Bagian detail perawatan" className="grid grid-cols-3 rounded-2xl border border-border/70 bg-background p-1">
-        <a href="#ringkasan" className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl bg-primary px-2 text-xs font-semibold text-primary-foreground shadow-sm">
-          <FileText className="size-3.5" />Informasi
-        </a>
-        <a href="#pekerjaan" className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl px-2 text-xs font-semibold text-muted-foreground">
-          <Wrench className="size-3.5" />Pekerjaan
-        </a>
-        <a href="#timeline" className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl px-2 text-xs font-semibold text-muted-foreground">
-          <History className="size-3.5" />Timeline
-        </a>
-      </nav>
-
-      <Card id="ringkasan" className="scroll-mt-4 rounded-[22px] border-border/70 shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
-        <CardHeader className="space-y-1 p-4 pb-3">
-          <div className="flex items-center justify-between gap-3">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <FileText className="size-5 text-primary" />
-              Ringkasan
-            </CardTitle>
-            <span className="text-xs text-muted-foreground">
-              {sourceInspection ? "Pemeriksaan" : "Manual"}
+          {duration ? (
+            <span className="shrink-0 text-xs font-semibold tabular-nums text-blue-700 dark:text-blue-200">
+              <Clock3 className="mr-1 inline size-3.5" />
+              {duration}
             </span>
+          ) : null}
+        </div>
+      ) : null}
+
+      {isCompleted ? (
+        <div className="mt-3 flex items-center justify-between gap-3 rounded-2xl border border-emerald-200/70 bg-emerald-50/60 px-3.5 py-3 dark:border-emerald-900/40 dark:bg-emerald-950/20">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-200">
+              <CheckCircle2 className="size-4" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold">Perawatan Selesai</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">Pekerjaan perawatan telah diselesaikan.</p>
+            </div>
           </div>
-        </CardHeader>
-        <CardContent className="space-y-3 p-4 pt-0">
-          <div className="grid grid-cols-2 divide-x rounded-2xl bg-muted/25">
-            <div className="flex min-w-0 items-start gap-2.5 px-3 py-3">
-              <div className="grid size-8 shrink-0 place-items-center rounded-xl bg-background text-primary">
+          {duration ? <span className="shrink-0 text-xs font-semibold tabular-nums text-emerald-700 dark:text-emerald-200">Durasi {duration}</span> : null}
+        </div>
+      ) : null}
+
+      {isPlanned ? (
+        <>
+          <section className="mt-3 rounded-2xl border border-amber-200/70 bg-amber-50/55 px-3.5 py-3 dark:border-amber-900/40 dark:bg-amber-950/15">
+            <div className="flex items-start gap-2.5">
+              <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-amber-100 text-amber-700 dark:bg-amber-900/45 dark:text-amber-200">
                 <Wrench className="size-4" />
               </div>
               <div className="min-w-0">
-                <p className="text-[11px] text-muted-foreground">Jenis Perawatan</p>
-                <p className="mt-1 truncate text-sm font-semibold">{semanticMaintenanceLabel(maintenance.jenis_perawatan)}</p>
-              </div>
-            </div>
-            <div className="flex min-w-0 items-start gap-2.5 px-3 py-3">
-              <div className="grid size-8 shrink-0 place-items-center rounded-xl bg-background text-primary">
-                <Package className="size-4" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-[11px] text-muted-foreground">Sumber</p>
-                <p className="mt-1 truncate text-sm font-semibold">{sourceInspection ? "Pemeriksaan" : "Manual"}</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="rounded-2xl bg-emerald-50/45 p-3.5 dark:bg-emerald-950/15">
-            <div className="flex items-start gap-2.5">
-              <div className="grid size-8 shrink-0 place-items-center rounded-xl bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-200">
-                <Info className="size-4" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="font-semibold">Alasan Perawatan</p>
-                <p className="mt-0.5 text-xs text-muted-foreground">Mengapa unit perlu dirawat.</p>
-                <div className="mt-2 rounded-xl bg-background/75 px-3 py-2.5 text-sm leading-5 text-muted-foreground">
-                  {reasonText ?? "-"}
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-sm font-semibold">Perlu Perawatan</p>
+                  <Badge className="rounded-full bg-amber-200/70 px-2 py-0.5 text-[10px] text-amber-900 hover:bg-amber-200/70">Perbaikan</Badge>
                 </div>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">{reasonText}</p>
               </div>
+            </div>
+          </section>
+
+          <section className="mt-3 rounded-2xl border border-border/70 px-3.5">
+            <CompactRow
+              icon={<FileText className="size-4" />}
+              title="Detail Pekerjaan"
+              meta={maintenance.deskripsi_pekerjaan}
+            />
+            <div className="border-t border-border/60">
+              <CompactRow
+                icon={<UserRound className="size-4" />}
+                title="Pelaksana"
+                meta={executor || "Belum ditentukan"}
+                value={executor ? "Ubah" : "Pilih"}
+                onClick={() => {
+                  setExecutorSearch("");
+                  setExecutorOpen(true);
+                }}
+              />
+            </div>
+            <div className="border-t border-border/60">
+              <CompactRow
+                icon={<Info className="size-4" />}
+                title="Informasi Tambahan"
+                meta={sourceInspection ? "Berasal dari Pemeriksaan" : "Perawatan dibuat manual"}
+                value={infoOpen ? "Tutup" : "Buka"}
+                onClick={() => setInfoOpen((value) => !value)}
+              />
+            </div>
+            <div className="border-t border-border/60">
+              <CompactRow
+                icon={<History className="size-4" />}
+                title="Riwayat Unit"
+                meta={history.length + " aktivitas tersimpan"}
+                onClick={() => setTimelineOpen((value) => !value)}
+              />
+            </div>
+          </section>
+        </>
+      ) : null}
+
+      {isInProgress ? (
+        <section className="mt-3 rounded-2xl border border-border/70 px-3.5 py-1">
+          <div className="py-3">
+            <div className="flex items-center gap-2">
+              <FileText className="size-4 text-primary" />
+              <p className="text-sm font-semibold">Pekerjaan</p>
+            </div>
+            <div className="mt-2 rounded-xl border bg-background px-3 py-2.5">
+              <p className="text-sm leading-5 text-muted-foreground">{maintenance.deskripsi_pekerjaan}</p>
             </div>
           </div>
 
-          {findings.length > 0 ? (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-sm font-semibold">Temuan</p>
-                <Badge variant="outline" className="rounded-full">{findings.length} temuan</Badge>
+          <div className="border-t border-border/60 py-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <UserRound className="size-4 text-primary" />
+                <p className="text-sm font-semibold">Pelaksana</p>
               </div>
-              <div className="grid gap-2">
-                {findings.slice(0, 2).map((finding) => (
-                  <div key={finding.temuan_pemeriksaan_id} className="rounded-xl border border-border/60 bg-background p-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-sm font-medium">{semanticMaintenanceLabel(finding.jenis_temuan)}</p>
-                      <span className="text-[11px] text-muted-foreground">{finding.status_tindak_lanjut}</span>
-                    </div>
-                    <p className="mt-1 text-xs leading-5 text-muted-foreground">{finding.deskripsi}</p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 rounded-lg px-2.5 text-xs"
+                onClick={() => {
+                  setExecutorSearch("");
+                  setExecutorOpen(true);
+                }}
+              >
+                {executor ? "Ubah" : "Pilih"}
+              </Button>
+            </div>
+            <p className="mt-1.5 text-sm font-semibold">{executor || "Belum ditentukan"}</p>
+          </div>
+
+          <div className="border-t border-border/60 py-3">
+            <div className="flex items-center gap-2">
+              <FileText className="size-4 text-primary" />
+              <p className="text-sm font-semibold">Catatan Pekerjaan</p>
+            </div>
+            <Textarea
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+              className="mt-2 min-h-24 rounded-xl"
+              placeholder="Catat pekerjaan yang sudah dilakukan dan diuji."
+            />
+            <p className="mt-1 text-right text-[10px] text-muted-foreground">{note.length}/500</p>
+          </div>
+
+          <div className="border-t border-border/60 py-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <WalletCards className="size-4 text-primary" />
+                <p className="text-sm font-semibold">Biaya & Keuangan</p>
+              </div>
+              <ChevronDown className="size-4 text-muted-foreground" />
+            </div>
+            <div className="mt-2 grid gap-2">
+              <label className="grid gap-1.5 text-xs font-medium">
+                Biaya Aktual
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-muted-foreground">Rp</span>
+                  <Input
+                    aria-label="Biaya aktual"
+                    type="number"
+                    min="0"
+                    inputMode="decimal"
+                    className="h-11 rounded-xl pl-10 text-right font-semibold"
+                    value={cost}
+                    onChange={(event) => {
+                      setCost(event.target.value);
+                      setAccountAllocations({});
+                    }}
+                    placeholder="0"
+                  />
+                </div>
+              </label>
+
+              <div className="flex items-center justify-between gap-3 rounded-xl bg-emerald-50/55 px-3 py-2.5 dark:bg-emerald-950/15">
+                <div className="flex min-w-0 items-center gap-2">
+                  <WalletCards className="size-4 shrink-0 text-emerald-700 dark:text-emerald-200" />
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium">Sumber Uang</p>
+                    <p className="truncate text-[11px] text-muted-foreground">
+                      {selectedAccount ? selectedAccount.nama_akun : "Akan dipilih saat menyelesaikan"}
+                    </p>
                   </div>
-                ))}
+                </div>
+                <span className="shrink-0 text-[11px] font-medium text-emerald-800 dark:text-emerald-200">
+                  {selectedAccount ? "Saldo " + new Intl.NumberFormat("id-ID").format(Number(selectedAccount.saldo)) : "-"}
+                </span>
+              </div>
+              <p className="text-[11px] leading-5 text-muted-foreground">
+                Pengeluaran dan cash out akan dicatat dalam tindakan penyelesaian yang sama.
+              </p>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {isCompleted ? (
+        <>
+          <section className="mt-3 rounded-2xl border border-border/70 px-3.5">
+            <div className="py-3">
+              <div className="flex items-center gap-2">
+                <FileText className="size-4 text-primary" />
+                <p className="text-sm font-semibold">Ringkasan Hasil</p>
+              </div>
+              <div className="mt-2 rounded-xl border bg-background px-3 py-2.5 text-sm leading-5 text-muted-foreground">
+                {note || maintenance.catatan || "Pekerjaan perawatan sudah selesai dicatat."}
               </div>
             </div>
-          ) : null}
-        </CardContent>
-      </Card>
+            <div className="border-t border-border/60">
+              <CompactRow icon={<UserRound className="size-4" />} title="Pelaksana" value={executor || maintenance.pelaksana || "-"} />
+            </div>
+            <div className="border-t border-border/60 py-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <WalletCards className="size-4 text-primary" />
+                  <p className="text-sm font-semibold">Biaya & Keuangan</p>
+                </div>
+                {maintenance.biaya != null ? (
+                  <span className="text-sm font-bold tabular-nums">Rp {new Intl.NumberFormat("id-ID").format(Number(maintenance.biaya))}</span>
+                ) : (
+                  <span className="text-xs text-muted-foreground">Tanpa biaya</span>
+                )}
+              </div>
+              {maintenance.biaya != null && Number(maintenance.biaya) > 0 ? (
+                <div className="mt-2 flex items-center gap-2 rounded-xl bg-emerald-50/55 px-3 py-2.5 text-xs text-emerald-900 dark:bg-emerald-950/15 dark:text-emerald-100">
+                  <CheckCircle2 className="size-4 shrink-0" />
+                  <div>
+                    <p className="font-semibold">Pengeluaran Dicatat</p>
+                    <p className="mt-0.5 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">Cash out merupakan bagian dari penyelesaian perawatan.</p>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+            <div className="border-t border-border/60">
+              <CompactRow
+                icon={<Info className="size-4" />}
+                title="Informasi Lainnya"
+                meta={sourceInspection ? "Sumber Pemeriksaan" : "Perawatan Manual"}
+                value={infoOpen ? "Tutup" : "Buka"}
+                onClick={() => setInfoOpen((value) => !value)}
+              />
+            </div>
+            <div className="border-t border-border/60">
+              <CompactRow
+                icon={<History className="size-4" />}
+                title="Riwayat Unit"
+                meta={history.length + " aktivitas terakhir"}
+                onClick={() => setTimelineOpen((value) => !value)}
+              />
+            </div>
+          </section>
+        </>
+      ) : null}
 
-      <Card className="rounded-[22px] border-border/70 shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
-        <CardHeader className="space-y-1 p-4 pb-3">
+      {infoOpen ? (
+        <section className="mt-2 rounded-2xl border border-border/70 px-3.5 py-3">
+          <div className="grid gap-2 text-xs">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-muted-foreground">Sumber</span>
+              <span className="font-semibold">{sourceInspection ? "Pemeriksaan" : "Manual"}</span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-muted-foreground">Jenis</span>
+              <span className="font-semibold">{semanticMaintenanceLabel(maintenance.jenis_perawatan)}</span>
+            </div>
+            <div className="flex items-start justify-between gap-3">
+              <span className="text-muted-foreground">Dibuat</span>
+              <span className="text-right font-semibold">{prettyDate(maintenance.created_at)}</span>
+            </div>
+            {sourceInspection?.catatan ? (
+              <div className="border-t border-border/60 pt-2">
+                <p className="text-muted-foreground">Catatan Pemeriksaan</p>
+                <p className="mt-1 leading-5">{sourceInspection.catatan}</p>
+              </div>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
+
+      {timelineOpen ? (
+        <section className="mt-2 rounded-2xl border border-border/70 px-3.5 py-3">
           <div className="flex items-center justify-between gap-3">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Clock3 className="size-5 text-primary" />
-              Status Pekerjaan
-            </CardTitle>
-            <Badge variant={maintenance.status === "completed" ? "outline" : "secondary"} className="rounded-full px-2.5 py-1 text-[11px]">
-              {semanticMaintenanceLabel(maintenance.status)}
-            </Badge>
+            <div>
+              <p className="text-sm font-semibold">Riwayat Unit</p>
+              <p className="text-[11px] text-muted-foreground">Urutan kejadian unit yang tercatat di sistem.</p>
+            </div>
+            <Button type="button" variant="ghost" size="icon" className="size-8 rounded-lg" onClick={() => setTimelineOpen(false)} aria-label="Tutup riwayat">
+              <X className="size-4" />
+            </Button>
           </div>
-        </CardHeader>
-        <CardContent className="space-y-4 p-4 pt-0">
-          <div className="grid grid-cols-4">
-            {[
-              { label: "Direncanakan", active: progressIndex >= 0, current: maintenance.status === "planned" },
-              { label: "Dalam Proses", active: progressIndex >= 1, current: maintenance.status === "in_progress" },
-              { label: "Selesai", active: progressIndex >= 2, current: maintenance.status === "completed" },
-              { label: "Siap Disewakan", active: unit.status === "ready", current: unit.status === "ready" },
-            ].map((step, index, list) => (
-              <div key={step.label} className="relative min-w-0">
-                {index < list.length - 1 ? <span className="absolute left-[calc(50%+10px)] right-[calc(-50%+10px)] top-3.5 h-px bg-border" aria-hidden="true" /> : null}
-                <div className="relative z-10 flex flex-col items-center gap-1.5 text-center">
-                  <div className={[
-                    "grid size-7 place-items-center rounded-full border-2 bg-background",
-                    step.current ? "border-primary text-primary" : step.active ? "border-primary/50 bg-primary/10 text-primary" : "border-border text-muted-foreground",
-                  ].join(" ")}>
-                    {step.active ? <CheckCircle2 className="size-4" /> : <Circle className="size-3.5" />}
+          <div className="mt-3 space-y-2">
+            {visibleHistory.map((entry) => (
+              <div key={entry.riwayat_unit_id} className="flex items-start gap-2.5 border-t border-border/60 pt-2.5 first:border-t-0 first:pt-0">
+                <div className="mt-1 grid size-5 shrink-0 place-items-center rounded-full bg-muted">
+                  <Clock3 className="size-3 text-muted-foreground" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="text-xs font-semibold">{semanticMaintenanceLabel(entry.jenis_kejadian)}</p>
+                    <span className="shrink-0 text-[10px] text-muted-foreground">{prettyDate(entry.terjadi_at)}</span>
                   </div>
-                  <p className={step.current ? "text-[10px] font-semibold text-primary" : "text-[10px] text-muted-foreground"}>
-                    {step.label}
-                  </p>
+                  {entry.catatan ? <p className="mt-0.5 text-[11px] leading-5 text-muted-foreground">{entry.catatan}</p> : null}
                 </div>
               </div>
             ))}
+            {history.length > 4 ? (
+              <Button type="button" variant="ghost" className="h-8 w-full rounded-lg text-xs" onClick={() => setTimelineOpen((value) => !value)}>
+                {timelineOpen ? "Ringkas" : "Lihat Semua"}
+              </Button>
+            ) : null}
           </div>
+        </section>
+      ) : null}
 
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            <div className="rounded-xl bg-muted/20 px-3 py-2.5">
-              <p className="text-muted-foreground">Mulai</p>
-              <p className="mt-1 font-semibold">{maintenance.dimulai_at ? formatMaintenanceDateTime(maintenance.dimulai_at) : "-"}</p>
-            </div>
-            <div className="rounded-xl bg-muted/20 px-3 py-2.5">
-              <p className="text-muted-foreground">Selesai</p>
-              <p className="mt-1 font-semibold">{maintenance.selesai_at ? formatMaintenanceDateTime(maintenance.selesai_at) : "-"}</p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card id="pekerjaan" className="scroll-mt-4 rounded-[22px] border-border/70 shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
-        <CardHeader className="space-y-1 p-4 pb-3">
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Wrench className="size-5 text-primary" />
-            Detail Pekerjaan
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3 p-4 pt-0">
-          <div className="rounded-2xl bg-muted/20 p-3.5">
-            <p className="text-[11px] text-muted-foreground">Deskripsi pekerjaan</p>
-            <p className="mt-1 whitespace-pre-wrap text-sm leading-6">{maintenance.deskripsi_pekerjaan}</p>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2">
-            <div className="rounded-2xl bg-muted/20 p-3">
-              <div className="flex items-center gap-2 text-[11px] text-muted-foreground"><UserRound className="size-3.5" />Dikerjakan oleh</div>
-              <p className="mt-1 text-sm font-semibold">{maintenance.pelaksana ?? "-"}</p>
-            </div>
-            <div className="rounded-2xl bg-muted/20 p-3">
-              <div className="flex items-center gap-2 text-[11px] text-muted-foreground"><CalendarDays className="size-3.5" />Biaya</div>
-              <p className="mt-1 text-sm font-semibold">{maintenance.biaya == null ? "-" : "Rp " + new Intl.NumberFormat("id-ID").format(Number(maintenance.biaya))}</p>
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-border/60 bg-background p-3">
-            <p className="text-[11px] text-muted-foreground">Catatan</p>
-            <p className="mt-1 whitespace-pre-wrap text-sm leading-6">{maintenance.catatan || "-"}</p>
-          </div>
-
-          {isStartable ? (
-            <Card className="rounded-2xl border-primary/15 bg-emerald-50/45 shadow-none dark:bg-emerald-950/15">
-              <CardContent className="p-3.5">
-                <p className="font-semibold">Perawatan Direncanakan</p>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  Mulai pekerjaan untuk mengubah status menjadi Berjalan. Waktu mulai dicatat otomatis oleh sistem.
-                </p>
-                <Button className="mt-3 h-11 w-full rounded-xl" disabled={startMutation.isPending} onClick={() => startMutation.mutate()}>
-                  {startMutation.isPending ? "Memulai..." : "Mulai Perawatan"}
-                  <ArrowRight />
-                </Button>
-              </CardContent>
-            </Card>
-          ) : null}
-
-          {isCompletable ? (
-            <Card className="rounded-2xl border-sky-200/60 bg-sky-50/35 shadow-none dark:border-sky-900/30 dark:bg-sky-950/10">
-              <CardContent className="space-y-3 p-3.5">
-                <div>
-                  <p className="font-semibold">Selesaikan Perawatan + Finance</p>
-                  <p className="mt-1 text-xs leading-5 text-muted-foreground">Biaya aktual harus sudah tercatat sebagai pengeluaran dan cash out selesai sebelum status menjadi Selesai.</p>
-                </div>
-                <div className="grid gap-2">
-                  <label className="grid gap-1.5 text-xs font-medium">
-                    Pelaksana
-                    <input aria-label="Pelaksana penyelesaian" className="h-10 rounded-xl border bg-background px-3 text-sm" value={executor} onChange={(e) => setExecutor(e.target.value)} placeholder={maintenance.pelaksana ?? "Nama pelaksana"} />
-                  </label>
-                  <label className="grid gap-1.5 text-xs font-medium">
-                    Biaya aktual
-                    <input aria-label="Biaya aktual" type="number" min="0" className="h-10 rounded-xl border bg-background px-3 text-sm" value={cost} onChange={(e) => { setCost(e.target.value); setAccountAllocations({}); }} placeholder={maintenance.biaya == null ? "Isi 0 bila tidak ada biaya" : String(maintenance.biaya)} />
-                  </label>
-                  <label className="grid gap-1.5 text-xs font-medium">
-                    Waktu cash out
-                    <input aria-label="Waktu cash out" type="datetime-local" className="h-10 rounded-xl border bg-background px-3 text-sm" value={cashoutAt} onChange={(e) => setCashoutAt(e.target.value)} />
-                    <span className="text-[11px] font-normal text-muted-foreground">Zona waktu usaha: {context.data.businessTimezone}</span>
-                  </label>
-                </div>
-                <label className="grid gap-1.5 text-xs font-medium">
-                  Catatan penyelesaian
-                  <Textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Catatan pekerjaan" rows={3} />
-                </label>
-                <MaintenanceFinanceCashout
-                  accounts={availableFinanceAccounts}
-                  amount={cashoutAmount}
-                  allocations={accountAllocations}
-                  onAllocationsChange={setAccountAllocations}
-                  onProceed={() => completeMutation.mutate()}
-                  disabled={financeAccounts.isPending || completeMutation.isPending || Boolean(financeAccounts.error)}
-                  isPending={completeMutation.isPending}
-                  setupHref={paths.keuangan + "/akun"}
-                />
-              </CardContent>
-            </Card>
-          ) : null}
-        </CardContent>
-      </Card>
-
-      {maintenance.status === "completed" ? (
-        <Card className="rounded-[22px] border-border/70 shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
+      {isCompleted ? (
+        <section id="verifikasi" className="mt-3 scroll-mt-4 rounded-2xl border border-border/70 px-3.5 py-3">
           {verification_result === "passed" ? (
-            <CardContent className="space-y-3 p-4">
-              <div className="flex items-start gap-3">
-                <div className="grid size-10 shrink-0 place-items-center rounded-2xl bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200">
-                  <CheckCircle2 className="size-5" />
-                </div>
-                <div>
-                  <p className="font-semibold">Verifikasi Sudah Lulus</p>
-                  <p className="mt-1 text-xs leading-5 text-muted-foreground">Pekerjaan ini sudah pernah lolos Verifikasi Kesiapan.</p>
-                </div>
+            <div className="flex items-start gap-2.5">
+              <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200">
+                <PackageCheck className="size-4" />
               </div>
-              <Button asChild variant="outline" className="h-10 w-full rounded-xl">
-                <Link to={paths.inventaris + "/" + unit.unit_barang_id}>Buka Inventaris<ArrowRight /></Link>
-              </Button>
-            </CardContent>
+              <div>
+                <p className="text-sm font-semibold">Unit Siap Disewakan</p>
+                <p className="mt-0.5 text-xs leading-5 text-muted-foreground">Verifikasi kesiapan sudah lulus dan Inventaris menetapkan unit siap digunakan untuk rental.</p>
+              </div>
+            </div>
           ) : verification_result === "failed" ? (
-            <CardContent className="space-y-3 p-4">
-              <div className="flex items-start gap-3">
-                <div className="grid size-10 shrink-0 place-items-center rounded-2xl bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-200">
-                  <ShieldAlert className="size-5" />
+            <div className="space-y-2">
+              <div className="flex items-start gap-2.5">
+                <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-200">
+                  <ShieldAlert className="size-4" />
                 </div>
                 <div>
-                  <p className="font-semibold">Verifikasi Tidak Lulus</p>
-                  <p className="mt-1 text-xs leading-5 text-muted-foreground">Unit tetap belum siap dan memerlukan tindak lanjut.</p>
+                  <p className="text-sm font-semibold">Verifikasi Tidak Lulus</p>
+                  <p className="mt-0.5 text-xs leading-5 text-muted-foreground">Unit tetap belum siap dan memerlukan tindak lanjut.</p>
                 </div>
               </div>
               <Button asChild variant="outline" className="h-10 w-full rounded-xl">
-                <Link to={paths.pemeriksaan + "?unit_id=" + encodeURIComponent(unit.unit_barang_id)}><ExternalLink />Buka Pemeriksaan</Link>
+                <Link to={paths.pemeriksaan + "?unit_id=" + encodeURIComponent(unit.unit_barang_id)}>
+                  Buka Pemeriksaan <ExternalLink />
+                </Link>
               </Button>
-            </CardContent>
-          ) : unit.status === "ready" ? (
-            <CardContent className="space-y-3 p-4">
-              <div className="flex items-start gap-3">
-                <div className="grid size-10 shrink-0 place-items-center rounded-2xl bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200">
-                  <PackageCheck className="size-5" />
-                </div>
-                <div>
-                  <p className="font-semibold">Unit Siap Disewakan</p>
-                  <p className="mt-1 text-xs leading-5 text-muted-foreground">Unit saat ini sudah dinyatakan siap oleh Inventaris.</p>
-                </div>
-              </div>
-              <Button asChild variant="outline" className="h-10 w-full rounded-xl">
-                <Link to={paths.inventaris + "/" + unit.unit_barang_id}>Buka Inventaris<ArrowRight /></Link>
-              </Button>
-            </CardContent>
+            </div>
           ) : (
-            <CardContent className="space-y-3 p-4">
-              <div className="flex items-start gap-3">
-                <div className="grid size-10 shrink-0 place-items-center rounded-2xl bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200">
-                  <Clock3 className="size-5" />
+            <div className="space-y-3">
+              <div className="flex items-start gap-2.5">
+                <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200">
+                  <Clock3 className="size-4" />
                 </div>
                 <div>
-                  <p className="font-semibold">Verifikasi Kesiapan</p>
-                  <p className="mt-1 text-xs leading-5 text-muted-foreground">Pekerjaan selesai tetapi hasil verifikasi belum tercatat.</p>
+                  <p className="text-sm font-semibold">Verifikasi Kesiapan</p>
+                  <p className="mt-0.5 text-xs leading-5 text-muted-foreground">Pekerjaan selesai, tetapi unit belum dianggap siap tanpa verifikasi.</p>
                 </div>
               </div>
-              <Textarea value={verificationNote} onChange={(e) => setVerificationNote(e.target.value)} placeholder="Catatan hasil uji setelah perawatan" aria-label="Catatan verifikasi" />
-              <div className="grid gap-2 sm:grid-cols-2">
+              <Textarea
+                value={verificationNote}
+                onChange={(event) => setVerificationNote(event.target.value)}
+                placeholder="Catatan hasil uji setelah perawatan"
+                aria-label="Catatan verifikasi"
+                className="min-h-20 rounded-xl"
+              />
+              <div className="grid grid-cols-2 gap-2">
                 <Button className="h-11 rounded-xl" disabled={verificationMutation.isPending || unit.status !== "maintenance"} onClick={() => verificationMutation.mutate("passed")}>
                   Verifikasi Lulus
                 </Button>
@@ -760,63 +944,208 @@ export function PerawatanShow() {
                   Verifikasi Gagal
                 </Button>
               </div>
-              <Button asChild variant="ghost" className="h-10 w-full rounded-xl">
-                <Link to={paths.pemeriksaan + "?unit_id=" + encodeURIComponent(unit.unit_barang_id)}><ExternalLink />Buka Pemeriksaan</Link>
-              </Button>
-            </CardContent>
-          )}
-        </Card>
-      ) : null}
-
-      <Card id="timeline" className="scroll-mt-4 rounded-[22px] border-border/70 shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
-        <CardHeader className="p-4 pb-3">
-          <div className="flex items-center justify-between gap-3">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <History className="size-5 text-primary" />
-              Riwayat Unit
-            </CardTitle>
-            {hasHiddenHistory ? (
-              <Button type="button" variant="ghost" className="h-8 rounded-full px-3 text-xs text-primary" onClick={() => setTimelineExpanded((value) => !value)}>
-                {timelineExpanded ? "Ringkas" : "Lihat Semua"}
-                <ArrowRight className={timelineExpanded ? "-rotate-90" : "rotate-0"} />
-              </Button>
-            ) : null}
-          </div>
-        </CardHeader>
-        <CardContent className="p-4 pt-0">
-          {history.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Belum ada riwayat unit.</p>
-          ) : (
-            <div className="space-y-2.5">
-              {visibleHistory.map((entry, index) => (
-                <div key={entry.riwayat_unit_id} className="grid grid-cols-[20px_minmax(0,1fr)] gap-2.5">
-                  <div className="relative flex justify-center">
-                    {index < visibleHistory.length - 1 ? <span className="absolute top-5 h-full w-px bg-border" aria-hidden="true" /> : null}
-                    <span className={[
-                      "relative z-10 mt-1.5 size-2.5 rounded-full border-2 bg-background",
-                      index === 0 ? "border-primary bg-primary/15" : "border-border",
-                    ].join(" ")} />
-                  </div>
-                  <div className={[
-                    "rounded-2xl border border-border/60 px-3 py-2.5",
-                    index === 0 ? "bg-emerald-50/40 dark:bg-emerald-950/10" : "bg-background",
-                  ].join(" ")}>
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold">{semanticMaintenanceLabel(entry.jenis_kejadian)}</p>
-                        <p className="mt-0.5 text-xs text-muted-foreground">{formatMaintenanceDateTime(entry.terjadi_at)}</p>
-                      </div>
-                      <ArrowRight className="mt-1 size-3.5 shrink-0 text-muted-foreground" />
-                    </div>
-                    {entry.catatan ? <p className="mt-1 text-xs leading-5 text-muted-foreground">{entry.catatan}</p> : null}
-                  </div>
-                </div>
-              ))}
             </div>
           )}
-        </CardContent>
-      </Card>
+        </section>
+      ) : null}
+
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 px-3 py-3 backdrop-blur lg:static lg:mt-3 lg:rounded-2xl lg:border lg:bg-background lg:px-4">
+        <div className="mx-auto w-full max-w-xl">
+          {isPlanned ? (
+            <Button className="h-12 w-full rounded-2xl text-sm font-semibold" disabled={startMutation.isPending} onClick={() => startMutation.mutate()}>
+              {startMutation.isPending ? "Memulai Perawatan..." : "Mulai Perawatan"}
+              <ArrowRight />
+            </Button>
+          ) : null}
+
+          {isInProgress ? (
+            <Button
+              className="h-12 w-full rounded-2xl text-sm font-semibold"
+              disabled={completeMutation.isPending}
+              onClick={() => setCompletionOpen(true)}
+            >
+              <CheckCircle2 />
+              Selesaikan Perawatan
+              <ArrowRight />
+            </Button>
+          ) : null}
+
+          {isCompleted ? (
+            <Button
+              className="h-12 w-full rounded-2xl text-sm font-semibold"
+              onClick={() => document.getElementById("verifikasi")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+            >
+              Lanjut ke Verifikasi
+              <ArrowRight />
+            </Button>
+          ) : null}
+        </div>
+      </div>
+
+      <Drawer open={executorOpen} onOpenChange={setExecutorOpen}>
+        <DrawerContent className="rounded-t-[28px]">
+          <DrawerHeader className="border-b px-4 pb-3 pt-2 text-left">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <DrawerTitle className="text-lg">Pilih Pelaksana</DrawerTitle>
+                <DrawerDescription>Pilih dari nama yang sudah ada atau masukkan nama pelaksana.</DrawerDescription>
+              </div>
+              <DrawerClose asChild>
+                <Button variant="ghost" size="icon" className="size-9 rounded-xl" aria-label="Tutup pilih pelaksana">
+                  <X />
+                </Button>
+              </DrawerClose>
+            </div>
+          </DrawerHeader>
+          <div className="max-h-[55vh] overflow-y-auto px-4 py-3">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={executorSearch}
+                onChange={(event) => setExecutorSearch(event.target.value)}
+                placeholder="Cari nama pelaksana..."
+                className="h-11 rounded-2xl pl-9"
+              />
+            </div>
+
+            <div className="mt-3 divide-y rounded-2xl border">
+              {filteredExecutorOptions.map((name) => {
+                const selected = executor === name;
+                return (
+                  <button
+                    type="button"
+                    key={name}
+                    className="flex w-full items-center gap-3 px-3.5 py-3 text-left"
+                    onClick={() => {
+                      setExecutor(name);
+                      setExecutorOpen(false);
+                    }}
+                  >
+                    <div className="grid size-9 shrink-0 place-items-center rounded-full bg-muted text-xs font-semibold">
+                      {name
+                        .split(/\s+/)
+                        .slice(0, 2)
+                        .map((part) => part[0]?.toUpperCase())
+                        .join("")}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold">{name}</p>
+                      <p className="text-[11px] text-muted-foreground">{name === context.data.akunAdminNama ? "Akun admin aktif" : "Nama pelaksana tersimpan"}</p>
+                    </div>
+                    {selected ? <CheckCircle2 className="size-4 shrink-0 text-primary" /> : null}
+                  </button>
+                );
+              })}
+
+              {executorSearch.trim() && !executorOptions.some((name) => name.toLowerCase() === executorSearch.trim().toLowerCase()) ? (
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-3 px-3.5 py-3 text-left text-primary"
+                  onClick={() => {
+                    setExecutor(executorSearch.trim());
+                    setExecutorOpen(false);
+                  }}
+                >
+                  <div className="grid size-9 place-items-center rounded-full bg-primary/10">
+                    <UserRound className="size-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold">Gunakan “{executorSearch.trim()}”</p>
+                    <p className="text-[11px] text-muted-foreground">Nama ini akan disimpan sebagai pelaksana.</p>
+                  </div>
+                </button>
+              ) : null}
+            </div>
+
+            {filteredExecutorOptions.length === 0 && !executorSearch.trim() ? (
+              <div className="py-8 text-center text-xs text-muted-foreground">Belum ada nama pelaksana lain yang tersedia.</div>
+            ) : null}
+          </div>
+        </DrawerContent>
+      </Drawer>
+
+      <Drawer open={completionOpen} onOpenChange={setCompletionOpen}>
+        <DrawerContent className="max-h-[88vh] rounded-t-[28px]">
+          <DrawerHeader className="border-b px-4 pb-3 pt-2 text-left">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <DrawerTitle className="text-lg">Selesaikan Perawatan</DrawerTitle>
+                <DrawerDescription>Catat hasil akhir, biaya aktual, dan sumber uang sebelum pekerjaan ditetapkan selesai.</DrawerDescription>
+              </div>
+              <DrawerClose asChild>
+                <Button variant="ghost" size="icon" className="size-9 rounded-xl" aria-label="Tutup penyelesaian perawatan">
+                  <X />
+                </Button>
+              </DrawerClose>
+            </div>
+          </DrawerHeader>
+
+          <div className="max-h-[calc(88vh-110px)] overflow-y-auto px-4 pb-4 pt-3">
+            <div className="space-y-4">
+              <label className="grid gap-1.5 text-xs font-medium">
+                Catatan Akhir
+                <Textarea
+                  value={note}
+                  onChange={(event) => setNote(event.target.value)}
+                  placeholder="Perbaikan selesai, unit sudah diuji dan normal. Siap digunakan kembali."
+                  className="min-h-24 rounded-2xl"
+                />
+                <span className="text-right text-[10px] font-normal text-muted-foreground">{note.length}/500</span>
+              </label>
+
+              <label className="grid gap-1.5 text-xs font-medium">
+                Biaya Aktual
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-muted-foreground">Rp</span>
+                  <Input
+                    aria-label="Biaya aktual penyelesaian"
+                    type="number"
+                    min="0"
+                    inputMode="decimal"
+                    value={cost}
+                    onChange={(event) => {
+                      setCost(event.target.value);
+                      setAccountAllocations({});
+                    }}
+                    placeholder="0"
+                    className="h-12 rounded-2xl pl-10 text-right font-semibold"
+                  />
+                </div>
+              </label>
+
+              <MaintenanceFinanceCashout
+                accounts={availableFinanceAccounts}
+                amount={cashoutAmount}
+                allocations={accountAllocations}
+                onAllocationsChange={setAccountAllocations}
+                selectedAccountId={selectedAccountId}
+                onSelectedAccountChange={setSelectedAccountId}
+                onProceed={() => completeMutation.mutate()}
+                disabled={financeAccounts.isPending || Boolean(financeAccounts.error) || !cost.trim()}
+                isPending={completeMutation.isPending}
+                setupHref={paths.keuangan + "/akun"}
+              />
+
+              <details className="rounded-2xl border border-border/60 px-3.5 py-3">
+                <summary className="cursor-pointer text-xs font-semibold">Waktu transaksi</summary>
+                <div className="mt-3 grid gap-1.5">
+                  <label className="grid gap-1.5 text-xs font-medium">
+                    Waktu cash out
+                    <Input type="datetime-local" value={cashoutAt} onChange={(event) => setCashoutAt(event.target.value)} className="h-11 rounded-xl" />
+                  </label>
+                  <p className="text-[10px] text-muted-foreground">Zona waktu usaha: {context.data.businessTimezone}</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <DrawerFooter className="border-t bg-background px-4 py-3">
+            <p className="text-[11px] leading-5 text-muted-foreground">
+              Penyelesaian akan memperbarui status perawatan dan menjalankan cash out Finance sesuai aturan yang sama seperti form sebelumnya.
+            </p>
+          </DrawerFooter>
+        </DrawerContent>
+      </Drawer>
     </div>
   );
-
 }

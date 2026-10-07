@@ -58,7 +58,7 @@ import {
   calculateTariffPeriods,
 } from "@/features/katalog";
 import { isActiveCatalogTariff, formatCatalogMoney } from "@/features/katalog/utils";
-import { listInventoryPackageAvailability, type InventoryPackageAvailability } from "@/features/inventaris";
+import { listInventoryPackageAvailability, listInventoryReadyUnitCovers, type InventoryPackageAvailability } from "@/features/inventaris";
 import { createRenter, listRenters, reconcileRenterCreation } from "@/features/penyewa/service";
 import {
   listFinanceAccounts,
@@ -113,6 +113,15 @@ function statusLabel(status: ReturnType<typeof paymentStatus>) {
   if (status === "paid") return "LUNAS";
   if (status === "partial") return "SEBAGIAN";
   return "BELUM BAYAR";
+}
+
+function packageAvailabilityHint(availability: InventoryPackageAvailability | undefined) {
+  if (!availability || availability.status === "available") return null;
+  const limiting = availability.components.find((component) => component.shortfall_quantity > 0);
+  if (!limiting) return "Belum siap";
+  return limiting.shortfall_quantity === 1
+    ? limiting.nama + " kurang 1"
+    : limiting.nama + " kurang " + limiting.shortfall_quantity;
 }
 
 function formatDurationLabel(seconds: number) {
@@ -242,6 +251,13 @@ export function RentalWalkIn() {
     staleTime: 60_000,
   });
 
+  const unitCovers = useQuery({
+    queryKey: ["penyewaan", "walk-in", "ready-unit-covers", context.data?.usahaId, productIds.join(",")],
+    queryFn: () => listInventoryReadyUnitCovers(context.data!.usahaId, productIds),
+    enabled: Boolean(context.data?.usahaId && productIds.length && !rentalId),
+    staleTime: 15_000,
+  });
+
   const readyStock = useQuery({
     queryKey: ["penyewaan", "walk-in", "ready-stock", context.data?.usahaId, productIds.join(",")],
     queryFn: () => listCatalogReadyStock(context.data!.usahaId, productIds),
@@ -326,6 +342,22 @@ export function RentalWalkIn() {
     () => new Map((productCovers.data ?? []).map((item) => [item.barang_id, item.url])),
     [productCovers.data],
   );
+
+  const unitCoverByProduct = useMemo(() => {
+    const result = new Map<string, string>();
+    for (const item of unitCovers.data ?? []) {
+      if (item.barang_id && item.url && !result.has(item.barang_id)) result.set(item.barang_id, item.url);
+    }
+    return result;
+  }, [unitCovers.data]);
+
+  const unitCoverByVariant = useMemo(() => {
+    const result = new Map<string, string>();
+    for (const item of unitCovers.data ?? []) {
+      if (item.varian_barang_id && item.url && !result.has(item.varian_barang_id)) result.set(item.varian_barang_id, item.url);
+    }
+    return result;
+  }, [unitCovers.data]);
 
   const activeProducts = useMemo(
     () =>
@@ -574,13 +606,8 @@ export function RentalWalkIn() {
     if (status === "paid") {
       setPaymentMode("paid");
       setPaymentAmount(0);
-      return;
     }
-    if (paymentMode === "paid") {
-      setPaymentMode("dp");
-      setPaymentAmount(0);
-    }
-  }, [operationalWorkspace.data, paymentMode, rentalId]);
+  }, [operationalWorkspace.data, rentalId]);
 
   const runActivation = async (targetRentalId: string) => {
     if (!context.data) throw new Error("Konteks Usaha belum tersedia.");
@@ -815,7 +842,11 @@ export function RentalWalkIn() {
     ? operationalWorkspace.data?.lines.reduce((sum, line) => sum + line.assignments.length, 0) ?? 0
     : 0;
 
-  const selectedProductImage = itemDialogId ? coverByProduct.get(itemDialogId) ?? null : null;
+  const selectedProductImage = itemDialogId
+    ? (selectedVariantId
+      ? unitCoverByVariant.get(selectedVariantId) ?? unitCoverByProduct.get(itemDialogId) ?? coverByProduct.get(itemDialogId)
+      : unitCoverByProduct.get(itemDialogId) ?? coverByProduct.get(itemDialogId)) ?? null
+    : null;
 
   const openItemDialog = (product: CatalogProduct) => {
     setSelectedVariantId("");
@@ -1735,7 +1766,7 @@ export function RentalWalkIn() {
                   <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-4">
                     {activeProducts.map((product) => {
                       const ready = readyStock.data?.byProduct[product.barang_id] ?? 0;
-                      const cover = coverByProduct.get(product.barang_id);
+                      const cover = unitCoverByProduct.get(product.barang_id) ?? coverByProduct.get(product.barang_id);
                       const isSelected = catalogDialog.open && catalogDialog.mode === "item" && catalogDialog.id === product.barang_id;
 
                       return (
@@ -1799,8 +1830,13 @@ export function RentalWalkIn() {
                               <p className="truncate text-[11px] font-bold">{pkg.nama}</p>
                               <p className="truncate text-[9px] text-muted-foreground">Paket rental</p>
                               <div className="flex items-center justify-between gap-2">
-                                <span className="text-[9px] font-semibold text-emerald-600">
-                                  {availability?.status === "available" ? "Ready " + (availability.available_package_quantity ?? 0) : "Belum siap"}
+                                <span className={cn(
+                                  "text-[9px] font-semibold",
+                                  availability?.status === "available" ? "text-emerald-600" : "text-amber-700",
+                                )}>
+                                  {availability?.status === "available"
+                                    ? "Ready " + (availability.available_package_quantity ?? 0)
+                                    : packageAvailabilityHint(availability) ?? "Belum siap"}
                                 </span>
                                 <span className="text-[9px] font-semibold text-primary">
                                   {pkg.active_tariff ? formatCatalogMoney(pkg.active_tariff.nominal, pkg.active_tariff.currency_code) : "Tarif —"}
@@ -1972,6 +2008,11 @@ export function RentalWalkIn() {
                       <div className="min-w-0">
                         <p className="truncate text-[13px] font-bold">{selectedPackage?.nama ?? "Paket"}</p>
                         <p className="mt-0.5 text-[9px] text-muted-foreground">Paket rental dengan komponen tervalidasi server</p>
+                        {packageAvailabilityHint(selectedPackageAvailability ?? undefined) ? (
+                          <p className="mt-1 truncate text-[9px] font-semibold text-amber-700">
+                            {packageAvailabilityHint(selectedPackageAvailability ?? undefined)}
+                          </p>
+                        ) : null}
                       </div>
                       <Badge variant="secondary" className="rounded-full text-[9px]">{selectedPackageAvailability?.available_package_quantity ?? 0} siap</Badge>
                     </div>

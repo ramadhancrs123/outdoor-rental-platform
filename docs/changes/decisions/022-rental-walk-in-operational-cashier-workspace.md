@@ -1,7 +1,7 @@
 # ADR 022 — Rental Walk-in sebagai Operational Cashier Workspace
 
-**Status:** ACCEPTED  
-**Date:** 2026-10-05  
+**Status:** ACCEPTED
+**Date:** 2026-10-05
 **Scope:** Panel Admin — Penyewaan Langsung / Walk-in Rental
 
 ## Context

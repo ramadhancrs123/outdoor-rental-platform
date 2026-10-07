@@ -1,7 +1,7 @@
 # ADR-015 — Immutability Rental History & Orphan Unit Reconciliation
 
-**Status:** Accepted  
-**Tanggal:** 2026-10-03  
+**Status:** Accepted
+**Tanggal:** 2026-10-03
 **Scope:** Penyewaan + Inventaris + Pengembalian
 
 ## Context

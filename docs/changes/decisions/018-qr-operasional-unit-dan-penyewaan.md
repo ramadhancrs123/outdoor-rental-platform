@@ -1,7 +1,7 @@
 # ADR-018 — QR Operasional Unit dan Penyewaan
 
-**Status:** Accepted  
-**Tanggal:** 2026-10-03  
+**Status:** Accepted
+**Tanggal:** 2026-10-03
 **Scope:** Inventaris + Penyewaan + Panel Admin
 
 ## Tujuan

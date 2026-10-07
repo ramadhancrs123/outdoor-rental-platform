@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router";
-import { AlertTriangle, Check, CheckCircle2, ClipboardCheck, RotateCcw, ShieldAlert, Wrench } from "lucide-react";
+import { AlertTriangle, Check, CheckCircle2, ChevronDown, ClipboardCheck, RotateCcw, ShieldAlert, Wrench } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -92,6 +92,7 @@ function unitIdentity(unit: OperationalReturnUnitState) {
 export function RentalOperationalWorkspace({ usahaId, penyewaanId, enabled, rentalStatus, onChanged }: RentalOperationalWorkspaceProps) {
   const queryClient = useQueryClient();
   const [condition, setCondition] = useState<Record<string, ConditionChoice | undefined>>({});
+  const [conditionExpanded, setConditionExpanded] = useState<Record<string, boolean>>({});
   const [errorText, setErrorText] = useState("");
   const [unknownOutcome, setUnknownOutcome] = useState(false);
   const commandRef = useRef<{ key: string; requestId: string; unitId: string } | null>(null);
@@ -273,18 +274,50 @@ export function RentalOperationalWorkspace({ usahaId, penyewaanId, enabled, rent
                 </div>
               ) : canProcess ? (
                 <div className="mt-3 space-y-3 rounded-xl border border-dashed p-3">
-                  <div>
-                    <div className="flex items-center gap-2 text-[10px] font-semibold"><ClipboardCheck className="size-3.5 text-primary" />Kondisi saat diterima</div>
-                    <p className="mt-1 text-[9px] leading-4 text-muted-foreground">Pilih fakta kondisi. Sistem tidak menganggap unit normal secara otomatis.</p>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 text-[10px] font-semibold"><ClipboardCheck className="size-3.5 text-primary" />Kondisi saat diterima</div>
+                      <p className="mt-1 text-[9px] leading-4 text-muted-foreground">Pilih fakta kondisi. Sistem tidak menganggap unit normal secara otomatis.</p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 shrink-0 rounded-lg px-2.5 text-[9px]"
+                      onClick={() => setConditionExpanded((current) => ({ ...current, [unit.unit_barang_id]: !current[unit.unit_barang_id] }))}
+                      aria-expanded={Boolean(conditionExpanded[unit.unit_barang_id])}
+                      aria-controls={`condition-options-${unit.unit_barang_id}`}
+                    >
+                      {selected ? (CONDITION_OPTIONS.find((option) => option.value === selected)?.label ?? "Dipilih") : "Pilih kondisi"}
+                      <ChevronDown className={`size-3.5 transition-transform ${conditionExpanded[unit.unit_barang_id] ? "rotate-180" : ""}`} />
+                    </Button>
                   </div>
-                  <RadioGroup value={selected ?? ""} onValueChange={(value) => setCondition((current) => ({ ...current, [unit.unit_barang_id]: value as ConditionChoice }))} className="grid gap-2 sm:grid-cols-2">
-                    {CONDITION_OPTIONS.map((option) => (
-                      <Label key={option.value} htmlFor={`condition-${unit.unit_barang_id}-${option.value}`} className="flex cursor-pointer items-start gap-2 rounded-xl border p-2.5 hover:bg-accent/20">
-                        <RadioGroupItem id={`condition-${unit.unit_barang_id}-${option.value}`} value={option.value} className="mt-0.5" />
-                        <span className="min-w-0"><span className="block text-[10px] font-semibold">{option.label}</span><span className="mt-0.5 block text-[9px] leading-4 text-muted-foreground">{option.description}</span></span>
-                      </Label>
-                    ))}
-                  </RadioGroup>
+
+                  {conditionExpanded[unit.unit_barang_id] ? (
+                    <RadioGroup
+                      id={`condition-options-${unit.unit_barang_id}`}
+                      value={selected ?? ""}
+                      onValueChange={(value) => {
+                        setCondition((current) => ({ ...current, [unit.unit_barang_id]: value as ConditionChoice }));
+                        setConditionExpanded((current) => ({ ...current, [unit.unit_barang_id]: false }));
+                      }}
+                      className="grid gap-2 sm:grid-cols-2"
+                    >
+                      {CONDITION_OPTIONS.map((option) => (
+                        <Label key={option.value} htmlFor={`condition-${unit.unit_barang_id}-${option.value}`} className="flex cursor-pointer items-start gap-2 rounded-xl border p-2.5 hover:bg-accent/20">
+                          <RadioGroupItem id={`condition-${unit.unit_barang_id}-${option.value}`} value={option.value} className="mt-0.5" />
+                          <span className="min-w-0"><span className="block text-[10px] font-semibold">{option.label}</span><span className="mt-0.5 block text-[9px] leading-4 text-muted-foreground">{option.description}</span></span>
+                        </Label>
+                      ))}
+                    </RadioGroup>
+                  ) : (
+                    <div className={`rounded-xl px-3 py-2 text-[9px] ${selected ? "bg-primary/5 text-foreground" : "bg-muted/20 text-muted-foreground"}`}>
+                      {selected
+                        ? "Terpilih: " + (CONDITION_OPTIONS.find((option) => option.value === selected)?.label ?? "Kondisi")
+                        : "Belum dipilih. Buka pilihan kondisi sebelum memproses unit."}
+                    </div>
+                  )}
+
                   <Button
                     className="h-10 w-full rounded-xl text-xs"
                     disabled={!selected || mutation.isPending}
