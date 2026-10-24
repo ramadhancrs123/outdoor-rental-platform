@@ -20,23 +20,23 @@ export function AppProviders({ children }: PropsWithChildren) {
       <ThemeProvider>
         <CurrentUsahaProvider>
           <Refine
-            authProvider={authProvider}
-            notificationProvider={useNotificationProvider()}
-            routerProvider={routerProvider}
-            dataProvider={dataProvider}
-            resources={resources}
-            options={{
-              syncWithLocation: true,
-              warnWhenUnsavedChanges: true,
-              projectId: appConfig.refineProjectId,
-            }}
-          >
-            {children}
-            <Toaster />
-            <RefineKbar />
-            <UnsavedChangesNotifier />
-            <DocumentTitleHandler />
-          </Refine>
+              authProvider={authProvider}
+              notificationProvider={useNotificationProvider()}
+              routerProvider={routerProvider}
+              dataProvider={dataProvider}
+              resources={resources}
+              options={{
+                syncWithLocation: true,
+                warnWhenUnsavedChanges: true,
+                projectId: appConfig.refineProjectId,
+              }}
+            >
+              {children}
+              <Toaster />
+              <RefineKbar />
+              <UnsavedChangesNotifier />
+              <DocumentTitleHandler />
+            </Refine>
         </CurrentUsahaProvider>
       </ThemeProvider>
     </RefineKbarProvider>

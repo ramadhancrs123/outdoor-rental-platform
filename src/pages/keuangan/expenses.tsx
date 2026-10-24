@@ -1,6 +1,7 @@
 import { createClientId } from "@/lib/client-id";
+import { supabase } from "@/app/providers/supabase/client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ArrowRight, CalendarDays, ChevronDown, Plus, ReceiptText, RefreshCw } from "lucide-react";
+import { ArrowLeft, ArrowRight, CalendarDays, ChevronDown, ExternalLink, FileText, Plus, ReceiptText, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { Link, useParams } from "react-router";
 
@@ -20,10 +21,12 @@ import {
   getFinanceExpensePage,
   getFinanceReconciliationFindings,
   getKeuanganContext,
+  useFinanceRealtime,
   useFinancePeriod,
   formatFinanceDate,
   formatFinanceMoney,
   formatFinancePeriodLabel,
+  getFinancePreviousDate,
   semanticFinanceLabel,
   type FinanceCorrectionResult,
 } from "@/features/keuangan";
@@ -51,6 +54,7 @@ function expenseSourceLabel(sourceType: string | null, category: string) {
 }
 
 export function ExpenseList() {
+  useFinanceRealtime();
   const queryClient = useQueryClient();
   const context = useQuery({ queryKey: ["keuangan", "context"], queryFn: getKeuanganContext, staleTime: 60_000 });
   const periodState = useFinancePeriod(context.data?.timezone ?? "Asia/Jakarta");
@@ -58,7 +62,7 @@ export function ExpenseList() {
     queryKey: ["keuangan", "expenses-f3", context.data?.usahaId, periodState.period],
     queryFn: () =>
       getFinanceExpensePage(context.data!.usahaId, periodState.period.startDate, periodState.period.endDateExclusive, 20, 0),
-    enabled: Boolean(context.data?.usahaId),
+    enabled: Boolean(context.data?.usahaId) && periodState.period.valid !== false,
     staleTime: 30_000,
   });
 
@@ -77,6 +81,25 @@ export function ExpenseList() {
           <AlertTitle>Pengeluaran belum dapat dibuka</AlertTitle>
           <AlertDescription>{errorMessage(context.error)}</AlertDescription>
         </Alert>
+      </FinanceShell>
+    );
+  }
+
+  if (periodState.period.valid === false) {
+    return (
+      <FinanceShell variant="home" title="Pengeluaran">
+        <Alert variant="destructive">
+          <AlertTitle>Rentang tanggal tidak valid</AlertTitle>
+          <AlertDescription>{periodState.period.validationMessage ?? "Pastikan tanggal mulai tidak melewati tanggal selesai."}</AlertDescription>
+        </Alert>
+        <div className="grid grid-cols-2 gap-2">
+          <label className="grid gap-1 text-xs font-semibold">Tanggal mulai
+            <input aria-label="Tanggal mulai" type="date" value={periodState.customStart || periodState.period.startDate} onChange={(event) => { periodState.setCustomStart(event.target.value); periodState.setPreset("custom"); }} className="h-10 min-w-0 rounded-lg border bg-card px-2 text-xs" />
+          </label>
+          <label className="grid gap-1 text-xs font-semibold">Tanggal selesai
+            <input aria-label="Tanggal selesai" type="date" value={periodState.customEnd || getFinancePreviousDate(periodState.period.endDateExclusive)} onChange={(event) => { periodState.setCustomEnd(event.target.value); periodState.setPreset("custom"); }} className="h-10 min-w-0 rounded-lg border bg-card px-2 text-xs" />
+          </label>
+        </div>
       </FinanceShell>
     );
   }
@@ -149,8 +172,8 @@ export function ExpenseList() {
             ))}
             {periodState.period.preset === "custom" ? (
               <div className="col-span-2 grid grid-cols-2 gap-2 pt-1">
-                <input aria-label="Tanggal mulai" type="date" value={periodState.period.startDate} onChange={(event) => { periodState.setCustomStart(event.target.value); periodState.setPreset("custom"); }} className="h-9 min-w-0 rounded-lg border bg-card px-2 text-[10px]" />
-                <input aria-label="Tanggal selesai" type="date" value={periodState.period.endDateExclusive.slice(0, 10)} onChange={(event) => { periodState.setCustomEnd(event.target.value); periodState.setPreset("custom"); }} className="h-9 min-w-0 rounded-lg border bg-card px-2 text-[10px]" />
+                <input aria-label="Tanggal mulai" type="date" value={periodState.customStart || periodState.period.startDate} onChange={(event) => { periodState.setCustomStart(event.target.value); periodState.setPreset("custom"); }} className="h-9 min-w-0 rounded-lg border bg-card px-2 text-[10px]" />
+                <input aria-label="Tanggal selesai" type="date" value={periodState.customEnd || getFinancePreviousDate(periodState.period.endDateExclusive)} onChange={(event) => { periodState.setCustomEnd(event.target.value); periodState.setPreset("custom"); }} className="h-9 min-w-0 rounded-lg border bg-card px-2 text-[10px]" />
               </div>
             ) : null}
           </div>
@@ -286,6 +309,7 @@ export function ExpenseList() {
 
 
 export function ExpenseShow() {
+  useFinanceRealtime();
   const { id } = useParams<{ id: string }>();
   const queryClient = useQueryClient();
   const context = useQuery({ queryKey: ["keuangan", "context"], queryFn: getKeuanganContext, staleTime: 60_000 });
@@ -293,6 +317,19 @@ export function ExpenseShow() {
     queryKey: ["keuangan", "expense", context.data?.usahaId, id],
     queryFn: () => getExpense(context.data!.usahaId, id!),
     enabled: Boolean(context.data?.usahaId && id),
+  });
+  const evidenceUrl = useQuery({
+    queryKey: ["keuangan", "expense-evidence-url", context.data?.usahaId, id, query.data?.bukti_storage_path],
+    queryFn: async () => {
+      if (!query.data?.bukti_storage_path) return null;
+      const { data, error } = await supabase.storage
+        .from("rental-private-finance")
+        .createSignedUrl(query.data.bukti_storage_path, 300);
+      if (error) throw error;
+      return data.signedUrl;
+    },
+    enabled: Boolean(context.data?.usahaId && query.data?.bukti_storage_path),
+    staleTime: 4 * 60_000,
   });
 
   const [correctionOpen, setCorrectionOpen] = useState(false);
@@ -364,7 +401,18 @@ export function ExpenseShow() {
           <Info label="Tanggal bisnis" value={formatFinanceDate(item.tanggal_pengeluaran, context.data.timezone)} />
           <Info label="Pemasok" value={item.pemasok_nama ?? "Tidak ditautkan"} />
           <Info label="Nominal" value={formatFinanceMoney(item.amount, item.currency_code)} />
-          <Info label="Bukti" value={item.bukti_storage_path ? "Bukti Tersedia" : "Bukti Tidak Ada"} />
+          <div className="space-y-2 rounded-xl border p-3 sm:col-span-2">
+            <p className="text-xs font-medium text-muted-foreground">Bukti pengeluaran</p>
+            {!item.bukti_storage_path ? <p className="text-sm">Tidak dilampirkan</p> : evidenceUrl.data ? (
+              <Button asChild variant="outline" className="rounded-xl">
+                <a href={evidenceUrl.data} target="_blank" rel="noreferrer"><FileText className="size-4" />Lihat bukti <ExternalLink className="size-3.5" /></a>
+              </Button>
+            ) : evidenceUrl.error ? (
+              <p className="text-sm text-destructive">Bukti tersimpan tetapi tautan aman gagal dibuat. {errorMessage(evidenceUrl.error)}</p>
+            ) : (
+              <p className="text-sm text-muted-foreground" role="status">Menyiapkan tautan bukti privat…</p>
+            )}
+          </div>
           <Info label="Transaksi Keuangan" value={item.nomor_transaksi ?? "-"} />
         </CardContent></Card>
         <Card><CardHeader><CardTitle className="text-base">Source Trace</CardTitle></CardHeader><CardContent className="space-y-3">{sourceTrace}</CardContent></Card>

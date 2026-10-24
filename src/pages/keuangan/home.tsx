@@ -4,8 +4,8 @@ import {
   ArrowRight,
   ArrowUpRight,
   BarChart3,
-  CalendarDays,
   ChevronDown,
+  CircleDollarSign,
   CreditCard,
   FileText,
   Plus,
@@ -20,7 +20,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { FinanceShell } from "@/components/keuangan/finance-ui";
+import { FinancePeriodCompact, FinanceShell } from "@/components/keuangan/finance-ui";
 import {
   createFinanceAccount,
   getFinanceExpenseAnalysis,
@@ -28,16 +28,16 @@ import {
   getFinanceProductRevenue,
   getFinanceReconciliationFindings,
   getFinanceSummary,
+  getFinanceTransactionPage,
   getFinanceUnitRevenue,
   getKeuanganContext,
+  useFinanceRealtime,
   listFinanceAccounts,
-  listTransactions,
 } from "@/features/keuangan";
 import {
   formatFinanceDateTime,
   formatFinanceMoney,
   formatFinancePeriodLabel,
-  formatFinanceTimezone,
   getFinancePeriodSelection,
   semanticFinanceLabel,
 } from "@/features/keuangan";
@@ -71,7 +71,17 @@ function transactionHref(item: FinanceTransaction) {
   return paths.keuangan + "/transaksi/" + item.transaksi_keuangan_id;
 }
 
+function expenseSourceLabel(value: string | null) {
+  if (value === "maintenance") return "Perawatan";
+  if (value === "purchase") return "Pembelian";
+  if (value === "operational") return "Operasional";
+  if (value === "other") return "Lainnya";
+  if (value === "manual") return "Manual";
+  return value ? semanticFinanceLabel(value) : "Tanpa sumber";
+}
+
 export function FinanceHome() {
+  useFinanceRealtime();
   const [preset, setPreset] = useState<FinancePeriodPreset>("month");
   const [customStart, setCustomStart] = useState("");
   const [customEnd, setCustomEnd] = useState("");
@@ -103,40 +113,41 @@ export function FinanceHome() {
   const summary = useQuery({
     queryKey: ["keuangan", "summary", context.data?.usahaId, period],
     queryFn: () => getFinanceSummary(context.data!.usahaId, period.startDate, period.endDateExclusive),
-    enabled: Boolean(context.data?.usahaId),
+    enabled: Boolean(context.data?.usahaId) && period.valid !== false,
     staleTime: 30_000,
   });
 
   const recentTransactions = useQuery({
     queryKey: ["keuangan", "home-transactions", context.data?.usahaId, period],
-    queryFn: () =>
-      listTransactions(context.data!.usahaId, {
-        search: "",
-        page: 1,
-        pageSize: 5,
-      }),
-    enabled: Boolean(context.data?.usahaId),
+    queryFn: () => getFinanceTransactionPage(
+      context.data!.usahaId,
+      period.startDate,
+      period.endDateExclusive,
+      5,
+      0,
+    ),
+    enabled: Boolean(context.data?.usahaId) && period.valid !== false,
     staleTime: 15_000,
   });
 
   const expenseAnalysis = useQuery({
     queryKey: ["keuangan", "expense-analysis", context.data?.usahaId, period],
     queryFn: () => getFinanceExpenseAnalysis(context.data!.usahaId, period.startDate, period.endDateExclusive),
-    enabled: Boolean(context.data?.usahaId),
+    enabled: Boolean(context.data?.usahaId) && period.valid !== false,
     staleTime: 30_000,
   });
 
   const productRevenue = useQuery({
     queryKey: ["keuangan", "product-revenue", context.data?.usahaId, period],
     queryFn: () => getFinanceProductRevenue(context.data!.usahaId, period.startDate, period.endDateExclusive),
-    enabled: Boolean(context.data?.usahaId),
+    enabled: Boolean(context.data?.usahaId) && period.valid !== false,
     staleTime: 30_000,
   });
 
   const unitRevenue = useQuery({
     queryKey: ["keuangan", "unit-revenue", context.data?.usahaId, period],
     queryFn: () => getFinanceUnitRevenue(context.data!.usahaId, period.startDate, period.endDateExclusive),
-    enabled: Boolean(context.data?.usahaId),
+    enabled: Boolean(context.data?.usahaId) && period.valid !== false,
     staleTime: 30_000,
   });
 
@@ -177,6 +188,24 @@ export function FinanceHome() {
       await queryClient.invalidateQueries({ queryKey: ["keuangan", "accounts"] });
     },
   });
+
+  if (context.data && period.valid === false) {
+    return (
+      <FinanceShell variant="home" title="Keuangan">
+        <Alert variant="destructive">
+          <AlertTitle>Rentang tanggal tidak valid</AlertTitle>
+          <AlertDescription>{period.validationMessage ?? "Pastikan tanggal mulai tidak melewati tanggal selesai."}</AlertDescription>
+        </Alert>
+        <FinancePeriodCompact
+          timezone={context.data.timezone}
+          selection={period}
+          onPreset={setPreset}
+          onCustomStart={setCustomStart}
+          onCustomEnd={setCustomEnd}
+        />
+      </FinanceShell>
+    );
+  }
 
   if (context.isPending || summary.isPending) {
     return (
@@ -219,7 +248,7 @@ export function FinanceHome() {
   const findingCount =
     (financeHealth ? Object.values(financeHealth.critical).reduce((sum, value) => sum + value, 0) : 0) +
     (financeHealth ? Object.values(financeHealth.attention).reduce((sum, value) => sum + value, 0) : 0);
-  const recentItems = recentTransactions.data?.transactions ?? [];
+  const recentItems = recentTransactions.data?.items ?? [];
 
   return (
     <FinanceShell variant="home" title="Keuangan">
@@ -246,62 +275,19 @@ export function FinanceHome() {
         </div>
       </section>
 
-      <section className="grid gap-2 min-[380px]:grid-cols-2">
-        <details className="group rounded-2xl border border-border/60 bg-card shadow-[0_3px_12px_rgba(28,67,56,.04)]">
-          <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3.5 py-3.5 marker:hidden">
-            <span className="flex min-w-0 items-center gap-2">
-              <CalendarDays className="size-4 text-primary" />
-              <span className="min-w-0">
-                <span className="block text-[9px] text-muted-foreground">Periode</span>
-                <span className="mt-0.5 block truncate text-[11px] font-semibold">{monthLabel(period.startDate, context.data.timezone)}</span>
-              </span>
-            </span>
-            <ChevronDown className="size-4 text-muted-foreground transition-transform group-open:rotate-180" />
-          </summary>
-          <div className="grid grid-cols-2 gap-1.5 border-t border-border/60 p-2">
-            {([
-              ["today", "Hari ini"],
-              ["week", "Minggu ini"],
-              ["month", "Bulan ini"],
-              ["custom", "Rentang"],
-            ] as const).map(([value, label]) => (
-              <button
-                key={value}
-                type="button"
-                onClick={() => setPreset(value)}
-                className={
-                  "min-h-9 rounded-lg px-2 text-[9px] font-semibold " +
-                  (preset === value ? "bg-primary text-primary-foreground" : "bg-muted/35 text-muted-foreground")
-                }
-              >
-                {label}
-              </button>
-            ))}
-            {preset === "custom" ? (
-              <div className="col-span-2 grid grid-cols-2 gap-2 pt-1">
-                <Input aria-label="Tanggal mulai" type="date" value={customStart} onChange={(event) => setCustomStart(event.target.value)} className="h-9 rounded-lg text-[10px]" />
-                <Input aria-label="Tanggal selesai" type="date" value={customEnd} onChange={(event) => setCustomEnd(event.target.value)} className="h-9 rounded-lg text-[10px]" />
-              </div>
-            ) : null}
-          </div>
-        </details>
-
-        <details className="group rounded-2xl border border-border/60 bg-card shadow-[0_3px_12px_rgba(28,67,56,.04)]">
-          <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3.5 py-3.5 marker:hidden">
-            <span className="flex min-w-0 items-center gap-2">
-              <WalletCards className="size-4 text-primary" />
-              <span className="min-w-0">
-                <span className="block text-[9px] text-muted-foreground">Usaha</span>
-                <span className="mt-0.5 block truncate text-[11px] font-semibold">{context.data.usahaNama}</span>
-              </span>
-            </span>
-            <ChevronDown className="size-4 text-muted-foreground transition-transform group-open:rotate-180" />
-          </summary>
-          <div className="border-t border-border/60 px-3.5 py-3 text-[10px] text-muted-foreground">
-            Data mengikuti usaha aktif dan timezone {formatFinanceTimezone(context.data.timezone)}.
-          </div>
-        </details>
-      </section>
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Periode</p>
+          <p className="truncate text-[12px] font-semibold">{monthLabel(period.startDate, context.data.timezone)}</p>
+        </div>
+        <FinancePeriodCompact
+          timezone={context.data.timezone}
+          selection={period}
+          onPreset={setPreset}
+          onCustomStart={setCustomStart}
+          onCustomEnd={setCustomEnd}
+        />
+      </div>
 
       <section className="grid grid-cols-3 gap-2">
         <Card className="border-emerald-100 bg-emerald-50/55 shadow-none dark:border-emerald-900/35 dark:bg-emerald-950/10">
@@ -364,6 +350,30 @@ export function FinanceHome() {
           </Link>
         </div>
       </section>
+      <section className="rounded-[22px] border border-border/60 bg-card px-2.5 py-2 shadow-[0_4px_16px_rgba(30,68,57,.04)]">
+        <div className="grid grid-cols-5 gap-1.5">
+          <Link to={paths.keuangan + "/pembayaran"} className="flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl px-1.5 py-1.5 text-center hover:bg-muted/30">
+            <CreditCard className="size-4 text-primary" />
+            <span className="text-[8px] font-semibold leading-3">Pembayaran</span>
+          </Link>
+          <Link to={paths.keuangan + "/pengeluaran"} className="flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl px-1.5 py-1.5 text-center hover:bg-muted/30">
+            <ReceiptText className="size-4 text-primary" />
+            <span className="text-[8px] font-semibold leading-3">Pengeluaran</span>
+          </Link>
+          <Link to={paths.keuangan + "/transaksi"} className="flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl px-1.5 py-1.5 text-center hover:bg-muted/30">
+            <FileText className="size-4 text-primary" />
+            <span className="text-[8px] font-semibold leading-3">Log Transaksi</span>
+          </Link>
+          <Link to={paths.keuangan + "/akun"} className="flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl px-1.5 py-1.5 text-center hover:bg-muted/30">
+            <WalletCards className="size-4 text-primary" />
+            <span className="text-[8px] font-semibold leading-3">Akun Uang</span>
+          </Link>
+          <Link to={paths.investor} className="flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl px-1.5 py-1.5 text-center hover:bg-muted/30">
+            <CircleDollarSign className="size-4 text-primary" />
+            <span className="text-[8px] font-semibold leading-3">Portal Investor</span>
+          </Link>
+        </div>
+      </section>
 
       <section className="rounded-[22px] border border-border/60 bg-card p-3.5 shadow-[0_4px_16px_rgba(30,68,57,.04)]">
         <div className="flex items-start justify-between gap-3">
@@ -394,7 +404,7 @@ export function FinanceHome() {
             <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/25 dark:text-emerald-300"><BarChart3 className="size-4.5" /></span>
             <div className="min-w-0">
               <h2 className="text-[15px] font-bold">Transaksi Terbaru</h2>
-              <p className="mt-0.5 text-[10px] text-muted-foreground">Lima transaksi keuangan terbaru.</p>
+              <p className="mt-0.5 text-[10px] text-muted-foreground">Lima transaksi pada rentang tanggal yang dipilih.</p>
             </div>
           </div>
           <Link to={paths.keuangan + "/transaksi"} className="inline-flex shrink-0 items-center gap-0.5 pt-1 text-[10px] font-semibold text-primary">Lihat semua <ArrowRight className="size-3.5" /></Link>
@@ -458,6 +468,7 @@ export function FinanceHome() {
           <div className="space-y-2 border-t border-border/60 px-3.5 py-3.5">
             {accountFormOpen || !accounts.data?.length ? (
               <div className="grid gap-2">
+                <p className="text-[10px] leading-4 text-muted-foreground">Akun baru dibuat sebagai <strong>Akun Usaha / operasional</strong>. Pembuatan akun uang tidak membuat identitas Investor baru. Untuk menautkan akun kosong sebagai saldo Investor atau Pengelola, gunakan Konfigurasi Investor setelah akun dibuat.</p>
                 <div className="grid gap-2 min-[430px]:grid-cols-2">
                   <Input value={accountCode} onChange={(event) => setAccountCode(event.target.value.toUpperCase())} placeholder="Kode akun" className="h-10 rounded-xl text-xs" />
                   <Input value={accountName} onChange={(event) => setAccountName(event.target.value)} placeholder="Nama akun" className="h-10 rounded-xl text-xs" />
@@ -526,6 +537,10 @@ export function FinanceHome() {
             <ChevronDown className="size-4 text-muted-foreground transition-transform group-open:rotate-180" />
           </summary>
           <div className="space-y-2 border-t border-border/60 px-3.5 py-3.5">
+            <Link to={paths.investorConfig} className="flex items-center justify-between gap-3 rounded-xl border border-primary/20 bg-primary/[0.035] px-3 py-3 hover:bg-primary/[0.06]">
+              <span className="min-w-0"><span className="block text-[10px] font-bold">Konfigurasi Investor</span><span className="mt-0.5 block text-[9px] leading-4 text-muted-foreground">Master konfigurasi portal Investor: persentase, cadangan, rentang periode, pengelola, dan fungsi akun.</span></span>
+              <ArrowRight className="size-4 shrink-0 text-primary" />
+            </Link>
             {financeHealth ? (
               <div className="rounded-xl border border-border/60 bg-muted/15 px-3 py-2.5">
                 <p className="text-[10px] font-semibold">Status Keuangan</p>
@@ -571,19 +586,44 @@ export function FinanceHome() {
                 </div>
               ) : null}
 
-              {expenseAnalysis.data ? (
-                <div className="rounded-xl border border-border/60 px-3 py-3">
-                  <p className="text-[10px] font-semibold">Pengeluaran per Sumber</p>
-                  <div className="mt-2 space-y-1.5">
-                    {expenseAnalysis.data.by_source.slice(0, 4).map((item) => (
-                      <div key={item.source_type ?? "tanpa-sumber"} className="flex items-center justify-between gap-3 text-[9px]">
-                        <span className="text-muted-foreground">{item.source_type ? semanticFinanceLabel(item.source_type) : "Tanpa sumber"}</span>
-                        <span className="font-semibold">{formatFinanceMoney(item.amount)} · {item.count}</span>
-                      </div>
-                    ))}
+              {expenseAnalysis.isPending ? (
+                <div className="rounded-xl border border-dashed px-3 py-3 text-[10px] text-muted-foreground" role="status">Memuat analisis pengeluaran…</div>
+              ) : expenseAnalysis.error ? (
+                <Alert variant="destructive">
+                  <AlertTitle>Analisis pengeluaran belum tersedia</AlertTitle>
+                  <AlertDescription>{errorMessage(expenseAnalysis.error)}</AlertDescription>
+                </Alert>
+              ) : expenseAnalysis.data ? (
+                <div className="space-y-2">
+                  <div className="rounded-xl border border-border/60 px-3 py-3">
+                    <p className="text-[10px] font-semibold">Pengeluaran per Sumber</p>
+                    <p className="mt-0.5 text-[9px] text-muted-foreground">Termasuk biaya Perawatan dan pengeluaran Manual yang sudah tercatat sebagai transaksi Finance.</p>
+                    <div className="mt-2 space-y-1.5">
+                      {expenseAnalysis.data.by_source.map((item) => (
+                        <div key={item.source_type ?? "tanpa-sumber"} className="flex items-center justify-between gap-3 text-[9px]">
+                          <span className="text-muted-foreground">{expenseSourceLabel(item.source_type)}</span>
+                          <span className="font-semibold tabular-nums">{formatFinanceMoney(item.amount)} · {item.count} transaksi</span>
+                        </div>
+                      ))}
+                      {expenseAnalysis.data.by_source.length === 0 ? <p className="text-[9px] text-muted-foreground">Belum ada pengeluaran tercatat pada rentang ini.</p> : null}
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-border/60 px-3 py-3">
+                    <p className="text-[10px] font-semibold">Pengeluaran per Kategori</p>
+                    <div className="mt-2 space-y-1.5">
+                      {expenseAnalysis.data.by_category.slice(0, 5).map((item) => (
+                        <div key={item.kategori_biaya} className="flex items-center justify-between gap-3 text-[9px]">
+                          <span className="min-w-0 truncate text-muted-foreground">{item.kategori_biaya}</span>
+                          <span className="shrink-0 font-semibold tabular-nums">{formatFinanceMoney(item.amount)} · {item.count}</span>
+                        </div>
+                      ))}
+                      {expenseAnalysis.data.by_category.length === 0 ? <p className="text-[9px] text-muted-foreground">Belum ada pengeluaran tercatat pada rentang ini.</p> : null}
+                    </div>
                   </div>
                 </div>
-              ) : null}
+              ) : (
+                <div className="rounded-xl border border-dashed px-3 py-3 text-[10px] text-muted-foreground">Analisis pengeluaran belum memiliki data untuk rentang ini.</div>
+              )}
 
               <Link to={paths.laporan} className="inline-flex items-center gap-1 text-[10px] font-semibold text-primary">Lihat Laporan Keuangan <ArrowRight className="size-3.5" /></Link>
             </div>

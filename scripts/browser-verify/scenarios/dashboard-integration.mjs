@@ -21,6 +21,11 @@ export default async function dashboardIntegrationScenario({ page, capture }) {
 
   await page.getByText("Operational control center", { exact: true }).waitFor({ state: "visible", timeout: 10000 });
 
+  await page.getByRole("button", { name: "Atur periode keuangan", exact: true }).click();
+  await page.getByRole("button", { name: "Rentang", exact: true }).click();
+  await page.getByLabel("Tanggal mulai").fill("2026-09-01");
+  await page.getByLabel("Tanggal selesai").fill("2026-09-15");
+
   const viewportWidth = await page.evaluate(() => window.innerWidth);
   const overflow = await page.evaluate(() => ({
     width: document.documentElement.scrollWidth,
@@ -38,6 +43,8 @@ export default async function dashboardIntegrationScenario({ page, capture }) {
     "dashboard-loaded",
     "redesigned-dashboard-sections-visible",
     "responsive-no-horizontal-overflow",
+    "compact-period-control",
+    "custom-period-range",
   ];
 
   const inventoryDisclosure = page.locator("summary").filter({ hasText: "Kondisi Inventaris" }).first();

@@ -11,6 +11,8 @@ export type FinancePeriodSelection = {
   preset: FinancePeriodPreset;
   startDate: string;
   endDateExclusive: string;
+  valid?: boolean;
+  validationMessage?: string | null;
 };
 
 export type FinanceListFilters = {
@@ -117,6 +119,9 @@ export type FinanceAccount = {
   jenis_akun: "kas" | "bank" | "e_wallet" | "lainnya";
   mata_uang: string;
   status: "active" | "inactive";
+  fungsi_akun?: "operasional" | "investor" | "pengelola" | "unknown";
+  investor_id?: string | null;
+  pengelola_akun_admin_id?: string | null;
   catatan: string | null;
   saldo_awal: number;
   uang_masuk: number;
@@ -146,7 +151,8 @@ export type FinanceAccountMovement = {
   sumber_type: string;
   sumber_id: string;
   status: string;
-  dicatat_by_admin_id: string;
+  dicatat_by_admin_id: string | null;
+  dicatat_by_investor_id: string | null;
   request_id: string;
   catatan: string | null;
   transaksi_nomor: string | null;
@@ -172,6 +178,13 @@ export type RecordPaymentInput = {
   amount: number;
   dibayarAt?: string | null;
   referenceText?: string | null;
+  catatan?: string | null;
+};
+
+export type FinanceOpeningBalanceInput = {
+  akunKeuanganId: string;
+  nominal: number;
+  tanggalSaldoAwal: string;
   catatan?: string | null;
 };
 

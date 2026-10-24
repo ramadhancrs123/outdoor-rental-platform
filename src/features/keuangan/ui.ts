@@ -12,5 +12,5 @@ export function useFinancePeriod(timezone: string) {
     [customEnd, customStart, preset, timezone],
   );
 
-  return { period, setPreset, setCustomStart, setCustomEnd };
+  return { period, customStart, customEnd, setPreset, setCustomStart, setCustomEnd };
 }

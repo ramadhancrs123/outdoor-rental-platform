@@ -7,12 +7,12 @@ import { InventoryShow } from "@/pages/inventaris/show";
 import { mockViewport } from "./viewport";
 
 const serviceMock = vi.hoisted(() => ({
-  getInventarisContext: vi.fn(), listInventoryLocations: vi.fn(), listInventoryProducts: vi.fn(), listInventoryVariants: vi.fn(), listInventoryUnits: vi.fn(), getInventoryUnit: vi.fn(), getInventoryOperationalContext: vi.fn(),
+  getInventarisContext: vi.fn(), listInventoryLocations: vi.fn(), listInventoryProducts: vi.fn(), listInventoryProductOverview: vi.fn(), listInventoryPackageAvailability: vi.fn(), listInventoryVariants: vi.fn(), listInventoryUnits: vi.fn(), getInventoryUnit: vi.fn(), getInventoryOperationalContext: vi.fn(),
   getInventoryStateCapabilities: vi.fn(() => ({ read: true, mutation: true, commands: ["register_inventory_unit", "move_inventory_unit", "mark_inventory_unit_ready", "command_mark_inventory_unit_inspection_pending", "command_reconcile_inventory_unit_mutation"], queries: ["listInventoryUnits", "getInventoryUnit", "lookupInventoryUnitByQr", "findInventoryUnitCandidates", "getInventoryOperationalContext"], reason: "Inventaris trusted command aktif." })),
 }));
 
 vi.mock("@/features/inventaris", () => ({
-  getInventarisContext: serviceMock.getInventarisContext, listInventoryLocations: serviceMock.listInventoryLocations, listInventoryProducts: serviceMock.listInventoryProducts, listInventoryVariants: serviceMock.listInventoryVariants, listInventoryUnits: serviceMock.listInventoryUnits, getInventoryUnit: serviceMock.getInventoryUnit, getInventoryOperationalContext: serviceMock.getInventoryOperationalContext, getInventoryStateCapabilities: serviceMock.getInventoryStateCapabilities,
+  getInventarisContext: serviceMock.getInventarisContext, listInventoryLocations: serviceMock.listInventoryLocations, listInventoryProducts: serviceMock.listInventoryProducts, listInventoryProductOverview: serviceMock.listInventoryProductOverview, listInventoryPackageAvailability: serviceMock.listInventoryPackageAvailability, listInventoryVariants: serviceMock.listInventoryVariants, listInventoryUnits: serviceMock.listInventoryUnits, getInventoryUnit: serviceMock.getInventoryUnit, getInventoryOperationalContext: serviceMock.getInventoryOperationalContext, getInventoryStateCapabilities: serviceMock.getInventoryStateCapabilities,
   inventoryStatusLabel: (status: string) => status, inventoryStatusVariant: () => "secondary",
   formatInventoryDate: (value: string | null | undefined) => value ?? "-", formatInventoryDateTime: (value: string | null | undefined) => value ?? "-", inventoryEventLabel: (value: string) => value,
   DEFAULT_INVENTORY_FILTERS: {
@@ -31,13 +31,17 @@ vi.mock("@/features/inventaris", () => ({
 const context = { akunAdminId: "admin-1", usahaId: "usaha-a", usahaNama: "Usaha A" };
 const location = { lokasi_id: "loc-1", usaha_id: "usaha-a", nama: "Gudang Utama", tipe: "warehouse", alamat: null, keterangan: null, status: "active", created_at: "2026-01-01", updated_at: "2026-01-01" };
 const unit = { unit_barang_id: "unit-1", usaha_id: "usaha-a", barang_id: "barang-1", varian_barang_id: null, kode_unit: "TD4P-001", serial_number: "SN-001", lokasi_id: "loc-1", tanggal_diperoleh: "2026-01-10", sumber_pembelian_detail_id: null, status: "ready", kondisi_ringkas: "Baik", catatan_internal: null, created_at: "2026-01-10", updated_at: "2026-01-11", barang: { barang_id: "barang-1", nama: "Tenda Dome 4P", slug: "tenda-dome-4p", status: "active" }, varian: null, lokasi: { lokasi_id: "loc-1", nama: "Gudang Utama", tipe: "warehouse", status: "active" } };
-function renderWithQuery(element: React.ReactNode) { const client = new QueryClient({ defaultOptions: { queries: { retry: false } } }); return render(<QueryClientProvider client={client}><MemoryRouter initialEntries={["/inventaris"]}>{element}</MemoryRouter></QueryClientProvider>); }
+function renderWithQuery(element: React.ReactNode) { const client = new QueryClient({ defaultOptions: { queries: { retry: false } } }); return render(<QueryClientProvider client={client}><MemoryRouter initialEntries={["/inventaris?mode=units"]}>{element}</MemoryRouter></QueryClientProvider>); }
 
 describe("Inventaris read-side", () => {
   beforeEach(() => {
     serviceMock.getInventarisContext.mockReset();
     serviceMock.listInventoryLocations.mockReset();
     serviceMock.listInventoryProducts.mockReset();
+    serviceMock.listInventoryProductOverview.mockReset();
+    serviceMock.listInventoryProductOverview.mockResolvedValue([]);
+    serviceMock.listInventoryPackageAvailability.mockReset();
+    serviceMock.listInventoryPackageAvailability.mockResolvedValue([]);
     serviceMock.listInventoryVariants.mockReset();
     serviceMock.listInventoryUnits.mockReset();
     serviceMock.getInventoryUnit.mockReset();
@@ -86,7 +90,7 @@ describe("Inventaris read-side", () => {
     expect(desktopBranch).toBeInTheDocument(); expect(desktopBranch?.querySelector("table")).toBeInTheDocument();
   });
 
-  test("mobile inventory vocabulary and compact actions follow the approved reference", async () => {
+  test("mobile unit list exposes current actions and accessible filters", async () => {
     mockViewport(375, 812);
     serviceMock.getInventarisContext.mockResolvedValue({ ...context, usahaNama: "Akasha Store" });
     serviceMock.listInventoryLocations.mockResolvedValue([]);
@@ -94,13 +98,12 @@ describe("Inventaris read-side", () => {
 
     renderWithQuery(<InventoryList />);
 
-    expect(await screen.findByRole("heading", { level: 1, name: "Unit Barang" })).toBeInTheDocument();
-    expect(screen.getByText("Kondisi dan informasi fisik setiap unit dalam konteks Usaha yang dipilih.")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: "Semua Unit" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Pencarian dan filter inventaris" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Daftarkan Unit/i })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Kelola Lokasi/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Pindai QR/i })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /^Unit$/ })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tab", { name: /^Paket$/ })).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByRole("button", { name: "Ekspor" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Filter status" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Filter lokasi" })).toBeInTheDocument();
     expect(screen.getByPlaceholderText("Cari kode unit, serial, barang, varian, ...")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Semua unit$/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Sewakan$/ })).toBeInTheDocument();

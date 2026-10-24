@@ -1,6 +1,8 @@
 export const paths = {
   home: "/",
   dashboard: "/dashboard",
+  investor: "/investor",
+  investorConfig: "/keuangan/investor",
   permintaan: "/permintaan",
   reservasi: "/reservasi",
   reservasiCreate: "/reservasi/create",

@@ -25,6 +25,7 @@ import type {
   FinanceSummaryCounts,
   FinanceTenantContext,
   RecordExpenseInput,
+  FinanceOpeningBalanceInput,
   RecordPaymentInput,
 } from "./types";
 import { localDateTimeToUtcIso, sanitizeFinanceSearch } from "./utils";
@@ -315,13 +316,32 @@ export async function getFinanceAccountSummary(usahaId: string): Promise<Finance
   const { data, error } = await supabase.rpc("finance_account_summary", { p_usaha_id: usahaId });
   if (error) throw error;
   const payload = (data ?? {}) as Partial<FinanceAccountSummary>;
+  const accounts = (payload.accounts ?? []) as FinanceAccount[];
+
+  // Role metadata is part of the live account model. Merge it explicitly so
+  // a legacy RPC response can never make stakeholder balances look operational.
+  const { data: roleRows, error: roleError } = await supabase
+    .from("akun_keuangan")
+    .select("akun_keuangan_id,fungsi_akun,investor_id,pengelola_akun_admin_id")
+    .eq("usaha_id", usahaId);
+  if (roleError) throw roleError;
+  const roleByAccount = new Map((roleRows ?? []).map((row) => [row.akun_keuangan_id, row]));
+  const enriched = accounts.map((account) => ({
+    ...account,
+    fungsi_akun: roleByAccount.get(account.akun_keuangan_id)?.fungsi_akun ?? "unknown",
+    investor_id: roleByAccount.get(account.akun_keuangan_id)?.investor_id ?? null,
+    pengelola_akun_admin_id: roleByAccount.get(account.akun_keuangan_id)?.pengelola_akun_admin_id ?? null,
+  }));
+  const operational = enriched.filter((account) => account.fungsi_akun === "operasional");
+  const sum = (pick: (account: FinanceAccount) => number) => operational.reduce((total, account) => total + pick(account), 0);
+
   return {
-    accounts: (payload.accounts ?? []) as FinanceAccount[],
+    accounts: enriched,
     totals: {
-      saldo: Number(payload.totals?.saldo ?? 0),
-      saldo_awal: Number(payload.totals?.saldo_awal ?? 0),
-      uang_masuk: Number(payload.totals?.uang_masuk ?? 0),
-      uang_keluar: Number(payload.totals?.uang_keluar ?? 0),
+      saldo: sum((account) => Number(account.saldo) || 0),
+      saldo_awal: sum((account) => Number(account.saldo_awal) || 0),
+      uang_masuk: sum((account) => Number(account.uang_masuk) || 0),
+      uang_keluar: sum((account) => Number(account.uang_keluar) || 0),
     },
   };
 }
@@ -329,7 +349,7 @@ export async function getFinanceAccountSummary(usahaId: string): Promise<Finance
 export async function listFinanceAccounts(usahaId: string): Promise<FinanceAccount[]> {
   const summary = await getFinanceAccountSummary(usahaId);
   return summary.accounts
-    .filter((account) => account.status === "active" && account.mata_uang === "IDR")
+    .filter((account) => account.status === "active" && account.fungsi_akun === "operasional" && account.mata_uang === "IDR")
     .sort((a, b) => a.nama_akun.localeCompare(b.nama_akun, "id"));
 }
 
@@ -339,11 +359,13 @@ export async function getFinanceAccountDetail(
 ): Promise<{ account: FinanceAccount; movements: FinanceAccountMovement[] }> {
   const summary = await getFinanceAccountSummary(usahaId);
   const account = summary.accounts.find((item) => item.akun_keuangan_id === akunKeuanganId);
-  if (!account) throw new Error("Akun keuangan tidak ditemukan dalam Usaha aktif.");
+  if (!account || account.fungsi_akun !== "operasional") {
+    throw new Error("Akun operasional tidak ditemukan dalam Usaha aktif.");
+  }
 
   const { data: movementRows, error: movementError } = await supabase
     .from("pergerakan_akun_keuangan")
-    .select("pergerakan_akun_keuangan_id,akun_keuangan_id,transaksi_keuangan_id,arah,amount,mata_uang,terjadi_at,sumber_type,sumber_id,status,dicatat_by_admin_id,request_id,catatan")
+    .select("pergerakan_akun_keuangan_id,akun_keuangan_id,transaksi_keuangan_id,arah,amount,mata_uang,terjadi_at,sumber_type,sumber_id,status,dicatat_by_admin_id,dicatat_by_investor_id,request_id,catatan")
     .eq("usaha_id", usahaId)
     .eq("akun_keuangan_id", akunKeuanganId)
     .order("terjadi_at", { ascending: false })
@@ -431,6 +453,25 @@ export async function createFinanceAccount(
     p_request_id: createClientId(),
   });
   return assertFinanceRpcResult(data as Record<string, unknown> | null, error, "Pembuatan akun keuangan");
+}
+
+export async function setFinanceOpeningBalance(
+  usahaId: string,
+  input: FinanceOpeningBalanceInput,
+  options: FinanceCommandOptions = {},
+): Promise<Record<string, unknown>> {
+  if (!Number.isFinite(input.nominal) || input.nominal < 0) throw new Error("Nominal saldo awal tidak valid.");
+  if (!input.tanggalSaldoAwal) throw new Error("Tanggal saldo awal wajib diisi.");
+  const { data, error } = await supabase.rpc("command_set_saldo_awal_akun", {
+    p_usaha_id: usahaId,
+    p_akun_keuangan_id: input.akunKeuanganId,
+    p_nominal: input.nominal,
+    p_tanggal_saldo_awal: input.tanggalSaldoAwal,
+    p_catatan: input.catatan?.trim() || null,
+    p_idempotency_key: options.idempotencyKey ?? `set-opening-balance-${createClientId()}`,
+    p_request_id: options.requestId ?? createClientId(),
+  });
+  return assertFinanceRpcResult(data as Record<string, unknown> | null, error, "Penempatan saldo awal");
 }
 
 export async function recordPayment(

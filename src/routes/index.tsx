@@ -1,12 +1,17 @@
 import { lazy, Suspense, type ComponentType } from "react";
-import { Authenticated } from "@refinedev/core";
+import { Authenticated, useGetIdentity } from "@refinedev/core";
 import { NavigateToResource } from "@refinedev/react-router";
 import { Navigate, Outlet, Route, Routes } from "react-router";
 import { ErrorComponent } from "@/components/refine-ui/layout/error-component";
 import { Layout } from "@/components/refine-ui/layout/layout";
+import { CurrentUsahaProvider } from "@/app/current-usaha";
+import { useCurrentUsaha } from "@/app/current-usaha-context";
+import { InvestorSurfaceLayout } from "@/pages/investor/layout";
 import { Dashboard } from "@/pages/dashboard";
 import { paths } from "./paths";
 
+// Module exports have component-specific props; this helper preserves them for React.lazy.
+ // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function lazyNamed<T extends Record<string, ComponentType<any>>>(
   loader: () => Promise<T>,
   exportName: keyof T,
@@ -15,6 +20,8 @@ function lazyNamed<T extends Record<string, ComponentType<any>>>(
 }
 
 const Login = lazyNamed(() => import("@/pages/login"), "Login");
+const InvestorDashboard = lazyNamed(() => import("@/pages/investor"), "InvestorDashboard");
+const InvestorConfigPage = lazyNamed(() => import("@/pages/investor/config"), "InvestorConfigPage");
 
 const InventoryList = lazyNamed(() => import("@/pages/inventaris/list"), "InventoryList");
 const InventoryCreate = lazyNamed(() => import("@/pages/inventaris/create"), "InventoryCreate");
@@ -96,14 +103,106 @@ function RouteLoading() {
   );
 }
 
-function AuthenticatedLayout() {
+type RouteIdentity = {
+  kind?: "admin" | "investor";
+  role?: string | null;
+};
+
+function AuthenticatedAdminSurface() {
+  const { data: identity, isLoading } = useGetIdentity<RouteIdentity>();
+
+  if (isLoading) return <RouteLoading />;
+  if (!identity) return <Navigate to="/login" replace />;
+  if (identity.kind === "investor") return <Navigate to={paths.investor} replace />;
+
   return (
-    <Authenticated key="admin-auth" fallback={<Navigate to="/login" replace />}>
+    <CurrentUsahaProvider>
       <Layout>
         <Suspense fallback={<RouteLoading />}>
           <Outlet />
         </Suspense>
       </Layout>
+    </CurrentUsahaProvider>
+  );
+}
+
+function AuthenticatedAdminLayout() {
+  return (
+    <Authenticated key="admin-auth" fallback={<Navigate to="/login" replace />}>
+      <AuthenticatedAdminSurface />
+    </Authenticated>
+  );
+}
+
+function AuthenticatedAdminInvestorConfigSurface() {
+  const { data: identity, isLoading } = useGetIdentity<RouteIdentity>();
+
+  if (isLoading) return <RouteLoading />;
+  if (!identity) return <Navigate to="/login" replace />;
+  if (identity.kind === "investor") return <Navigate to={paths.investor} replace />;
+
+  return (
+    <CurrentUsahaProvider>
+      <Suspense fallback={<RouteLoading />}>
+        <InvestorConfigPage />
+      </Suspense>
+    </CurrentUsahaProvider>
+  );
+}
+
+function AuthenticatedAdminInvestorConfigLayout() {
+  return (
+    <Authenticated key="admin-investor-config-auth" fallback={<Navigate to="/login" replace />}>
+      <AuthenticatedAdminInvestorConfigSurface />
+    </Authenticated>
+  );
+}
+
+
+function AuthenticatedInvestorSurface() {
+  const { data: identity, isLoading } = useGetIdentity<RouteIdentity>();
+
+  if (isLoading) return <RouteLoading />;
+  if (!identity) return <Navigate to="/login" replace />;
+
+  if (identity.kind === "admin") {
+    return (
+      <CurrentUsahaProvider>
+        <AdminInvestorDashboardSurface />
+      </CurrentUsahaProvider>
+    );
+  }
+
+  return (
+    <InvestorSurfaceLayout>
+      <Suspense fallback={<RouteLoading />}>
+        <Outlet />
+      </Suspense>
+    </InvestorSurfaceLayout>
+  );
+}
+
+function AdminInvestorDashboardSurface() {
+  const { status, current, error } = useCurrentUsaha();
+
+  if (status === "loading") return <RouteLoading />;
+  if (status === "error" || !current) {
+    return <div className="p-6 text-sm text-muted-foreground">{error?.message ?? "Usaha aktif belum tersedia."}</div>;
+  }
+
+  return (
+    <InvestorSurfaceLayout tenant={current}>
+      <Suspense fallback={<RouteLoading />}>
+        <InvestorDashboard usahaId={current.usahaId} />
+      </Suspense>
+    </InvestorSurfaceLayout>
+  );
+}
+
+function AuthenticatedInvestorLayout() {
+  return (
+    <Authenticated key="investor-dashboard-auth" fallback={<Navigate to="/login" replace />}>
+      <AuthenticatedInvestorSurface />
     </Authenticated>
   );
 }
@@ -119,102 +218,111 @@ export function AppRoutes() {
           </Suspense>
         }
       />
-      <Route element={<AuthenticatedLayout />}>
-          <Route index element={<NavigateToResource resource="dashboard" />} />
-          <Route path={paths.dashboard} element={<Dashboard />} />
 
-          <Route path={paths.pemberitahuan} element={<NotificationList />} />
-          <Route path={paths.laporan} element={<Reports />} />
-          <Route path={paths.qrUnit + "/:token"} element={<QrResolve />} />
-          <Route path={paths.qrPenyewaan + "/:token"} element={<QrResolve />} />
+      <Route element={<AuthenticatedInvestorLayout />}>
+        <Route path={paths.investor} element={<InvestorDashboard />} />
+      </Route>
 
-          <Route path={paths.inventaris}>
-            <Route index element={<InventoryList />} />
-            <Route path="create" element={<InventoryCreate />} />
-            <Route path="lokasi" element={<InventoryLocations />} />
-            <Route path="barang/:id" element={<InventoryProductShow />} />
-            <Route path=":id" element={<InventoryShow />} />
-          </Route>
+      <Route element={<AuthenticatedAdminInvestorConfigLayout />}>
+        <Route path={paths.keuangan + "/investor"} element={<InvestorConfigPage />} />
+      </Route>
 
-          <Route path={paths.katalog}>
-            <Route index element={<CatalogList />} />
-            <Route path="tambah" element={<CatalogQuickItem />} />
-            <Route path="manage" element={<CatalogManage />} />
-            <Route path="paket/tambah" element={<CatalogPackage />} />
-            <Route path="paket/:id" element={<CatalogPackage />} />
-            <Route path="edit/:id" element={<CatalogEdit />} />
-            <Route path="show/:id" element={<CatalogShow />} />
-          </Route>
+      <Route element={<AuthenticatedAdminLayout />}>
+        <Route index element={<NavigateToResource resource="dashboard" />} />
+        <Route path={paths.dashboard} element={<Dashboard />} />
 
-          <Route path={paths.penyewa}>
-            <Route index element={<RenterList />} />
-            <Route path="create" element={<RenterCreate />} />
-            <Route path=":id" element={<RenterShow />} />
-          </Route>
+        <Route path={paths.pemberitahuan} element={<NotificationList />} />
+        <Route path={paths.laporan} element={<Reports />} />
+        <Route path={paths.qrUnit + "/:token"} element={<QrResolve />} />
+        <Route path={paths.qrPenyewaan + "/:token"} element={<QrResolve />} />
 
-          <Route path={paths.pemasok}>
-            <Route index element={<SupplierList />} />
-            <Route path="create" element={<SupplierCreate />} />
-            <Route path=":id/edit" element={<SupplierCreate />} />
-            <Route path=":id" element={<SupplierShow />} />
-          </Route>
-
-          <Route path={paths.pembelian}>
-            <Route index element={<PurchaseList />} />
-            <Route path="create" element={<PurchaseCreate />} />
-            <Route path=":id/edit" element={<PurchaseCreate />} />
-            <Route path=":id" element={<PurchaseShow />} />
-          </Route>
-
-          <Route path={paths.permintaan}>
-            <Route index element={<RequestList />} />
-            <Route path=":id" element={<RequestShow />} />
-          </Route>
-
-          <Route path={paths.reservasi}>
-            <Route index element={<ReservationList />} />
-            <Route path="create" element={<ReservationCreate />} />
-            <Route path=":id" element={<ReservationShow />} />
-          </Route>
-
-          <Route path={paths.keuangan}>
-            <Route index element={<FinanceHome />} />
-            <Route path="akun" element={<FinanceAccountList />} />
-            <Route path="akun/:id" element={<FinanceAccountShow />} />
-            <Route path="transaksi" element={<TransaksiList />} />
-            <Route path="transaksi/:id" element={<TransaksiShow />} />
-            <Route path="pembayaran" element={<PembayaranList />} />
-            <Route path="pembayaran/create" element={<PaymentCreate />} />
-            <Route path="pembayaran/:id" element={<PembayaranShow />} />
-            <Route path="pengeluaran" element={<PengeluaranList />} />
-            <Route path="pengeluaran/create" element={<ExpenseCreate />} />
-            <Route path="pengeluaran/:id" element={<PengeluaranShow />} />
-          </Route>
-
-          <Route path={paths.penyewaan}>
-            <Route index element={<RentalList />} />
-            <Route path="walk-in" element={<RentalWalkIn />} />
-            <Route path=":id" element={<RentalShow />} />
-          </Route>
-
-          <Route path={paths.pengembalian}>
-            <Route index element={<ReturnList />} />
-            <Route path=":id" element={<ReturnShow />} />
-          </Route>
-
-          <Route path={paths.pemeriksaan}>
-            <Route index element={<InspectionList />} />
-            <Route path=":id" element={<InspectionShow />} />
-          </Route>
-
-          <Route path={paths.perawatan}>
-            <Route index element={<MaintenanceList />} />
-            <Route path="create" element={<MaintenanceCreate />} />
-            <Route path=":id" element={<MaintenanceShow />} />
-          </Route>
-
-          <Route path="*" element={<ErrorComponent />} />
+        <Route path={paths.inventaris}>
+          <Route index element={<InventoryList />} />
+          <Route path="create" element={<InventoryCreate />} />
+          <Route path="lokasi" element={<InventoryLocations />} />
+          <Route path="barang/:id" element={<InventoryProductShow />} />
+          <Route path=":id" element={<InventoryShow />} />
         </Route>
-      </Routes>
+
+        <Route path={paths.katalog}>
+          <Route index element={<CatalogList />} />
+          <Route path="tambah" element={<CatalogQuickItem />} />
+          <Route path="manage" element={<CatalogManage />} />
+          <Route path="paket/tambah" element={<CatalogPackage />} />
+          <Route path="paket/:id" element={<CatalogPackage />} />
+          <Route path="edit/:id" element={<CatalogEdit />} />
+          <Route path="show/:id" element={<CatalogShow />} />
+        </Route>
+
+        <Route path={paths.penyewa}>
+          <Route index element={<RenterList />} />
+          <Route path="create" element={<RenterCreate />} />
+          <Route path=":id" element={<RenterShow />} />
+        </Route>
+
+        <Route path={paths.pemasok}>
+          <Route index element={<SupplierList />} />
+          <Route path="create" element={<SupplierCreate />} />
+          <Route path=":id/edit" element={<SupplierCreate />} />
+          <Route path=":id" element={<SupplierShow />} />
+        </Route>
+
+        <Route path={paths.pembelian}>
+          <Route index element={<PurchaseList />} />
+          <Route path="create" element={<PurchaseCreate />} />
+          <Route path=":id/edit" element={<PurchaseCreate />} />
+          <Route path=":id" element={<PurchaseShow />} />
+        </Route>
+
+        <Route path={paths.permintaan}>
+          <Route index element={<RequestList />} />
+          <Route path=":id" element={<RequestShow />} />
+        </Route>
+
+        <Route path={paths.reservasi}>
+          <Route index element={<ReservationList />} />
+          <Route path="create" element={<ReservationCreate />} />
+          <Route path=":id" element={<ReservationShow />} />
+        </Route>
+
+        <Route path={paths.keuangan}>
+          <Route index element={<FinanceHome />} />
+          <Route path="akun" element={<FinanceAccountList />} />
+          <Route path="akun/:id" element={<FinanceAccountShow />} />
+          <Route path="transaksi" element={<TransaksiList />} />
+          <Route path="transaksi/:id" element={<TransaksiShow />} />
+          <Route path="pembayaran" element={<PembayaranList />} />
+          <Route path="pembayaran/create" element={<PaymentCreate />} />
+          <Route path="pembayaran/:id" element={<PembayaranShow />} />
+          <Route path="pengeluaran" element={<PengeluaranList />} />
+          <Route path="pengeluaran/create" element={<ExpenseCreate />} />
+          <Route path="pengeluaran/:id" element={<PengeluaranShow />} />
+        </Route>
+
+        <Route path={paths.penyewaan}>
+          <Route index element={<RentalList />} />
+          <Route path="walk-in" element={<RentalWalkIn />} />
+          <Route path=":id" element={<RentalShow />} />
+        </Route>
+
+        <Route path={paths.pengembalian}>
+          <Route index element={<ReturnList />} />
+          <Route path=":id" element={<ReturnShow />} />
+        </Route>
+
+        <Route path={paths.pemeriksaan}>
+          <Route index element={<InspectionList />} />
+          <Route path=":id" element={<InspectionShow />} />
+        </Route>
+
+        <Route path={paths.perawatan}>
+          <Route index element={<MaintenanceList />} />
+          <Route path="create" element={<MaintenanceCreate />} />
+          <Route path=":id" element={<MaintenanceShow />} />
+        </Route>
+
+        <Route path="*" element={<ErrorComponent />} />
+      </Route>
+    </Routes>
   );
 }

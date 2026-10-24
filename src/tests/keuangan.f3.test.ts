@@ -1,7 +1,10 @@
 import { describe, expect, test } from "vitest";
 import {
   formatFinanceTimezone,
+  getFinanceBusinessDateOnly,
   getFinancePeriodSelection,
+  getFinancePreviousDate,
+  isValidFinanceDateOnly,
   semanticFinanceLabel,
 } from "@/features/keuangan";
 
@@ -20,7 +23,25 @@ describe("Finance F3 contract", () => {
       preset: "custom",
       startDate: "2026-09-10",
       endDateExclusive: "2026-09-13",
+      valid: true,
+      validationMessage: null,
     });
+    expect(getFinancePreviousDate(custom.endDateExclusive)).toBe("2026-09-12");
+  });
+
+  test("custom ranges reject malformed dates and reversed boundaries", () => {
+    const reversed = getFinancePeriodSelection("Asia/Jakarta", "custom", "2026-09-13", "2026-09-12");
+    expect(reversed.valid).toBe(false);
+    expect(reversed.validationMessage).toContain("tidak boleh melewati");
+
+    const malformed = getFinancePeriodSelection("Asia/Jakarta", "custom", "2026-02-31", "2026-03-01");
+    expect(malformed.valid).toBe(false);
+    expect(isValidFinanceDateOnly("2026-02-31")).toBe(false);
+    expect(isValidFinanceDateOnly("2026-02-28")).toBe(true);
+  });
+
+  test("expense date defaults follow business timezone, not UTC date", () => {
+    expect(getFinanceBusinessDateOnly("Asia/Jakarta", new Date("2026-10-10T17:30:00.000Z"))).toBe("2026-10-11");
   });
 
   test("finance status language avoids accounting profit semantics", () => {

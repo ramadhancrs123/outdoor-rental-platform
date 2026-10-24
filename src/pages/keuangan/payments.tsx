@@ -21,11 +21,13 @@ import {
   getFinancePaymentPage,
   getFinanceReconciliationFindings,
   getKeuanganContext,
+  useFinanceRealtime,
   getPayment,
   useFinancePeriod,
   formatFinanceDateTime,
   formatFinanceMoney,
   formatFinancePeriodLabel,
+  getFinancePreviousDate,
   semanticFinanceLabel,
   type FinanceCorrectionResult,
 } from "@/features/keuangan";
@@ -79,6 +81,7 @@ function paymentDateLabel(value: string, timezone: string) {
 }
 
 export function PaymentList() {
+  useFinanceRealtime();
   const queryClient = useQueryClient();
   const context = useQuery({ queryKey: ["keuangan", "context"], queryFn: getKeuanganContext, staleTime: 60_000 });
   const periodState = useFinancePeriod(context.data?.timezone ?? "Asia/Jakarta");
@@ -92,12 +95,31 @@ export function PaymentList() {
         20,
         0,
       ),
-    enabled: Boolean(context.data?.usahaId),
+    enabled: Boolean(context.data?.usahaId) && periodState.period.valid !== false,
     staleTime: 30_000,
   });
 
   if (context.isPending) return <FinanceShell variant="home" title="Pembayaran"><Skeleton className="h-44 rounded-[24px]" /></FinanceShell>;
   if (context.error || !context.data) return <FinanceShell variant="home" title="Pembayaran"><Alert variant="destructive"><AlertTitle>Pembayaran belum dapat dibuka</AlertTitle><AlertDescription>{errorMessage(context.error)}</AlertDescription></Alert></FinanceShell>;
+
+  if (periodState.period.valid === false) {
+    return (
+      <FinanceShell variant="home" title="Pembayaran">
+        <Alert variant="destructive">
+          <AlertTitle>Rentang tanggal tidak valid</AlertTitle>
+          <AlertDescription>{periodState.period.validationMessage ?? "Pastikan tanggal mulai tidak melewati tanggal selesai."}</AlertDescription>
+        </Alert>
+        <div className="grid grid-cols-2 gap-2">
+          <label className="grid gap-1 text-xs font-semibold">Tanggal mulai
+            <input aria-label="Tanggal mulai" type="date" value={periodState.customStart || periodState.period.startDate} onChange={(event) => { periodState.setCustomStart(event.target.value); periodState.setPreset("custom"); }} className="h-10 min-w-0 rounded-lg border bg-card px-2 text-xs" />
+          </label>
+          <label className="grid gap-1 text-xs font-semibold">Tanggal selesai
+            <input aria-label="Tanggal selesai" type="date" value={periodState.customEnd || getFinancePreviousDate(periodState.period.endDateExclusive)} onChange={(event) => { periodState.setCustomEnd(event.target.value); periodState.setPreset("custom"); }} className="h-10 min-w-0 rounded-lg border bg-card px-2 text-xs" />
+          </label>
+        </div>
+      </FinanceShell>
+    );
+  }
 
   const data = query.data;
   const totalPages = Math.max(1, Math.ceil((data?.total ?? 0) / (data?.limit ?? 20)));
@@ -158,8 +180,8 @@ export function PaymentList() {
             ))}
             {periodState.period.preset === "custom" ? (
               <div className="col-span-2 grid grid-cols-2 gap-2 pt-1">
-                <Input aria-label="Tanggal mulai" type="date" value={periodState.period.startDate} onChange={(event) => { periodState.setCustomStart(event.target.value); periodState.setPreset("custom"); }} className="h-9 rounded-lg text-[10px]" />
-                <Input aria-label="Tanggal selesai" type="date" value={periodState.period.endDateExclusive.slice(0, 10)} onChange={(event) => { periodState.setCustomEnd(event.target.value); periodState.setPreset("custom"); }} className="h-9 rounded-lg text-[10px]" />
+                <Input aria-label="Tanggal mulai" type="date" value={periodState.customStart || periodState.period.startDate} onChange={(event) => { periodState.setCustomStart(event.target.value); periodState.setPreset("custom"); }} className="h-9 rounded-lg text-[10px]" />
+                <Input aria-label="Tanggal selesai" type="date" value={periodState.customEnd || getFinancePreviousDate(periodState.period.endDateExclusive)} onChange={(event) => { periodState.setCustomEnd(event.target.value); periodState.setPreset("custom"); }} className="h-9 rounded-lg text-[10px]" />
               </div>
             ) : null}
           </div>
@@ -324,6 +346,7 @@ export function PaymentList() {
 }
 
 export function PaymentShow() {
+  useFinanceRealtime();
   const { id } = useParams<{ id: string }>();
   const queryClient = useQueryClient();
   const context = useQuery({ queryKey: ["keuangan", "context"], queryFn: getKeuanganContext, staleTime: 60_000 });

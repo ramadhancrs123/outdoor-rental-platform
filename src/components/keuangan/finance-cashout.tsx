@@ -42,7 +42,7 @@ export function FinanceCashout({
   submitLabel = "Bayar & Catat Pengeluaran",
   pendingLabel = "Mencatat pengeluaran & cash out…",
 }: Props) {
-  const activeAccounts = accounts.filter((account) => account.status === "active" && account.mata_uang === "IDR");
+  const activeAccounts = accounts.filter((account) => account.status === "active" && account.fungsi_akun === "operasional" && account.mata_uang === "IDR");
   const availableTotal = activeAccounts.reduce((sum, account) => sum + Math.max(0, Number(account.saldo)), 0);
   const allocatedTotal = Object.values(allocations).reduce((sum, value) => sum + Math.max(0, Number(value || 0)), 0);
   const remaining = Math.max(0, amount - allocatedTotal);

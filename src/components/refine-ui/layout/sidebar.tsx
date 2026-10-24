@@ -1,10 +1,12 @@
 "use client";
 
+import * as React from "react";
 import {
   Bell,
   Boxes,
   ClipboardCheck,
   CreditCard,
+  CircleDollarSign,
   FileBarChart,
   Home,
   Package,
@@ -17,7 +19,7 @@ import {
 } from "lucide-react";
 import { Link, useLocation } from "react-router";
 import { useGetIdentity } from "@refinedev/core";
-import { useCurrentUsaha } from "@/app/current-usaha-context";
+import { CurrentUsahaContext } from "@/app/current-usaha-context";
 import {
   Sidebar as ShadcnSidebar,
   SidebarContent,
@@ -59,6 +61,7 @@ const sections = [
     items: [
       ["Pembelian", paths.pembelian, Receipt],
       ["Keuangan", paths.keuangan, CreditCard],
+      ["Investor", paths.investor, CircleDollarSign],
     ],
   },
   {
@@ -71,8 +74,9 @@ const sections = [
   },
 ] as const;
 
-export function Sidebar() {
-  const { current } = useCurrentUsaha();
+export function Sidebar({ currentOverride }: { currentOverride?: { usahaId: string; usahaNama: string } | null } = {}) {
+  const usahaContext = React.useContext(CurrentUsahaContext);
+  const current = currentOverride ?? usahaContext?.current ?? null;
   const { data: identity } = useGetIdentity<{ name?: string; role?: string | null }>();
 
   return (

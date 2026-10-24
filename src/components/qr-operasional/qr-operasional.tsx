@@ -560,7 +560,7 @@ export function QrPreviewDialog({
 
           {kind === "penyewaan" ? (
             <p className="text-xs leading-5 text-muted-foreground">
-              QR ini membuka detail penyewaan. Nota dan cetak thermal belum termasuk pada tahap ini.
+              QR ini membuka detail penyewaan. Nota dan cetak thermal 58 mm tersedia: cetak langsung atau unduh PDF dari tombol di bawah.
             </p>
           ) : null}
         </div>

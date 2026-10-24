@@ -17,6 +17,8 @@ import {
 } from "lucide-react";
 import { useCurrentUsaha } from "@/app/current-usaha-context";
 import { getFinancialReport } from "@/features/laporan/service";
+import { FinancePeriodCompact } from "@/components/keuangan/finance-ui";
+import { useFinancePeriod } from "@/features/keuangan";
 import { listNotifications } from "@/features/pemberitahuan/service";
 import { listInventoryUnits } from "@/features/inventaris/service";
 import { DEFAULT_RENTAL_LIST_FILTERS } from "@/features/penyewaan/types";
@@ -57,14 +59,6 @@ function dateOnly(date: Date) {
     String(date.getMonth() + 1).padStart(2, "0"),
     String(date.getDate()).padStart(2, "0"),
   ].join("-");
-}
-
-function period() {
-  const now = new Date();
-  return {
-    start: dateOnly(new Date(now.getFullYear(), now.getMonth(), 1)),
-    end: dateOnly(new Date(now.getFullYear(), now.getMonth() + 1, 1)),
-  };
 }
 
 function money(value: number) {
@@ -203,6 +197,7 @@ export function Dashboard() {
   const [inventoryCounts, setInventoryCounts] = useState({ ready: 0, rented: 0, maintenance: 0, inactive: 0 });
   const [error, setError] = useState<string | null>(null);
   const [activityOpen, setActivityOpen] = useState(false);
+  const financePeriod = useFinancePeriod("Asia/Jakarta");
 
   const usahaId = current?.usahaId;
   const adminId = current?.akunAdminId;
@@ -212,12 +207,15 @@ export function Dashboard() {
   useEffect(() => {
     if (!usahaId || !adminId) return;
 
-    const p = period();
     let active = true;
 
     Promise.all([
       listNotifications(usahaId, adminId, 8),
-      getFinancialReport(usahaId, p.start, p.end),
+      getFinancialReport(
+        usahaId,
+        financePeriod.period.startDate,
+        financePeriod.period.endDateExclusive,
+      ),
       listRentals(usahaId, { ...DEFAULT_RENTAL_LIST_FILTERS, pageSize: 50 }),
       listReturnQueue(usahaId, { search: "", page: 1, pageSize: 50, rentalStatus: "all", dueState: "all" }),
       listReservations(usahaId, { search: "", status: "all", page: 1, pageSize: 50 }),
@@ -266,7 +264,12 @@ export function Dashboard() {
     return () => {
       active = false;
     };
-  }, [usahaId, adminId]);
+  }, [
+    usahaId,
+    adminId,
+    financePeriod.period.startDate,
+    financePeriod.period.endDateExclusive,
+  ]);
 
   const currentRentals = useMemo(
     () =>
@@ -411,7 +414,7 @@ export function Dashboard() {
     {
       label: "Pemasukan",
       value: report ? money(report.summary.recorded_income) : "—",
-      helper: "Tercatat periode berjalan",
+      helper: "Tercatat pada periode dipilih",
       icon: CreditCard,
       surface: "bg-emerald-50/80 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300",
       href: paths.keuangan,
@@ -419,7 +422,7 @@ export function Dashboard() {
     {
       label: "Pengeluaran",
       value: report ? money(report.summary.recorded_expense) : "—",
-      helper: "Tercatat periode berjalan",
+      helper: "Tercatat pada periode dipilih",
       icon: Receipt,
       surface: "bg-red-50/80 text-red-600 dark:bg-red-950/25 dark:text-red-300",
       href: paths.keuangan + "/pengeluaran",
@@ -457,12 +460,11 @@ export function Dashboard() {
         <div className="relative z-10 min-h-[178px] px-4 pb-4 pt-4 sm:min-h-[208px] sm:px-6 sm:pb-5 sm:pt-5">
           <div className="flex items-center justify-between gap-3">
             <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">Beranda</p>
-            <div className="inline-flex max-w-[58%] items-center gap-1.5 rounded-full border border-border/70 bg-background/85 px-3 py-2 text-[10px] font-semibold shadow-sm backdrop-blur-sm sm:text-[11px]">
+            <div className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-background/85 px-3 py-2 text-[10px] font-semibold shadow-sm backdrop-blur-sm sm:text-[11px]">
               <span className="grid size-5 shrink-0 place-items-center rounded-full bg-primary/10 text-primary">
                 <Mountain className="size-3" aria-hidden="true" />
               </span>
-              <span className="truncate">{current?.usahaNama ?? "Usaha aktif"}</span>
-              <ChevronDown className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <span className="truncate">Akasha Outdoor</span>
             </div>
           </div>
 
@@ -491,6 +493,16 @@ export function Dashboard() {
           </div>
         </div>
       </section>
+
+      <div className="flex items-center justify-end">
+        <FinancePeriodCompact
+          timezone="Asia/Jakarta"
+          selection={financePeriod.period}
+          onPreset={financePeriod.setPreset}
+          onCustomStart={financePeriod.setCustomStart}
+          onCustomEnd={financePeriod.setCustomEnd}
+        />
+      </div>
 
       <section
         aria-label="Ringkasan"

@@ -39,7 +39,7 @@ export function MaintenanceFinanceCashout({
   setupHref,
 }: Props) {
   const [splitOpen, setSplitOpen] = useState(false);
-  const activeAccounts = accounts.filter((account) => account.status === "active" && account.mata_uang === "IDR");
+  const activeAccounts = accounts.filter((account) => account.status === "active" && account.fungsi_akun === "operasional" && account.mata_uang === "IDR");
 
   const availableTotal = activeAccounts.reduce((sum, account) => sum + Math.max(0, Number(account.saldo)), 0);
   const allocatedTotal = Object.values(allocations).reduce((sum, value) => sum + Math.max(0, Number(value || 0)), 0);

@@ -15,6 +15,7 @@ import {
   recordPayment,
   reconcilePaymentCommand,
   searchFinanceSources,
+  useFinanceRealtime,
   type FinanceSourceOption,
   type RecordPaymentInput,
 } from "@/features/keuangan";
@@ -39,6 +40,7 @@ const methods: Array<[RecordPaymentInput["metode"], string]> = [
 ];
 
 export function PaymentCreate() {
+  useFinanceRealtime();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();

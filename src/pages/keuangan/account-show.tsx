@@ -5,7 +5,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FinanceShell } from "@/components/keuangan/finance-ui";
-import { getFinanceAccountDetail, getKeuanganContext } from "@/features/keuangan";
+import { getFinanceAccountDetail, getKeuanganContext, useFinanceRealtime } from "@/features/keuangan";
 import { formatFinanceDateTime, formatFinanceMoney, formatFinanceTimezone, semanticFinanceLabel } from "@/features/keuangan/utils";
 import { paths } from "@/routes/paths";
 
@@ -21,6 +21,8 @@ function movementSourceLabel(movement: Awaited<ReturnType<typeof getFinanceAccou
     return ["Pengeluaran", movement.expense_category ?? null, movement.expense_description ?? null].filter(Boolean).join(" · ");
   }
   if (movement.sumber_type === "transfer") return "Transfer antar akun";
+  if (movement.sumber_type === "investor_account_transfer") return "Transfer internal akun Investor";
+  if (movement.sumber_type === "investor_self_transfer") return "Transfer saldo Investor";
   return semanticFinanceLabel(movement.sumber_type);
 }
 
@@ -32,6 +34,7 @@ function movementHref(movement: Awaited<ReturnType<typeof getFinanceAccountDetai
 }
 
 export function FinanceAccountShow() {
+  useFinanceRealtime();
   const { id } = useParams();
   const context = useQuery({ queryKey: ["keuangan", "context"], queryFn: getKeuanganContext, staleTime: 60_000 });
   const detail = useQuery({
@@ -184,7 +187,7 @@ export function FinanceAccountShow() {
                       </p>
                     </div>
                     <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                      <Badge variant="outline" className="rounded-full text-[8px]">{semanticFinanceLabel(movement.sumber_type)}</Badge>
+                      <Badge variant="outline" className="rounded-full text-[8px]">{movement.sumber_type === "investor_account_transfer" ? "Transfer internal Investor" : semanticFinanceLabel(movement.sumber_type)}</Badge>
                       <Badge variant={movement.status === "recorded" ? "secondary" : "outline"} className="rounded-full text-[8px]">{semanticFinanceLabel(movement.status)}</Badge>
                       {movement.payment_method ? <Badge variant="outline" className="rounded-full text-[8px]">{semanticFinanceLabel(movement.payment_method)}</Badge> : null}
                     </div>

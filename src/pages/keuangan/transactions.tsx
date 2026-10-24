@@ -11,11 +11,13 @@ import { FinanceShell, FinanceStatus } from "@/components/keuangan/finance-ui";
 import {
   getFinanceTransactionPage,
   getKeuanganContext,
+  useFinanceRealtime,
   getTransaction,
   useFinancePeriod,
   formatFinanceDateTime,
   formatFinanceMoney,
   formatFinancePeriodLabel,
+  getFinancePreviousDate,
   semanticFinanceLabel,
 } from "@/features/keuangan";
 import { paths } from "@/routes/paths";
@@ -32,6 +34,7 @@ function statusTone(status: string) {
 }
 
 export function TransactionList() {
+  useFinanceRealtime();
   const context = useQuery({ queryKey: ["keuangan", "context"], queryFn: getKeuanganContext, staleTime: 60_000 });
   const periodState = useFinancePeriod(context.data?.timezone ?? "Asia/Jakarta");
   const queryClient = useQueryClient();
@@ -45,7 +48,7 @@ export function TransactionList() {
         20,
         0,
       ),
-    enabled: Boolean(context.data?.usahaId),
+    enabled: Boolean(context.data?.usahaId) && periodState.period.valid !== false,
     staleTime: 30_000,
   });
 
@@ -57,6 +60,25 @@ export function TransactionList() {
     return (
       <FinanceShell variant="home" title="Transaksi">
         <Alert variant="destructive"><AlertTitle>Transaksi belum dapat dibuka</AlertTitle><AlertDescription>{errorMessage(context.error)}</AlertDescription></Alert>
+      </FinanceShell>
+    );
+  }
+
+  if (periodState.period.valid === false) {
+    return (
+      <FinanceShell variant="home" title="Transaksi">
+        <Alert variant="destructive">
+          <AlertTitle>Rentang tanggal tidak valid</AlertTitle>
+          <AlertDescription>{periodState.period.validationMessage ?? "Pastikan tanggal mulai tidak melewati tanggal selesai."}</AlertDescription>
+        </Alert>
+        <div className="grid grid-cols-2 gap-2">
+          <label className="grid gap-1 text-xs font-semibold">Tanggal mulai
+            <input aria-label="Tanggal mulai" type="date" value={periodState.customStart || periodState.period.startDate} onChange={(event) => { periodState.setCustomStart(event.target.value); periodState.setPreset("custom"); }} className="h-10 min-w-0 rounded-lg border bg-card px-2 text-xs" />
+          </label>
+          <label className="grid gap-1 text-xs font-semibold">Tanggal selesai
+            <input aria-label="Tanggal selesai" type="date" value={periodState.customEnd || getFinancePreviousDate(periodState.period.endDateExclusive)} onChange={(event) => { periodState.setCustomEnd(event.target.value); periodState.setPreset("custom"); }} className="h-10 min-w-0 rounded-lg border bg-card px-2 text-xs" />
+          </label>
+        </div>
       </FinanceShell>
     );
   }
@@ -134,8 +156,8 @@ export function TransactionList() {
             ))}
             {periodState.period.preset === "custom" ? (
               <div className="col-span-2 grid grid-cols-2 gap-2 pt-1">
-                <input aria-label="Tanggal mulai" type="date" value={periodState.period.startDate} onChange={(event) => { periodState.setCustomStart(event.target.value); periodState.setPreset("custom"); }} className="h-9 min-w-0 rounded-lg border bg-card px-2 text-[10px]" />
-                <input aria-label="Tanggal selesai" type="date" value={periodState.period.endDateExclusive.slice(0, 10)} onChange={(event) => { periodState.setCustomEnd(event.target.value); periodState.setPreset("custom"); }} className="h-9 min-w-0 rounded-lg border bg-card px-2 text-[10px]" />
+                <input aria-label="Tanggal mulai" type="date" value={periodState.customStart || periodState.period.startDate} onChange={(event) => { periodState.setCustomStart(event.target.value); periodState.setPreset("custom"); }} className="h-9 min-w-0 rounded-lg border bg-card px-2 text-[10px]" />
+                <input aria-label="Tanggal selesai" type="date" value={periodState.customEnd || getFinancePreviousDate(periodState.period.endDateExclusive)} onChange={(event) => { periodState.setCustomEnd(event.target.value); periodState.setPreset("custom"); }} className="h-9 min-w-0 rounded-lg border bg-card px-2 text-[10px]" />
               </div>
             ) : null}
           </div>
@@ -275,6 +297,7 @@ export function TransactionList() {
 }
 
 export function TransactionShow() {
+  useFinanceRealtime();
   const { id } = useParams<{ id: string }>();
   const context = useQuery({ queryKey: ["keuangan", "context"], queryFn: getKeuanganContext, staleTime: 60_000 });
   const query = useQuery({

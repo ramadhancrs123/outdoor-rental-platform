@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 export function FinanceShell({
   eyebrow = "Keuangan",
@@ -232,7 +233,93 @@ export function FinanceMetric({
 }
 
 import type { FinancePeriodPreset, FinancePeriodSelection } from "@/features/keuangan";
-import { formatFinanceMoney } from "@/features/keuangan";
+import { formatFinanceMoney, formatFinancePeriodLabel, getFinancePreviousDate } from "@/features/keuangan";
+
+export function FinancePeriodCompact({
+  timezone,
+  selection,
+  onPreset,
+  onCustomStart,
+  onCustomEnd,
+}: {
+  timezone: string;
+  selection: FinancePeriodSelection;
+  onPreset: (preset: FinancePeriodPreset) => void;
+  onCustomStart: (value: string) => void;
+  onCustomEnd: (value: string) => void;
+}) {
+  const labels: Array<[FinancePeriodPreset, string]> = [
+    ["today", "Hari ini"],
+    ["week", "Minggu ini"],
+    ["month", "Bulan ini"],
+    ["custom", "Rentang"],
+  ];
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-9 gap-1.5 rounded-full px-3 text-[11px] font-semibold"
+          aria-label="Atur periode keuangan"
+        >
+          <CalendarDays className="size-3.5 text-primary" />
+          <span>{formatFinancePeriodLabel(selection.startDate, selection.endDateExclusive, timezone)}</span>
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-[min(320px,calc(100vw-24px))] p-3">
+        <div className="space-y-3">
+          <div>
+            <p className="text-xs font-semibold">Periode keuangan</p>
+            <p className="mt-0.5 text-[10px] text-muted-foreground">
+              Ubah rentang tanpa menambah blok besar pada dashboard.
+            </p>
+          </div>
+          <div className="grid grid-cols-2 gap-1.5">
+            {labels.map(([value, label]) => (
+              <Button
+                key={value}
+                type="button"
+                variant={selection.preset === value ? "default" : "outline"}
+                size="sm"
+                className="h-9 rounded-lg text-[10px]"
+                onClick={() => onPreset(value)}
+              >
+                {label}
+              </Button>
+            ))}
+          </div>
+          {selection.preset === "custom" ? (
+            <div className="grid grid-cols-2 gap-2">
+              <label className="grid gap-1 text-[10px] font-semibold">
+                Mulai
+                <Input
+                  aria-label="Tanggal mulai"
+                  type="date"
+                  value={selection.startDate}
+                  onChange={(event) => onCustomStart(event.target.value)}
+                  className="h-9 rounded-lg text-[10px]"
+                />
+              </label>
+              <label className="grid gap-1 text-[10px] font-semibold">
+                Sampai
+                <Input
+                  aria-label="Tanggal selesai"
+                  type="date"
+                  value={getFinancePreviousDate(selection.endDateExclusive)}
+                  onChange={(event) => onCustomEnd(event.target.value)}
+                  className="h-9 rounded-lg text-[10px]"
+                />
+              </label>
+            </div>
+          ) : null}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 export function FinancePeriodBar({
   timezone,
@@ -285,7 +372,7 @@ export function FinancePeriodBar({
             </label>
             <label className="grid gap-1.5 text-xs font-semibold" htmlFor="finance-period-end">
               Sampai
-              <Input id="finance-period-end" type="date" value={selection.endDateExclusive.slice(0, 10)} onChange={(event) => onCustomEnd(event.target.value)} className="h-10 rounded-xl" />
+              <Input id="finance-period-end" type="date" value={getFinancePreviousDate(selection.endDateExclusive)} onChange={(event) => onCustomEnd(event.target.value)} className="h-10 rounded-xl" />
             </label>
           </div>
         ) : null}

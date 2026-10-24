@@ -473,7 +473,7 @@ export function PerawatanShow() {
   const duration = durationLabel(maintenance.dimulai_at, maintenance.selesai_at);
   const coverUrl = unitMedia.data?.find((media) => media.is_cover)?.signed_url ?? unitMedia.data?.[0]?.signed_url ?? null;
   const reasonText = sourceInspection?.catatan?.trim() || findings[0]?.deskripsi?.trim() || maintenance.catatan?.trim() || "-";
-  const activeAccounts = availableFinanceAccounts.filter((account) => account.status === "active" && account.mata_uang === "IDR");
+  const activeAccounts = availableFinanceAccounts.filter((account) => account.status === "active" && account.fungsi_akun === "operasional" && account.mata_uang === "IDR");
   const selectedAccount = activeAccounts.find((account) => account.akun_keuangan_id === selectedAccountId) ?? activeAccounts[0] ?? null;
   const visibleHistory = timelineOpen ? history : history.slice(0, 4);
   const executorOptions = Array.from(

@@ -66,10 +66,25 @@ function toDateOnly(date: Date) {
   return date.toISOString().slice(0, 10);
 }
 
+export function getFinanceBusinessDateOnly(timezone: string, now = new Date()) {
+  const { year, month, day } = businessDateParts(timezone, now);
+  return [String(year).padStart(4, "0"), String(month).padStart(2, "0"), String(day).padStart(2, "0")].join("-");
+}
+
+export function isValidFinanceDateOnly(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(value + "T00:00:00Z");
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
 function addDays(dateOnly: string, days: number) {
   const date = new Date(dateOnly + "T00:00:00Z");
   date.setUTCDate(date.getUTCDate() + days);
   return toDateOnly(date);
+}
+
+export function getFinancePreviousDate(dateOnly: string) {
+  return addDays(dateOnly, -1);
 }
 
 function startOfBusinessWeek(dateOnly: string) {
@@ -101,7 +116,22 @@ export function getFinancePeriodSelection(
   if (preset === "custom") {
     const start = customStartDate || today;
     const inclusiveEnd = customEndDateInclusive || start;
-    return { preset, startDate: start, endDateExclusive: addDays(inclusiveEnd, 1) };
+    const validDates = isValidFinanceDateOnly(start) && isValidFinanceDateOnly(inclusiveEnd);
+    const ordered = validDates && start <= inclusiveEnd;
+    if (!ordered) {
+      const safeStart = isValidFinanceDateOnly(start) ? start : today;
+      const safeEnd = isValidFinanceDateOnly(inclusiveEnd) ? inclusiveEnd : safeStart;
+      return {
+        preset,
+        startDate: start,
+        endDateExclusive: addDays(safeEnd < safeStart ? safeStart : safeEnd, 1),
+        valid: false,
+        validationMessage: !validDates
+          ? "Tanggal mulai dan selesai harus berupa tanggal yang valid."
+          : "Tanggal mulai tidak boleh melewati tanggal selesai.",
+      };
+    }
+    return { preset, startDate: start, endDateExclusive: addDays(inclusiveEnd, 1), valid: true, validationMessage: null };
   }
 
   const monthStart = [year.toString().padStart(4, "0"), month.toString().padStart(2, "0"), "01"].join("-");

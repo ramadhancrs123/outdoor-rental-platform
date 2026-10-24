@@ -1,7 +1,7 @@
 "use client";
 
 import { Link, useLocation } from "react-router";
-import { Bell, CreditCard, FileText, Home, Menu, MoreVertical, QrCode, ReceiptText, RotateCcw, Search, WalletCards } from "lucide-react";
+import { Bell, Home, Menu, QrCode, RotateCcw, Search } from "lucide-react";
 import { Header } from "@/components/refine-ui/layout/header";
 import { ThemeProvider } from "@/components/refine-ui/theme/theme-provider";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
@@ -19,24 +19,12 @@ const mobileNav = [
   ["Notifikasi", paths.pemberitahuan, Bell],
 ] as const;
 
-const financeNav = [
-  ["Beranda", paths.keuangan, WalletCards],
-  ["Pembayaran", paths.keuangan + "/pembayaran", CreditCard],
-  ["Pengeluaran", paths.keuangan + "/pengeluaran", ReceiptText],
-  ["Transaksi", paths.keuangan + "/transaksi", FileText],
-  ["Akun", paths.keuangan + "/akun", WalletCards],
-] as const;
-
 const returnNav = [
   ["Beranda", paths.dashboard, Home],
   ["Pengembalian", paths.pengembalian, RotateCcw],
   ["Pindai QR", paths.pengembalian + "?scan=1", QrCode],
   ["Notifikasi", paths.pemberitahuan, Bell],
 ] as const;
-
-function isFinancePath(pathname: string) {
-  return pathname === paths.keuangan || pathname.startsWith(paths.keuangan + "/");
-}
 
 function isReturnPath(pathname: string) {
   return pathname === paths.pengembalian || pathname.startsWith(paths.pengembalian + "/");
@@ -64,11 +52,6 @@ function isFocusedProcurementPath(pathname: string) {
     pathname.match(new RegExp("^" + paths.pembelian.replace("/", "\\/") + "/[^/]+$")) ||
     pathname.match(new RegExp("^" + paths.pembelian.replace("/", "\\/") + "/[^/]+/edit$"));
   return Boolean(supplierFocused || purchaseFocused);
-}
-
-function showFinanceBottomNav(pathname: string) {
-  if (!isFinancePath(pathname)) return false;
-  return !pathname.includes("/create") && !pathname.match(/\/(pembayaran|pengeluaran|transaksi)\/[^/]+$/);
 }
 
 export function Layout({ children }: PropsWithChildren) {
@@ -106,17 +89,13 @@ function MobileBottomNav() {
     return null;
   }
 
-  const financeMode = showFinanceBottomNav(location.pathname);
-  const returnMode = isReturnPath(location.pathname) && !financeMode;
-  const items = financeMode ? financeNav : returnMode ? returnNav : mobileNav;
+  const returnMode = isReturnPath(location.pathname);
+  const items = returnMode ? returnNav : mobileNav;
 
   return (
     <>
       <nav
-        className={cn(
-          "fixed inset-x-3 bottom-3 z-50 grid grid-cols-5 items-center rounded-xl border bg-background/95 p-1 shadow-[0_14px_44px_rgba(20,40,30,.16)] backdrop-blur-md lg:hidden",
-          isFinancePath(location.pathname) && !financeMode && "hidden",
-        )}
+        className="fixed inset-x-3 bottom-3 z-50 grid grid-cols-5 items-center rounded-xl border bg-background/95 p-1 shadow-[0_14px_44px_rgba(20,40,30,.16)] backdrop-blur-md lg:hidden"
         aria-label="Navigasi mobile"
       >
       {items.map(([label, path, Icon]) => {
@@ -157,7 +136,7 @@ function MobileBottomNav() {
         onClick={() => document.querySelector<HTMLButtonElement>("[data-sidebar='trigger']")?.click()}
         className="flex min-h-11 flex-col items-center justify-center gap-0.5 rounded-lg text-[10px] font-medium text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
-        {financeMode ? <MoreVertical className="size-4" aria-hidden="true" /> : <Menu className="size-4" aria-hidden="true" />}
+        <Menu className="size-4" aria-hidden="true" />
         <span>Menu</span>
       </button>
       </nav>

@@ -1,13 +1,14 @@
 import { createClientId } from "@/lib/client-id";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, Check, CircleAlert, FileText, Search, ShieldCheck, Truck, Wrench, Building2, ReceiptText } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
+import { supabase } from "@/app/providers/supabase/client";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { getFinanceAccountSummary, getFinanceCapabilities, getKeuanganContext, listFinanceSuppliers, recordExpense, recordExpenseWithFinanceCashout, reconcileExpenseCashoutCommand, reconcileExpenseCommand, type RecordExpenseInput, type SupplierOption } from "@/features/keuangan";
+import { getFinanceAccountSummary, getFinanceCapabilities, getKeuanganContext, listFinanceSuppliers, recordExpense, recordExpenseWithFinanceCashout, reconcileExpenseCashoutCommand, reconcileExpenseCommand, getFinanceBusinessDateOnly, useFinanceRealtime, type RecordExpenseInput, type SupplierOption } from "@/features/keuangan";
 import { FinanceCashout } from "@/components/keuangan/finance-cashout";
 import { listPurchases } from "@/features/pemasok";
 import { listMaintenanceQueue, semanticMaintenanceLabel } from "@/features/perawatan";
@@ -23,6 +24,7 @@ const sourceTypes: Array<[RecordExpenseInput["sourceType"], string, string]> = [
 ];
 
 export function ExpenseCreate() {
+  useFinanceRealtime();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [step, setStep] = useState<1 | 2 | 3>(1);
@@ -31,12 +33,36 @@ export function ExpenseCreate() {
   const [supplierSearch, setSupplierSearch] = useState("");
   const [sourceSearch, setSourceSearch] = useState("");
   const [supplier, setSupplier] = useState<SupplierOption | null>(null);
-  const [form, setForm] = useState<RecordExpenseInput>({ sourceType: "operational", kategoriBiaya: "Operasional", deskripsi: "", amount: 0, tanggalPengeluaran: new Date().toISOString().slice(0, 10), pemasokId: null, sourceId: null, buktiStoragePath: null, catatan: "" });
+  const [form, setForm] = useState<RecordExpenseInput>({ sourceType: "operational", kategoriBiaya: "Operasional", deskripsi: "", amount: 0, tanggalPengeluaran: "", pemasokId: null, sourceId: null, buktiStoragePath: null, catatan: "" });
+  const [evidenceUploading, setEvidenceUploading] = useState(false);
+  const [evidenceFilename, setEvidenceFilename] = useState<string | null>(null);
+  const [selectedEvidenceFile, setSelectedEvidenceFile] = useState<File | null>(null);
+  const [evidencePreviewUrl, setEvidencePreviewUrl] = useState<string | null>(null);
+  const [evidenceError, setEvidenceError] = useState<string | null>(null);
+  const evidenceInputRef = useRef<HTMLInputElement | null>(null);
   const [feedback, setFeedback] = useState("");
   const [result, setResult] = useState<{ id: string; number: string } | null>(null);
   const [accountAllocations, setAccountAllocations] = useState<Record<string, string>>({});
   const commandRef = useRef<string | null>(null);
   const context = useQuery({ queryKey: ["keuangan", "context"], queryFn: getKeuanganContext, staleTime: 60_000 });
+  useEffect(() => {
+    if (context.data?.timezone && !form.tanggalPengeluaran) {
+      setForm((current) => current.tanggalPengeluaran
+        ? current
+        : { ...current, tanggalPengeluaran: getFinanceBusinessDateOnly(context.data!.timezone) });
+    }
+  }, [context.data, form.tanggalPengeluaran]);
+
+  useEffect(() => {
+    if (!selectedEvidenceFile || !["image/jpeg", "image/png", "image/webp"].includes(selectedEvidenceFile.type)) {
+      setEvidencePreviewUrl(null);
+      return;
+    }
+    const preview = URL.createObjectURL(selectedEvidenceFile);
+    setEvidencePreviewUrl(preview);
+    return () => URL.revokeObjectURL(preview);
+  }, [selectedEvidenceFile]);
+
   const cashoutRequired = sourceType === "operational" || sourceType === "other" || sourceType === "manual";
   const financeAccounts = useQuery({
     queryKey: ["keuangan", "expense-cashout-accounts", context.data?.usahaId],
@@ -61,7 +87,87 @@ export function ExpenseCreate() {
 
   const sourceRequiresId = sourceType === "purchase" || sourceType === "maintenance";
   const detailReady = Boolean(form.kategoriBiaya.trim()) && Boolean(form.deskripsi.trim()) && Number(form.amount) > 0 && Boolean(form.tanggalPengeluaran);
-  const confirmReady = detailReady && (!sourceRequiresId || Boolean(form.sourceId));
+  const confirmReady = detailReady && !evidenceUploading && !selectedEvidenceFile && (!sourceRequiresId || Boolean(form.sourceId));
+
+  const selectExpenseEvidence = (file?: File) => {
+    if (!file) return;
+    setEvidenceError(null);
+    const allowedTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif", "application/pdf"]);
+    if (!allowedTypes.has(file.type)) {
+      setSelectedEvidenceFile(null);
+      setEvidenceError("Format bukti harus berupa JPG, PNG, WebP, HEIC, HEIF, atau PDF.");
+      return;
+    }
+    if (file.size <= 0 || file.size > 10 * 1024 * 1024) {
+      setSelectedEvidenceFile(null);
+      setEvidenceError("Ukuran file bukti harus lebih kecil dari 10 MB.");
+      return;
+    }
+    setSelectedEvidenceFile(file);
+  };
+
+  const uploadExpenseEvidence = async () => {
+    const file = selectedEvidenceFile;
+    if (!file) return;
+    setEvidenceError(null);
+    if (!context.data?.usahaId) {
+      setEvidenceError("Usaha aktif belum siap; bukti belum diunggah.");
+      return;
+    }
+    const previousPath = form.buktiStoragePath;
+    const extensionFromName = file.name.match(/\.([a-zA-Z0-9]{1,8})$/)?.[1]?.toLowerCase();
+    const extensionFromType: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/heic": "heic", "image/heif": "heif", "application/pdf": "pdf" };
+    const extension = extensionFromType[file.type] ?? extensionFromName ?? "bin";
+    const safeName = (file.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-72) || "bukti") .replace(/\.[a-zA-Z0-9]{1,8}$/, "") + "." + extension;
+    const path = context.data.usahaId + "/expenses/" + createClientId() + "/" + safeName;
+    setEvidenceUploading(true);
+    try {
+      const { error } = await supabase.storage.from("rental-private-finance").upload(path, file, {
+        upsert: false,
+        contentType: file.type,
+      });
+      if (error) throw error;
+      if (previousPath) {
+        const { error: removeError } = await supabase.storage.from("rental-private-finance").remove([previousPath]);
+        if (removeError) {
+          // Do not switch the form to a new object if the old evidence could
+          // not be safely replaced. Best-effort cleanup of the new upload.
+          await supabase.storage.from("rental-private-finance").remove([path]);
+          throw new Error("Bukti sebelumnya tidak dapat diganti karena gagal dibersihkan. " + removeError.message);
+        }
+      }
+      setForm((current) => ({ ...current, buktiStoragePath: path }));
+      setEvidenceFilename(file.name);
+      setSelectedEvidenceFile(null);
+    } catch (error) {
+      setEvidenceError(error instanceof Error ? error.message : "Bukti pengeluaran gagal diunggah.");
+    } finally {
+      setEvidenceUploading(false);
+    }
+  };
+
+  const cancelEvidencePreview = () => {
+    setSelectedEvidenceFile(null);
+    setEvidenceError(null);
+    if (evidenceInputRef.current) evidenceInputRef.current.value = "";
+  };
+
+  const removeExpenseEvidence = async () => {
+    if (!form.buktiStoragePath) return;
+    setEvidenceError(null);
+    setEvidenceUploading(true);
+    try {
+      const { error } = await supabase.storage.from("rental-private-finance").remove([form.buktiStoragePath]);
+      if (error) throw error;
+      setForm((current) => ({ ...current, buktiStoragePath: null }));
+      setEvidenceFilename(null);
+      setSelectedEvidenceFile(null);
+    } catch (error) {
+      setEvidenceError(error instanceof Error ? error.message : "Bukti gagal dihapus dari unggahan formulir.");
+    } finally {
+      setEvidenceUploading(false);
+    }
+  };
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -145,14 +251,14 @@ export function ExpenseCreate() {
 
     {step===2 ? <div className="space-y-4">
       <section><h2 className="text-base font-semibold">Detail Pengeluaran</h2><p className="mt-1 text-xs text-muted-foreground">Nominal, tanggal, deskripsi, bukti, dan catatan.</p></section>
-      <Card className="shadow-sm"><CardContent className="space-y-4 p-4"><div className="space-y-1.5"><label className="text-xs font-semibold" htmlFor="expense-category">Kategori Biaya</label><Input id="expense-category" value={form.kategoriBiaya} onChange={(e)=>setForm((c)=>({...c,kategoriBiaya:e.target.value}))} className="h-12 rounded-xl" placeholder="Operasional"/></div><div className="space-y-1.5"><label className="text-xs font-semibold" htmlFor="expense-description">Deskripsi</label><Input id="expense-description" value={form.deskripsi} onChange={(e)=>setForm((c)=>({...c,deskripsi:e.target.value}))} className="h-12 rounded-xl" placeholder="Uang digunakan untuk apa?" /></div><div className="space-y-1.5"><label className="text-xs font-semibold" htmlFor="expense-amount">Nominal</label><div className="flex items-center rounded-xl border px-3"><span className="text-sm font-semibold text-muted-foreground">Rp</span><Input id="expense-amount" type="number" min="1" value={form.amount||""} onChange={(e)=>setForm((c)=>({...c,amount:Number(e.target.value)}))} className="h-12 border-0 text-right text-lg font-bold shadow-none focus-visible:ring-0"/></div></div><div className="space-y-1.5"><label className="text-xs font-semibold" htmlFor="expense-date">Tanggal Pengeluaran</label><Input id="expense-date" type="date" value={form.tanggalPengeluaran??""} onChange={(e)=>setForm((c)=>({...c,tanggalPengeluaran:e.target.value}))} className="h-12 rounded-xl"/></div><div className="space-y-1.5"><label className="text-xs font-semibold" htmlFor="expense-evidence">Bukti</label><Button type="button" variant="outline" className="h-12 w-full justify-between rounded-xl"><span>{form.buktiStoragePath ? "Bukti tersedia" : "Unggah Bukti"}</span><FileText className="size-4"/></Button><p className="text-[11px] text-muted-foreground">Bukti disimpan sebagai data internal. Lokasi penyimpanan tidak ditampilkan sebagai informasi utama.</p></div><div className="space-y-1.5"><label className="text-xs font-semibold" htmlFor="expense-note">Catatan</label><Input id="expense-note" value={form.catatan??""} onChange={(e)=>setForm((c)=>({...c,catatan:e.target.value}))} className="h-12 rounded-xl" placeholder="Catatan tambahan (opsional)"/></div></CardContent></Card>
-      <div className="flex gap-2"><Button variant="ghost" className="h-11" onClick={()=>setStep(1)}>Sebelumnya</Button><Button className="h-11 flex-1 rounded-xl" disabled={!detailReady} onClick={()=>setStep(3)}>Lanjutkan <ArrowRight/></Button></div>
-      <StickyFinanceAction><Button className="h-12 w-full rounded-xl" disabled={!detailReady} onClick={()=>setStep(3)}>Lanjutkan <ArrowRight/></Button></StickyFinanceAction>
+      <Card className="shadow-sm"><CardContent className="space-y-4 p-4"><div className="space-y-1.5"><label className="text-xs font-semibold" htmlFor="expense-category">Kategori Biaya</label><Input id="expense-category" value={form.kategoriBiaya} onChange={(e)=>setForm((c)=>({...c,kategoriBiaya:e.target.value}))} className="h-12 rounded-xl" placeholder="Operasional"/></div><div className="space-y-1.5"><label className="text-xs font-semibold" htmlFor="expense-description">Deskripsi</label><Input id="expense-description" value={form.deskripsi} onChange={(e)=>setForm((c)=>({...c,deskripsi:e.target.value}))} className="h-12 rounded-xl" placeholder="Uang digunakan untuk apa?" /></div><div className="space-y-1.5"><label className="text-xs font-semibold" htmlFor="expense-amount">Nominal</label><div className="flex items-center rounded-xl border px-3"><span className="text-sm font-semibold text-muted-foreground">Rp</span><Input id="expense-amount" type="number" min="1" value={form.amount||""} onChange={(e)=>setForm((c)=>({...c,amount:Number(e.target.value)}))} className="h-12 border-0 text-right text-lg font-bold shadow-none focus-visible:ring-0"/></div></div><div className="space-y-1.5"><label className="text-xs font-semibold" htmlFor="expense-date">Tanggal Pengeluaran</label><Input id="expense-date" type="date" value={form.tanggalPengeluaran??""} onChange={(e)=>setForm((c)=>({...c,tanggalPengeluaran:e.target.value}))} className="h-12 rounded-xl"/></div><div className="space-y-1.5"><label className="text-xs font-semibold" htmlFor="expense-evidence">Bukti</label><input ref={evidenceInputRef} id="expense-evidence" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,application/pdf" className="sr-only" onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; selectExpenseEvidence(file); }} /><div className="flex gap-2"><Button type="button" variant="outline" disabled={evidenceUploading} className="h-12 flex-1 justify-between rounded-xl" onClick={() => evidenceInputRef.current?.click()}><span>{evidenceUploading ? "Memproses bukti…" : selectedEvidenceFile ? "Pilih bukti lain" : form.buktiStoragePath ? evidenceFilename ?? "Bukti tersedia" : "Pilih Bukti"}</span><FileText className="size-4"/></Button>{form.buktiStoragePath && !selectedEvidenceFile ? <Button type="button" variant="ghost" disabled={evidenceUploading} className="h-12 rounded-xl" onClick={() => void removeExpenseEvidence()}>Hapus</Button> : null}</div>{selectedEvidenceFile ? <div className="space-y-3 rounded-xl border p-3"><div className="flex items-start gap-3">{evidencePreviewUrl ? <img src={evidencePreviewUrl} alt="Pratinjau bukti pengeluaran" className="size-20 rounded-lg border object-cover" /> : <div className="grid size-20 shrink-0 place-items-center rounded-lg bg-muted"><FileText className="size-7" /></div>}<div className="min-w-0 flex-1"><p className="break-words text-sm font-semibold">{selectedEvidenceFile.name}</p><p className="mt-1 text-xs text-muted-foreground">{(selectedEvidenceFile.size / 1024 / 1024).toFixed(2)} MB · Pratinjau lokal, belum diunggah.</p></div></div><div className="flex gap-2"><Button type="button" className="flex-1 rounded-xl" disabled={evidenceUploading || !context.data?.usahaId} onClick={() => void uploadExpenseEvidence()}>{evidenceUploading ? "Mengunggah…" : "Unggah Bukti"}</Button><Button type="button" variant="outline" className="rounded-xl" disabled={evidenceUploading} onClick={cancelEvidencePreview}>Batal</Button></div></div> : form.buktiStoragePath ? <p className="text-xs text-emerald-700">Bukti terunggah: {evidenceFilename ?? "berkas privat"}</p> : null}{evidenceError ? <Alert variant="destructive"><AlertTitle>Bukti belum siap</AlertTitle><AlertDescription>{evidenceError}</AlertDescription></Alert> : null}<p className="text-[11px] text-muted-foreground">Pratinjau sebelum unggah. File disimpan di penyimpanan privat Usaha. JPG, PNG, WebP, HEIC, HEIF, atau PDF; maksimal 10 MB.</p></div><div className="space-y-1.5"><label className="text-xs font-semibold" htmlFor="expense-note">Catatan</label><Input id="expense-note" value={form.catatan??""} onChange={(e)=>setForm((c)=>({...c,catatan:e.target.value}))} className="h-12 rounded-xl" placeholder="Catatan tambahan (opsional)"/></div></CardContent></Card>
+      <div className="flex gap-2"><Button variant="ghost" className="h-11" onClick={()=>setStep(1)}>Sebelumnya</Button><Button className="h-11 flex-1 rounded-xl" disabled={!detailReady || evidenceUploading || Boolean(selectedEvidenceFile)} onClick={()=>setStep(3)}>Lanjutkan <ArrowRight/></Button></div>
+      <StickyFinanceAction><Button className="h-12 w-full rounded-xl" disabled={!detailReady || evidenceUploading || Boolean(selectedEvidenceFile)} onClick={()=>setStep(3)}>Lanjutkan <ArrowRight/></Button></StickyFinanceAction>
     </div> : null}
 
     {step===3 ? <div className="space-y-4">
       <section><h2 className="text-base font-semibold">Tinjauan Pengeluaran</h2><p className="mt-1 text-xs text-muted-foreground">Pastikan sumber dan nominal benar sebelum dicatat.</p></section>
-      <Card className="shadow-sm"><CardContent className="space-y-4 p-4">{sourceRequiresId && form.sourceId ? <SourcePreview type={sourceType==="purchase"?"Pembelian":"Perawatan"} number={form.sourceId} meta="Hubungan Sumber" /> : null}<div className="grid gap-3 rounded-2xl bg-muted/40 p-4 sm:grid-cols-2"><ReviewRow label="Jenis Sumber" value={sourceTypes.find(([key])=>key===sourceType)?.[1]??sourceType}/><ReviewRow label="Kategori" value={form.kategoriBiaya}/><ReviewRow label="Tanggal" value={form.tanggalPengeluaran??"-"}/><ReviewRow label="Pemasok" value={supplier?.name??"Tidak ditautkan"}/></div><AmountDisplay amount={form.amount} label="Total Pengeluaran" direction="expense"/><div className="rounded-2xl border p-4"><p className="text-xs text-muted-foreground">Deskripsi</p><p className="mt-1 text-sm font-medium">{form.deskripsi}</p></div></CardContent></Card>
+      <Card className="shadow-sm"><CardContent className="space-y-4 p-4">{sourceRequiresId && form.sourceId ? <SourcePreview type={sourceType==="purchase"?"Pembelian":"Perawatan"} number={form.sourceId} meta="Hubungan Sumber" /> : null}<div className="grid gap-3 rounded-2xl bg-muted/40 p-4 sm:grid-cols-2"><ReviewRow label="Jenis Sumber" value={sourceTypes.find(([key])=>key===sourceType)?.[1]??sourceType}/><ReviewRow label="Kategori" value={form.kategoriBiaya}/><ReviewRow label="Tanggal" value={form.tanggalPengeluaran??"-"}/><ReviewRow label="Pemasok" value={supplier?.name??"Tidak ditautkan"}/><ReviewRow label="Bukti" value={evidenceFilename ?? (form.buktiStoragePath ? "Bukti tersedia" : "Tidak dilampirkan")}/></div><AmountDisplay amount={form.amount} label="Total Pengeluaran" direction="expense"/><div className="rounded-2xl border p-4"><p className="text-xs text-muted-foreground">Deskripsi</p><p className="mt-1 text-sm font-medium">{form.deskripsi}</p></div></CardContent></Card>
       <Alert className="border-primary/10 bg-primary/[0.03]"><ShieldCheck className="size-4"/><AlertTitle>Pengeluaran → Transaksi Keuangan</AlertTitle><AlertDescription>Pengeluaran akan dicatat sebagai fakta Keuangan. Pembelian/Perawatan tetap menjadi sumber pengeluaran, bukan pembayaran.</AlertDescription></Alert>
       {cashoutRequired && financeAccounts.error ? <Alert variant="destructive"><CircleAlert className="size-4"/><AlertTitle>Akun uang belum dapat dimuat</AlertTitle><AlertDescription>{financeAccounts.error instanceof Error ? financeAccounts.error.message : "Saldo akun uang belum dapat diverifikasi."}</AlertDescription></Alert> : null}
       {cashoutRequired ? <FinanceCashout

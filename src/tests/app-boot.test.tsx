@@ -9,16 +9,19 @@ vi.mock("@/app/providers/supabase/client", () => ({
       getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "test-auth-user" } } }, error: null }),
       getUser: vi.fn().mockResolvedValue({ data: { user: { id: "test-auth-user", email: "admin@rentaloutdoor.test" } }, error: null }),
     },
-    from: vi.fn(() => ({
-      select: vi.fn(() => ({
-        eq: vi.fn(() => ({
-          maybeSingle: vi.fn().mockResolvedValue({
-            data: { akun_admin_id: "test-admin", nama_tampilan: "Nurdin Ramadhan", role: "super_admin", status: "active" },
-            error: null,
-          }),
-        })),
-      })),
-    })),
+    from: vi.fn(() => {
+      const queryBuilder = {
+        select: vi.fn(),
+        eq: vi.fn(),
+        maybeSingle: vi.fn().mockResolvedValue({
+          data: { akun_admin_id: "test-admin", nama_tampilan: "Nurdin Ramadhan", role: "super_admin", status: "active" },
+          error: null,
+        }),
+      };
+      queryBuilder.select.mockReturnValue(queryBuilder);
+      queryBuilder.eq.mockReturnValue(queryBuilder);
+      return queryBuilder;
+    }),
   },
 }));
 
