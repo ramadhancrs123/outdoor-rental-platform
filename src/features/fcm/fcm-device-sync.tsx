@@ -11,7 +11,7 @@ export function FcmDeviceSync() {
     } else if (status === "failed") {
       console.error("[FCM] Registrasi gagal:", error ? (error.length > 200 ? error.substring(0, 200) + "..." : error) : "Unknown error");
     } else if (status === "checking") {
-      console.log("[FCM] Memeriksa token Android. Bridge tersedia:", tokenLength !== null ? "Ya (panjang: " + tokenLength + ")" : "Tidak");
+      console.log("[FCM] Memeriksa token Android. Token tersedia:", tokenLength !== null ? "Ya (panjang: " + tokenLength + ")" : "Belum");
     } else if (status === "idle") {
       console.log("[FCM] Status: idle — token belum tersedia atau kondisi belum siap.");
     }

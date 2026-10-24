@@ -9,6 +9,21 @@ import type { FcmTokenResponse, FcmDeviceInfo } from "./types";
 interface AndroidNativeBridge { getFCMToken?: () => string; }
 interface JsBridge { getFCMToken?: () => string; }
 
+/** True only when the native JavaScript bridge is exposed by the Android WebView. */
+export function hasAndroidFcmBridge(): boolean {
+  try {
+    if (typeof window === "undefined") return false;
+
+    const bridges = window as unknown as Record<string, AndroidNativeBridge | null>;
+    return ["AndroidInterface", "JSBridge"].some((name) => {
+      const bridge = bridges[name];
+      return bridge !== null && bridge !== undefined && typeof bridge.getFCMToken === "function";
+    });
+  } catch {
+    return false;
+  }
+}
+
 export function retrieveFcmTokenFromAndroid(): FcmTokenResponse {
   try {
     if (typeof window === "undefined") {
