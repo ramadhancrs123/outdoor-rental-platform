@@ -13,6 +13,7 @@ import { Toaster } from "@/components/refine-ui/notification/toaster";
 import { ThemeProvider } from "@/components/refine-ui/theme/theme-provider";
 import { dataProvider } from "./data";
 import { CurrentUsahaProvider } from "@/app/current-usaha";
+import { FcmDeviceSync } from "@/features/fcm/fcm-device-sync";
 
 export function AppProviders({ children }: PropsWithChildren) {
   return (
@@ -32,6 +33,7 @@ export function AppProviders({ children }: PropsWithChildren) {
               }}
             >
               {children}
+              <FcmDeviceSync />
               <Toaster />
               <RefineKbar />
               <UnsavedChangesNotifier />

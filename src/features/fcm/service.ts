@@ -86,13 +86,13 @@ export async function registerFcmDeviceToken(
       last_used_at: new Date().toISOString(),
     };
 
-    // Kontrak RLS user_devices mengizinkan insert/update oleh pemilik
-    // (admin atau investor yang aktif). Kita menggunakan upsert berdasarkan
-    // kombinasi usaha_id + user_type + user_id agar tidak duplikat perangkat.
+    // Kontrak database memiliki unique index:
+    // user_devices_usaha_id_user_type_user_id_fcm_token_key (usaha_id, user_type, user_id, fcm_token)
+    // Kita menggunakan onConflict sesuai indeks aktual agar operasi upsert sah.
     const { error } = await supabase
       .from("user_devices")
       .upsert(payload, {
-        onConflict: "usaha_id,user_type,user_id",
+        onConflict: "usaha_id,user_type,user_id,fcm_token",
         ignoreDuplicates: false,
       });
 
