@@ -1,0 +1,18 @@
+project_id = "nbirkybutpvtrqifaxlt"
+
+# These endpoints authenticate trusted server-to-server calls with the
+# Vault-managed x-internal-token; they intentionally do not use platform JWT auth.
+[functions.webhook-dispatcher]
+verify_jwt = false
+
+[functions.webhook-retry-processor]
+verify_jwt = false
+
+[functions.process-fcm-queue-cron]
+verify_jwt = false
+
+[functions.process-fcm-queue]
+verify_jwt = false
+
+[functions.send-push-notification]
+verify_jwt = false
