@@ -6,6 +6,9 @@ import type { FcmTokenResponse, FcmDeviceInfo } from "./types";
  * Kontrak: Android menyimpan token di SWVContext.fcm_token dan mengekspos
  * melalui window.AndroidInterface.getFCMToken() atau window.JSBridge.getFCMToken().
  */
+interface AndroidNativeBridge { getFCMToken?: () => string; }
+interface JsBridge { getFCMToken?: () => string; }
+
 export function retrieveFcmTokenFromAndroid(): FcmTokenResponse {
   try {
     if (typeof window === "undefined") {
@@ -13,19 +16,21 @@ export function retrieveFcmTokenFromAndroid(): FcmTokenResponse {
     }
 
     // Prioritas: interface utama Android (SmartWebView WebAppInterface)
-    const nativeInterface = (window as unknown as Record<string, unknown>)["AndroidInterface"];
-    if (nativeInterface && typeof (nativeInterface as Record<string, unknown>).getFCMToken === "function") {
-      const token = (nativeInterface as Record<string, unknown>).getFCMToken();
-      if (typeof token === "string" && token.length > 0) {
+    const nativeInterface = (window as unknown as Record<string, AndroidNativeBridge | null>)["AndroidInterface"] ?? null;
+    if (nativeInterface && typeof nativeInterface.getFCMToken === "function") {
+      const tokenValue = nativeInterface.getFCMToken?.();
+      const token = typeof tokenValue === "string" ? tokenValue : "";
+      if (token.length > 0) {
         return { token, source: "android_interface" };
       }
     }
 
     // Fallback: JS bridge plugin (JSInterfacePlugin)
-    const jsBridge = (window as unknown as Record<string, unknown>)["JSBridge"];
-    if (jsBridge && typeof (jsBridge as Record<string, unknown>).getFCMToken === "function") {
-      const token = (jsBridge as Record<string, unknown>).getFCMToken();
-      if (typeof token === "string" && token.length > 0) {
+    const jsBridge = (window as unknown as Record<string, JsBridge | null>)["JSBridge"] ?? null;
+    if (jsBridge && typeof jsBridge.getFCMToken === "function") {
+      const tokenValue = jsBridge.getFCMToken?.();
+      const token = typeof tokenValue === "string" ? tokenValue : "";
+      if (token.length > 0) {
         return { token, source: "js_bridge" };
       }
     }
