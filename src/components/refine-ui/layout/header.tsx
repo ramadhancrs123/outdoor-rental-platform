@@ -83,10 +83,7 @@ export function Header() {
             {unreadCount > 0 ? <span className="absolute -right-0.5 -top-0.5 grid min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[9px] font-bold leading-4 text-white">{unreadCount > 9 ? "9+" : unreadCount}</span> : null}
           </Link>
         </Button>
-        <ThemeToggle className="hidden sm:inline-flex" />
-        <Button variant="ghost" size="icon" aria-label="Tema" className="sm:hidden">
-          <SunMoon className="size-[18px]" />
-        </Button>
+        <ThemeToggle className="inline-flex" />
       </div>
     </header>
   );
