@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState, type PropsWithChildren } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type PropsWithChildren } from "react";
+import { supabase } from "@/app/providers/supabase/client";
 import {
   listAuthorizedUsaha,
   resolveTenantContext,
@@ -27,14 +28,18 @@ export function CurrentUsahaProvider({ children }: PropsWithChildren) {
   const [current, setCurrent] = useState<CurrentUsahaContextValue["current"]>(null);
   const [available, setAvailable] = useState<AuthorizedUsaha[]>([]);
   const [error, setError] = useState<RenterReadError | null>(null);
+  const loadVersion = useRef(0);
 
   const load = useCallback(async () => {
+    const version = loadVersion.current + 1;
+    loadVersion.current = version;
     setStatus("loading");
     setError(null);
     setCurrent(null);
 
     try {
       const authorized = await listAuthorizedUsaha();
+      if (version !== loadVersion.current) return;
       setAvailable(authorized);
 
       const stored = readSelectedUsahaId();
@@ -52,10 +57,12 @@ export function CurrentUsahaProvider({ children }: PropsWithChildren) {
       }
 
       const context = await resolveTenantContext(undefined, selected);
+      if (version !== loadVersion.current) return;
       writeSelectedUsahaId(context.usahaId);
       setCurrent(context);
       setStatus("ready");
     } catch (cause) {
+      if (version !== loadVersion.current) return;
       const normalized = cause instanceof RenterReadError
         ? cause
         : new RenterReadError(cause instanceof Error ? cause.message : "Konteks Usaha gagal dimuat.", 500);
@@ -68,13 +75,40 @@ export function CurrentUsahaProvider({ children }: PropsWithChildren) {
     void load();
   }, [load]);
 
+  // The provider mounts on the login route too. If the first load runs before
+  // authentication completes, reload the authorized tenant context on sign-in.
+  useEffect(() => {
+    let active = true;
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_IN" && session) {
+        window.setTimeout(() => {
+          if (active) void load();
+        }, 0);
+      } else if (event === "SIGNED_OUT") {
+        loadVersion.current = loadVersion.current + 1;
+        setStatus("loading");
+        setCurrent(null);
+        setAvailable([]);
+        setError(null);
+      }
+    });
+
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
+  }, [load]);
+
   const selectUsaha = useCallback(async (usahaId: string) => {
+    const version = loadVersion.current + 1;
+    loadVersion.current = version;
     setStatus("loading");
     setError(null);
     setCurrent(null);
 
     try {
       const context = await resolveTenantContext(undefined, usahaId);
+      if (version !== loadVersion.current) return;
       writeSelectedUsahaId(context.usahaId);
       setAvailable((previous) => {
         if (previous.some((usaha) => usaha.usahaId === context.usahaId)) return previous;
@@ -83,6 +117,7 @@ export function CurrentUsahaProvider({ children }: PropsWithChildren) {
       setCurrent(context);
       setStatus("ready");
     } catch (cause) {
+      if (version !== loadVersion.current) return;
       const normalized = cause instanceof RenterReadError
         ? cause
         : new RenterReadError(cause instanceof Error ? cause.message : "Usaha tidak dapat dipilih.", 500);
