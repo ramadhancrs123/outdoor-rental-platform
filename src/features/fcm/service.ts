@@ -9,6 +9,46 @@ import type { FcmTokenResponse, FcmDeviceInfo } from "./types";
 interface AndroidNativeBridge { getFCMToken?: () => string; }
 interface JsBridge { getFCMToken?: () => string; }
 
+export type FcmDiagnosticStage =
+  | "bridge_missing"
+  | "waiting_context"
+  | "waiting_token"
+  | "registered"
+  | "registration_failed"
+  | "bridge_timeout"
+  | "context_timeout"
+  | "token_timeout";
+
+export type FcmDiagnostic = {
+  stage: FcmDiagnosticStage;
+  has_bridge: boolean;
+  identity_ready: boolean;
+  tenant_ready: boolean;
+  token_length?: number | null;
+  user_type?: "admin" | "investor";
+  error_code?: "database_permission" | "duplicate_conflict" | "registration_failed" | "bridge_timeout" | "context_timeout" | "token_timeout";
+};
+
+/** Detect a native Android WebView without relying on native-only APIs. */
+export function isLikelyAndroidWebView(): boolean {
+  try {
+    if (typeof window === "undefined") return false;
+    const userAgent = window.navigator?.userAgent ?? "";
+    return /Android/i.test(userAgent) && /\bwv\b/i.test(userAgent);
+  } catch {
+    return false;
+  }
+}
+
+/** Send only non-secret FCM lifecycle metadata to authenticated Edge Function logs. */
+export async function reportFcmDiagnostic(event: FcmDiagnostic): Promise<void> {
+  try {
+    await supabase.functions.invoke("fcm-device-diagnostic", { body: event });
+  } catch {
+    // Diagnostics must never prevent token registration or surface user-facing errors.
+  }
+}
+
 /** True only when the native JavaScript bridge is exposed by the Android WebView. */
 export function hasAndroidFcmBridge(): boolean {
   try {

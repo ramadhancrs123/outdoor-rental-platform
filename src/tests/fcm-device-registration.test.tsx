@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
     usahaNama: string;
   } | null,
   hasBridge: vi.fn(),
+  isAndroidWebView: vi.fn(),
+  reportDiagnostic: vi.fn(),
   retrieveToken: vi.fn(),
   registerToken: vi.fn(),
 }));
@@ -29,6 +31,8 @@ vi.mock("@/app/current-usaha-context", () => ({
 
 vi.mock("@/features/fcm/service", () => ({
   hasAndroidFcmBridge: mocks.hasBridge,
+  isLikelyAndroidWebView: mocks.isAndroidWebView,
+  reportFcmDiagnostic: mocks.reportDiagnostic,
   retrieveFcmTokenFromAndroid: mocks.retrieveToken,
   registerFcmDeviceToken: mocks.registerToken,
 }));
@@ -58,6 +62,8 @@ describe("FCM device registration", () => {
       usahaNama: "Usaha Test",
     };
     mocks.hasBridge.mockReset().mockReturnValue(true);
+    mocks.isAndroidWebView.mockReset().mockReturnValue(false);
+    mocks.reportDiagnostic.mockReset().mockResolvedValue(undefined);
     mocks.retrieveToken
       .mockReset()
       .mockReturnValue({ token: null, source: null });
@@ -105,8 +111,49 @@ describe("FCM device registration", () => {
       await vi.advanceTimersByTimeAsync(5000);
     });
 
-    expect(mocks.retrieveToken).toHaveBeenCalledOnce();
+    expect(mocks.retrieveToken).not.toHaveBeenCalled();
     expect(mocks.registerToken).not.toHaveBeenCalled();
     expect(screen.getByTestId("fcm-status")).toHaveTextContent("idle");
+  });
+
+  test("registers an admin device from the authorized tenant context while Refine identity is still absent", async () => {
+    mocks.identity = null;
+    mocks.retrieveToken.mockReturnValue({ token: "test-fcm-token", source: "android_interface" });
+
+    render(<Harness />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mocks.registerToken).toHaveBeenCalledOnce();
+    expect(screen.getByTestId("fcm-status")).toHaveTextContent("registered");
+
+    expect(mocks.registerToken).toHaveBeenCalledWith(
+      "usaha-test-id",
+      "admin",
+      "admin-domain-id",
+      "test-fcm-token",
+    );
+  });
+
+  test("retries a temporarily missing bridge in the Android WebView", async () => {
+    mocks.hasBridge.mockReturnValue(false);
+    mocks.isAndroidWebView.mockReturnValue(true);
+    mocks.retrieveToken.mockReturnValue({ token: "test-fcm-token", source: "android_interface" });
+
+    render(<Harness />);
+
+    expect(mocks.registerToken).not.toHaveBeenCalled();
+    expect(mocks.reportDiagnostic).toHaveBeenCalledWith(expect.objectContaining({ stage: "bridge_missing" }));
+
+    mocks.hasBridge.mockReturnValue(true);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+
+    expect(mocks.registerToken).toHaveBeenCalledOnce();
+    expect(screen.getByTestId("fcm-status")).toHaveTextContent("registered");
   });
 });
