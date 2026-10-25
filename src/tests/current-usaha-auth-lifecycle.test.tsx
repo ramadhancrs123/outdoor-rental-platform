@@ -64,7 +64,9 @@ describe("CurrentUsahaProvider auth lifecycle", () => {
     vi.useRealTimers();
   });
 
-  test("reloads authorized tenant context after the user signs in", async () => {
+  test.each(["SIGNED_IN", "INITIAL_SESSION"] as const)(
+    "reloads authorized tenant context after %s",
+    async (authEvent) => {
     render(
       <CurrentUsahaProvider>
         <Harness />
@@ -81,7 +83,7 @@ describe("CurrentUsahaProvider auth lifecycle", () => {
 
     expect(mocks.authListener).not.toBeNull();
     await act(async () => {
-      mocks.authListener?.("SIGNED_IN", {});
+      mocks.authListener?.(authEvent, {});
       await vi.advanceTimersByTimeAsync(0);
       await Promise.resolve();
       await Promise.resolve();

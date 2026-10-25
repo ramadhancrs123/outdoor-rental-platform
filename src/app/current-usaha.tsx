@@ -80,7 +80,7 @@ export function CurrentUsahaProvider({ children }: PropsWithChildren) {
   useEffect(() => {
     let active = true;
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === "SIGNED_IN" && session) {
+      if ((event === "SIGNED_IN" || event === "INITIAL_SESSION") && session) {
         window.setTimeout(() => {
           if (active) void load();
         }, 0);
