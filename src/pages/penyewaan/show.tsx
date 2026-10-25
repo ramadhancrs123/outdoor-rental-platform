@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { ArrowLeft, ArrowRight, ChevronDown, Clock3, CreditCard, Filter, Handshake, History, MessageCircle, MoreHorizontal, Package, PackageCheck, Phone, Plus, QrCode, ReceiptText, RefreshCw, Search, ShieldCheck, WalletCards } from "lucide-react";
+import { ArrowLeft, ArrowRight, Calculator, ChevronDown, Clock3, CreditCard, Filter, Handshake, History, MessageCircle, MoreHorizontal, Package, PackageCheck, Phone, Plus, QrCode, ReceiptText, RefreshCw, Search, ShieldCheck, WalletCards } from "lucide-react";
 import { Link, useParams } from "react-router";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -16,6 +16,8 @@ import { QrPreviewDialog, RentalReceiptDialog } from "@/components/qr-operasiona
 import { buildPenyewaanQrUrl, getQrPenyewaanRecord, getRentalReceiptSupport } from "@/features/qr-operasional";
 import { paths } from "@/routes/paths";
 import { RentalFinanceCard } from "@/components/penyewaan/rental-finance-card";
+import { RentalHeaderCountdown } from "@/components/penyewaan/rental-header-countdown";
+import { RentalLateFeePanel } from "@/components/penyewaan/rental-late-fee-panel";
 import { RentalOperationalWorkspace } from "@/components/penyewaan/rental-operational-workspace";
 import { RentalPaymentDialog } from "@/components/penyewaan/rental-payment-dialog";
 import { RentalPhase2Actions } from "./phase2-actions";
@@ -39,6 +41,7 @@ export function RentalShow() {
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [phase2Open, setPhase2Open] = useState(false);
+  const [lateFeeExpanded, setLateFeeExpanded] = useState(false);
   const rentalQr = useQuery({
     queryKey: ["qr-operasional", "penyewaan", context.data?.usahaId, id],
     queryFn: () => getQrPenyewaanRecord(context.data!.usahaId, id!),
@@ -102,6 +105,8 @@ export function RentalShow() {
   const renterName = item.penyewa_nama ?? "Penyewa tidak ditemukan";
   const renterPhone = item.penyewa_telepon?.trim() || null;
   const whatsappHref = renterPhone ? buildWhatsAppHref(renterPhone, renterName, item.nomor_penyewaan) : null;
+  const lateFeeReviews = (consequenceReviews.data ?? []).filter((review) => review.jenis_konsekuensi === "late_fee");
+  const otherConsequenceReviews = (consequenceReviews.data ?? []).filter((review) => review.jenis_konsekuensi !== "late_fee");
   return (
     <div data-testid="rental-detail-root" className="mx-auto w-full max-w-3xl space-y-2.5 pb-28 sm:space-y-3.5 lg:pb-10">
       <section className="relative isolate overflow-hidden rounded-[24px] border border-white/70 shadow-[0_10px_32px_rgba(23,68,55,.10)]">
@@ -131,32 +136,30 @@ export function RentalShow() {
             </Badge>
           </div>
 
-          <div className="mt-5 max-w-[30rem]">
-            <div className="flex items-center gap-2">
-              <span className="grid size-9 place-items-center rounded-xl bg-white/86 text-[#0d5e4b] shadow-sm backdrop-blur">
-                <WalletCards className="size-4.5" />
-              </span>
-              <div>
-                <p className="text-[20px] font-bold leading-5 tracking-[-0.03em]">Keuangan</p>
-                <p className="mt-0.5 text-[10px] text-white/82">Pantau pembayaran dan status operasional penyewaan.</p>
-              </div>
-            </div>
-          </div>
+          <RentalHeaderCountdown
+            rentalStatus={item.status}
+            scheduleAt={item.jadwal_kembali}
+            toleranceDeadline={item.tolerance_deadline}
+            actualReturnAt={item.actual_return_completed_at}
+          />
         </div>
       </section>
 
-      <nav aria-label="Detail penyewaan" className="grid grid-cols-4 gap-1.5 rounded-2xl border border-border/60 bg-card p-1.5 shadow-[0_4px_16px_rgba(30,68,57,.05)]">
-        <button type="button" onClick={() => document.getElementById("rental-finance")?.scrollIntoView({ behavior: "smooth", block: "start" })} className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-xl bg-[#0a6b55] px-2 text-[10px] font-semibold text-white shadow-sm">
-          <WalletCards className="size-3.5" />Keuangan
+      <nav aria-label="Detail penyewaan" className="grid grid-cols-5 gap-1 rounded-2xl border border-border/60 bg-card p-1.5 shadow-[0_4px_16px_rgba(30,68,57,.05)]">
+        <button type="button" onClick={() => document.getElementById("rental-finance")?.scrollIntoView({ behavior: "smooth", block: "start" })} className="inline-flex min-h-10 flex-col items-center justify-center gap-0.5 rounded-xl bg-[#0a6b55] px-1 py-1 text-[9px] font-semibold leading-3 text-white shadow-sm sm:text-[10px]">
+          <WalletCards className="size-3.5 shrink-0" />Keuangan
         </button>
-        <button type="button" onClick={() => setQrOpen(true)} disabled={!rentalQr.data} className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-xl bg-muted/35 px-2 text-[10px] font-semibold text-foreground transition-colors hover:bg-muted">
-          <QrCode className="size-3.5" />QR
+        <button type="button" onClick={() => { setLateFeeExpanded(true); window.setTimeout(() => document.getElementById("rental-late-fee")?.scrollIntoView?.({ behavior: "smooth", block: "start" }), 50); }} className="inline-flex min-h-10 flex-col items-center justify-center gap-0.5 rounded-xl bg-muted/35 px-1 py-1 text-[9px] font-semibold leading-3 text-foreground transition-colors hover:bg-muted sm:text-[10px]">
+          <Calculator className="size-3.5 shrink-0" />Denda
         </button>
-        <button type="button" onClick={() => setReceiptOpen(true)} disabled={!receiptData} className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-xl bg-muted/35 px-2 text-[10px] font-semibold text-foreground transition-colors hover:bg-muted">
-          <ReceiptText className="size-3.5" />Struk
+        <button type="button" onClick={() => setQrOpen(true)} disabled={!rentalQr.data} className="inline-flex min-h-10 flex-col items-center justify-center gap-0.5 rounded-xl bg-muted/35 px-1 py-1 text-[9px] font-semibold leading-3 text-foreground transition-colors hover:bg-muted sm:text-[10px]">
+          <QrCode className="size-3.5 shrink-0" />QR
         </button>
-        <button type="button" onClick={() => document.getElementById("rental-history")?.scrollIntoView({ behavior: "smooth", block: "start" })} className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-xl bg-muted/35 px-2 text-[10px] font-semibold text-foreground transition-colors hover:bg-muted">
-          <History className="size-3.5" />Riwayat
+        <button type="button" onClick={() => setReceiptOpen(true)} disabled={!receiptData} className="inline-flex min-h-10 flex-col items-center justify-center gap-0.5 rounded-xl bg-muted/35 px-1 py-1 text-[9px] font-semibold leading-3 text-foreground transition-colors hover:bg-muted sm:text-[10px]">
+          <ReceiptText className="size-3.5 shrink-0" />Struk
+        </button>
+        <button type="button" onClick={() => document.getElementById("rental-history")?.scrollIntoView({ behavior: "smooth", block: "start" })} className="inline-flex min-h-10 flex-col items-center justify-center gap-0.5 rounded-xl bg-muted/35 px-1 py-1 text-[9px] font-semibold leading-3 text-foreground transition-colors hover:bg-muted sm:text-[10px]">
+          <History className="size-3.5 shrink-0" />Riwayat
         </button>
       </nav>
 
@@ -190,6 +193,21 @@ export function RentalShow() {
         context={{ ...context.data, timezone: context.data.timezone }}
         rental={item}
         onRecordPayment={() => setPaymentOpen(true)}
+      />
+
+      <RentalLateFeePanel
+        scheduleAt={item.jadwal_kembali}
+        toleranceDeadline={item.tolerance_deadline}
+        actualReturnAt={item.actual_return_completed_at}
+        rentalStatus={item.status}
+        lateFeeEnabled={context.data.lateFeeEnabled}
+        lateFeePerHour={context.data.lateFeePerHour}
+        currencyCode={item.currency_code}
+        reviews={lateFeeReviews}
+        reviewsPending={consequenceReviews.isPending}
+        reviewsError={Boolean(consequenceReviews.error)}
+        expanded={lateFeeExpanded}
+        onExpandedChange={setLateFeeExpanded}
       />
 
       <RentalOperationalWorkspace
@@ -488,8 +506,8 @@ export function RentalShow() {
       </details>
 
       <div id="rental-history" className="space-y-2.5">
-        {consequenceReviews.data?.length ? (
-          <RentalConsequenceList items={consequenceReviews.data} />
+        {otherConsequenceReviews.length ? (
+          <RentalConsequenceList items={otherConsequenceReviews} title="Tinjauan Konsekuensi Lainnya" />
         ) : null}
         <details className="group rounded-[22px] border border-border/65 bg-card shadow-none">
           <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3.5 py-3 marker:hidden">

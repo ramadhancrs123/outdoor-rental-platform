@@ -86,7 +86,13 @@ describe("Penyewaan read-side",()=> {
   });
 
   test("rental detail keeps inventory and finance ownership boundaries",async()=> {
-    serviceMock.getPenyewaanContext.mockResolvedValue(context);
+    serviceMock.getPenyewaanContext.mockResolvedValue({
+      ...context,
+      timezone:"Asia/Jakarta",
+      defaultToleranceHours:2,
+      lateFeeEnabled:true,
+      lateFeePerHour:10000,
+    });
     serviceMock.getRental.mockResolvedValue({
       ...rental,
       lines:[{detail_penyewaan_id:"detail-1",usaha_id:"usaha-a",penyewaan_id:"rental-1",barang_id:"barang-1",varian_barang_id:null,paket_sewa_id:null,jumlah:"2",unit_price:"375000",currency_code:"IDR",subtotal:"750000",catatan:null,barang_nama:"Tenda Dome 4P",varian_nama:null,paket_nama:null}],
@@ -98,6 +104,10 @@ describe("Penyewaan read-side",()=> {
     render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><MemoryRouter initialEntries={["/penyewaan/rental-1"]}><Routes><Route path="/penyewaan/:id" element={<RentalShow/>}/></Routes></MemoryRouter></QueryClientProvider>);
     expect(await screen.findByRole("heading",{level:1,name:"RNT-001"})).toBeInTheDocument();
     expect(screen.getByText("TD4P-001")).toBeInTheDocument();
-    expect(screen.getByText(/Pembayaran tetap dikelola oleh Keuangan/)).toBeInTheDocument();
+    expect(screen.getByTestId("rental-header-countdown")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button",{name:"Denda"}));
+    expect(screen.getByRole("heading",{name:"Perhitungan Denda"})).toBeInTheDocument();
+    expect(screen.getByText("Estimasi denda berjalan")).toBeInTheDocument();
+    expect(screen.getByRole("link",{name:/Buka Keuangan/})).toBeInTheDocument();
   });
 });

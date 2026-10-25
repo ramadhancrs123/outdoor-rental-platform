@@ -70,7 +70,6 @@ export function RentalFinanceCard({
                   <p className="text-[15px] font-bold tracking-tight text-foreground">Keuangan</p>
                   <Badge variant="outline" className="rounded-full border-emerald-200 bg-emerald-50/70 px-2 py-0.5 text-[9px] text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/25 dark:text-emerald-300">Rental</Badge>
                 </div>
-                <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">Pembayaran rental tetap ditelusuri melalui Keuangan.</p>
               </div>
             </div>
             <Button asChild variant="ghost" size="sm" className="h-8 shrink-0 rounded-lg px-2 text-[10px] font-semibold text-primary">
@@ -135,9 +134,6 @@ export function RentalFinanceCard({
             </>
           )}
 
-          <p className="mt-2.5 text-[9px] leading-4 text-muted-foreground">
-            Keuangan tetap menjadi sumber kebenaran fakta pembayaran; Detail Penyewaan hanya menyediakan entry point kontekstual.
-          </p>
         </CardContent>
       </Card>
     </section>

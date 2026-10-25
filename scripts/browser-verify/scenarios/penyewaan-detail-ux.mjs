@@ -35,6 +35,37 @@ export default async function rentalDetailUx({ page, capture }) {
     await summary.waitFor({ state: "visible", timeout: 10000 });
   }
 
+  const lateFeeNav = page.getByRole("button", { name: "Denda", exact: true });
+  await lateFeeNav.waitFor({ state: "visible", timeout: 10000 });
+  await lateFeeNav.click();
+  const lateFeePanel = page.getByTestId("rental-late-fee-panel");
+  await lateFeePanel.waitFor({ state: "visible", timeout: 10000 });
+  if (!(await lateFeePanel.getByRole("heading", { name: "Perhitungan Denda" }).count())) {
+    throw new Error("Panel Perhitungan Denda tidak menampilkan heading yang diharapkan.");
+  }
+
+  const feeDisclosureCount = await lateFeePanel.locator("details").count();
+  if (!feeDisclosureCount) {
+    const detailMarkup = await lateFeePanel.evaluate((element) => element.innerHTML.slice(0, 1200));
+    throw new Error("Elemen expandable Denda tidak ditemukan: " + detailMarkup);
+  }
+  const feeDisclosure = lateFeePanel.locator("details").first();
+  if (!(await feeDisclosure.evaluate((element) => element.open))) {
+    throw new Error("Tombol navigasi Denda tidak membuka panel.");
+  }
+  await feeDisclosure.locator("summary").click();
+  await page.waitForFunction(() => document.querySelector("#rental-late-fee details")?.open === false);
+  await feeDisclosure.locator("summary").click();
+  await page.waitForFunction(() => document.querySelector("#rental-late-fee details")?.open === true);
+
+  const countdown = page.getByTestId("rental-header-countdown");
+  if (await countdown.count()) {
+    const countdownText = await countdown.innerText();
+    if (!/Waktu tersisa|Keterlambatan berjalan/.test(countdownText)) {
+      throw new Error("Countdown pada banner detail tidak menampilkan label waktu yang diharapkan.");
+    }
+  }
+
   const paymentButtons = page.getByRole("button", { name: /Catat Pembayaran/i });
   let paymentButton = null;
   for (let index = 0; index < await paymentButtons.count(); index += 1) {

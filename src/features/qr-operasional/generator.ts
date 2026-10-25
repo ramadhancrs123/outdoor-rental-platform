@@ -4,7 +4,8 @@ export async function generateQrSvg(value: string, size = 256) {
   return QRCode.toString(value, {
     type: "svg",
     errorCorrectionLevel: "H",
-    margin: 1,
+    // ISO/IEC 18004 quiet zone: keep at least four modules around the QR symbol.
+    margin: 4,
     width: size,
   });
 }
@@ -14,7 +15,8 @@ export async function generateQrPngDataUrl(value: string, size = 512) {
   const { default: QRCode } = await import("qrcode");
   return QRCode.toDataURL(value, {
     errorCorrectionLevel: "H",
-    margin: 1,
+    // ISO/IEC 18004 quiet zone: keep at least four modules around the QR symbol.
+    margin: 4,
     width: size,
   });
 }

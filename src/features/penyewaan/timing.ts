@@ -26,13 +26,15 @@ export function deriveRentalTiming(
   const nowMs = now.getTime();
 
   if (Number.isFinite(actualMs)) {
+    // Without a separate tolerance deadline, scheduled return is the billing cutoff.
+    const billingCutoffMs = Number.isFinite(toleranceMs) ? toleranceMs : scheduleMs;
     return {
       state: "returned",
       scheduleAt,
       toleranceDeadline,
       actualReturnAt,
       remainingMs: 0,
-      overdueMs: Number.isFinite(toleranceMs) ? Math.max(0, actualMs - toleranceMs) : 0,
+      overdueMs: Number.isFinite(billingCutoffMs) ? Math.max(0, actualMs - billingCutoffMs) : 0,
     };
   }
 

@@ -1,5 +1,6 @@
 import { PDFDocument } from "pdf-lib";
 import { describe, expect, test } from "vitest";
+import { parseQrValue } from "@/features/qr-operasional/scan";
 import {
   buildPenyewaanQrUrl,
   buildUnitQrUrl,
@@ -19,6 +20,14 @@ describe("QR operasional foundation", () => {
     expect(buildPenyewaanQrUrl("https://admin.example.com", "rent456")).toBe(
       "https://admin.example.com/qr/penyewaan/rent456",
     );
+  });
+
+  test("parses rental QR deep links into the rental token", () => {
+    expect(parseQrValue("https://admin.example.com/qr/penyewaan/rent456?source=printed"))
+      .toEqual({ jenis: "penyewaan", token: "rent456" });
+    expect(parseQrValue("https://admin.example.com/qr/unit/unit123"))
+      .toEqual({ jenis: "unit", token: "unit123" });
+    expect(parseQrValue("  rent456  ")).toEqual({ token: "rent456" });
   });
 
   test("generates QR SVG and PNG data URL", async () => {

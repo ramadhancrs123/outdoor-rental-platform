@@ -58,6 +58,18 @@ describe("rental timing", () => {
     });
   });
 
+  it("uses scheduled return as billing cutoff when no tolerance was configured", () => {
+    const snapshot = deriveRentalTiming(
+      "2026-10-01T08:00:00+07:00",
+      null,
+      "2026-10-01T10:01:00+07:00",
+      base,
+    );
+    expect(snapshot.state).toBe("returned");
+    expect(snapshot.overdueMs).toBe(2 * 60 * 60 * 1000 + 60 * 1000);
+    expect(calculateDisplayLateFee(true, 10000, snapshot)).toEqual({ hours: 3, amount: 30000 });
+  });
+
   it("does not calculate fee while feature is disabled", () => {
     const snapshot = deriveRentalTiming(
       "2026-10-01T08:00:00+07:00",

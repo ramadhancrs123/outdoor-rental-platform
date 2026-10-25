@@ -20,31 +20,11 @@ import {
   type UnitQrLabelData,
 } from "@/features/qr-operasional";
 import type { InventoryContext, InventoryUnit } from "@/features/inventaris";
+import { parseQrValue } from "@/features/qr-operasional/scan";
 
 export type QrScanResult =
   | { jenis: "unit"; id: string }
   | { jenis: "penyewaan"; id: string };
-
-function parseQrValue(value: string): { jenis?: "unit" | "penyewaan"; token: string } {
-  const raw = value.trim();
-  if (!raw) return { token: "" };
-
-  try {
-    const url = new URL(raw, window.location.origin);
-    const segments = url.pathname.split("/").filter(Boolean);
-    const qrIndex = segments.indexOf("qr");
-    if (qrIndex >= 0 && segments[qrIndex + 1] === "unit" && segments[qrIndex + 2]) {
-      return { jenis: "unit", token: decodeURIComponent(segments[qrIndex + 2]) };
-    }
-    if (qrIndex >= 0 && segments[qrIndex + 1] === "penyewaan" && segments[qrIndex + 2]) {
-      return { jenis: "penyewaan", token: decodeURIComponent(segments[qrIndex + 2]) };
-    }
-  } catch {
-    // Raw token fallback.
-  }
-
-  return { token: raw };
-}
 
 async function resolveScan(value: string): Promise<QrScanResult> {
   const parsed = parseQrValue(value);
