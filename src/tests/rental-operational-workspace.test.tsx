@@ -103,7 +103,7 @@ describe("Rental operational workspace", () => {
     fireEvent.click(pickers[0]);
     expect(screen.getAllByRole("radio")).toHaveLength(5);
     expect(actions[0]).toBeDisabled();
-    expect(screen.getAllByText(/Sistem tidak menganggap unit normal/)).toHaveLength(2);
+    expect(screen.queryByText(/Sistem tidak menganggap unit normal/)).not.toBeInTheDocument();
   });
 
   it("processes a normal unit as ready and a damaged unit as maintenance independently", async () => {

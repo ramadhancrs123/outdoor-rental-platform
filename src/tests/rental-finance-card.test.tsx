@@ -82,6 +82,29 @@ describe("RentalFinanceCard", () => {
     });
   });
 
+  test("menonaktifkan pencatatan pembayaran dan memberi tahu saat rental lunas", async () => {
+    financeMock.getRentalPaymentSummary.mockResolvedValueOnce({
+      totalRental: 300000,
+      recordedPaymentTotal: 300000,
+      paymentCount: 2,
+      payments: [],
+    });
+    const onRecordPayment = vi.fn();
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter>
+          <RentalFinanceCard context={context} rental={rental as never} onRecordPayment={onRecordPayment} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    const paymentButton = await screen.findByRole("button", { name: "Pembayaran Lunas" });
+    expect(paymentButton).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent("Pembayaran sudah lunas");
+    paymentButton.click();
+    expect(onRecordPayment).not.toHaveBeenCalled();
+  });
+
   test("menampilkan entry point Keuangan dan membuka callback Catat Pembayaran", async () => {
     const onRecordPayment = vi.fn();
     render(

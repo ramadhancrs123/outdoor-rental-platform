@@ -103,6 +103,48 @@ describe("RentalPaymentDialog", () => {
     });
   });
 
+  test("menolak nominal yang melebihi sisa pembayaran rental", async () => {
+    financeMock.getRentalPaymentSummary.mockResolvedValueOnce({
+      totalRental: 300000,
+      recordedPaymentTotal: 275000,
+      paymentCount: 2,
+      payments: [],
+    });
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <RentalPaymentDialog open onOpenChange={vi.fn()} context={context} rental={rental as never} />
+      </QueryClientProvider>,
+    );
+
+    await screen.findByText("Maksimum pembayaran: Rp25.000.");
+    const amountInput = screen.getByLabelText("Nominal Pembayaran");
+    expect(amountInput).toHaveAttribute("max", "25000");
+    fireEvent.change(amountInput, { target: { value: "25001" } });
+    expect(await screen.findByText(/Nominal tidak boleh melebihi sisa pembayaran Rp25\.000/)).toBeInTheDocument();
+    const submit = screen.getByRole("button", { name: /Catat Pembayaran$/i });
+    expect(submit).toBeDisabled();
+    fireEvent.click(submit);
+    expect(financeMock.recordPayment).not.toHaveBeenCalled();
+  });
+
+  test("menonaktifkan input saat sisa pembayaran nol", async () => {
+    financeMock.getRentalPaymentSummary.mockResolvedValueOnce({
+      totalRental: 300000,
+      recordedPaymentTotal: 300000,
+      paymentCount: 2,
+      payments: [],
+    });
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <RentalPaymentDialog open onOpenChange={vi.fn()} context={context} rental={rental as never} />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("Pembayaran sudah lunas")).toBeInTheDocument();
+    expect(screen.getByLabelText("Nominal Pembayaran")).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Catat Pembayaran$/i })).toBeDisabled();
+  });
+
   test("mencatat pembayaran dari detail rental tanpa pindah halaman", async () => {
     const onOpenChange = vi.fn();
     const onRecorded = vi.fn();

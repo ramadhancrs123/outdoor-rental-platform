@@ -55,6 +55,7 @@ export function RentalFinanceCard({
   const payments = summary.data?.payments ?? [];
   const recorded = summary.data?.recordedPaymentTotal ?? 0;
   const total = Number(rental.total_amount);
+  const isFullyPaid = total > 0 && recorded >= total;
 
   return (
     <section id="rental-finance" className="scroll-mt-24">
@@ -126,10 +127,23 @@ export function RentalFinanceCard({
               )}
 
               {onRecordPayment ? (
-                <Button type="button" onClick={onRecordPayment} className="mt-2.5 h-10 w-full rounded-xl bg-[#0a6b55] text-xs font-semibold shadow-[0_8px_18px_rgba(10,107,85,.16)] hover:bg-[#075944]">
-                  <CreditCard className="size-4" />
-                  Catat Pembayaran
-                </Button>
+                <div className="mt-2.5 space-y-1.5">
+                  <Button
+                    type="button"
+                    onClick={onRecordPayment}
+                    disabled={isFullyPaid}
+                    aria-disabled={isFullyPaid}
+                    className="h-10 w-full rounded-xl bg-[#0a6b55] text-xs font-semibold shadow-[0_8px_18px_rgba(10,107,85,.16)] hover:bg-[#075944] disabled:cursor-not-allowed disabled:opacity-55 disabled:shadow-none"
+                  >
+                    <CreditCard className="size-4" />
+                    {isFullyPaid ? "Pembayaran Lunas" : "Catat Pembayaran"}
+                  </Button>
+                  {isFullyPaid ? (
+                    <p role="status" className="text-center text-[10px] leading-4 text-emerald-700 dark:text-emerald-300">
+                      Pembayaran sudah lunas. Tidak ada sisa tagihan untuk dicatat.
+                    </p>
+                  ) : null}
+                </div>
               ) : null}
             </>
           )}

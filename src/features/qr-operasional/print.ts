@@ -137,7 +137,26 @@ payment + note +
 '</main>\n</body>\n</html>';
 }
 
-export async function printHtmlDocument(html: string) {
+type AndroidPrintBridge = {
+  printThermalHtml?: (html: string, documentName: string) => boolean;
+};
+
+export async function printHtmlDocument(
+  html: string,
+  options: { androidThermal?: boolean; documentName?: string } = {},
+) {
+  if (options.androidThermal) {
+    const bridge = (window as Window & { AndroidInterface?: AndroidPrintBridge }).AndroidInterface;
+    if (bridge) {
+      if (typeof bridge.printThermalHtml !== "function") {
+        throw new Error("Versi aplikasi Android belum mendukung pencetakan struk thermal. Pasang APK Rental Outdoor terbaru.");
+      }
+      const accepted = bridge.printThermalHtml(html, options.documentName ?? "Struk Penyewaan 58 mm");
+      if (!accepted) throw new Error("Android tidak dapat menyiapkan pencetakan struk. Perbarui aplikasi lalu coba lagi.");
+      return;
+    }
+  }
+
   const iframe = document.createElement("iframe");
   iframe.setAttribute("aria-hidden", "true");
   iframe.style.position = "fixed";

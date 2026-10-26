@@ -19,6 +19,7 @@ import {
   type RentalReceiptData,
   type UnitQrLabelData,
 } from "@/features/qr-operasional";
+import { downloadPdfBytes } from "@/features/qr-operasional/download";
 import type { InventoryContext, InventoryUnit } from "@/features/inventaris";
 import { parseQrValue } from "@/features/qr-operasional/scan";
 
@@ -493,15 +494,7 @@ export function QrPreviewDialog({
     setWorking(true);
     try {
       const bytes = await generateUnitQrLabelPdf([labelData]);
-      const blobBytes = new Uint8Array(bytes.byteLength);
-      blobBytes.set(bytes);
-      const blob = new Blob([blobBytes.buffer], { type: "application/pdf" });
-      const href = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = href;
-      anchor.download = labelData.kode_unit + "-qr.pdf";
-      anchor.click();
-      URL.revokeObjectURL(href);
+      await downloadPdfBytes(bytes, labelData.kode_unit + "-qr.pdf");
     } finally {
       setWorking(false);
     }
@@ -561,6 +554,7 @@ export function RentalReceiptDialog({
 }) {
   const [qrDataUrl, setQrDataUrl] = useState("");
   const [working, setWorking] = useState(false);
+  const [actionError, setActionError] = useState("");
 
   useEffect(() => {
     if (!open || !receipt.url) return;
@@ -574,8 +568,14 @@ export function RentalReceiptDialog({
   const printReceipt = async () => {
     if (!qrDataUrl) return;
     setWorking(true);
+    setActionError("");
     try {
-      await printHtmlDocument(buildThermalReceiptPrintHtml(receipt, qrDataUrl));
+      await printHtmlDocument(buildThermalReceiptPrintHtml(receipt, qrDataUrl), {
+        androidThermal: true,
+        documentName: "struk-" + receipt.nomor_penyewaan + "-58mm",
+      });
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : "Struk gagal disiapkan untuk dicetak.");
     } finally {
       setWorking(false);
     }
@@ -583,16 +583,12 @@ export function RentalReceiptDialog({
 
   const downloadPdf = async () => {
     setWorking(true);
+    setActionError("");
     try {
       const bytes = await generateRentalReceiptThermalPdf(receipt);
-      const blobBytes = new Uint8Array(bytes.byteLength);
-      blobBytes.set(bytes);
-      const href = URL.createObjectURL(new Blob([blobBytes.buffer], { type: "application/pdf" }));
-      const anchor = document.createElement("a");
-      anchor.href = href;
-      anchor.download = "struk-" + receipt.nomor_penyewaan + "-58mm.pdf";
-      anchor.click();
-      URL.revokeObjectURL(href);
+      await downloadPdfBytes(bytes, "struk-" + receipt.nomor_penyewaan + "-58mm.pdf");
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : "PDF struk gagal disimpan.");
     } finally {
       setWorking(false);
     }
@@ -658,6 +654,8 @@ export function RentalReceiptDialog({
               <p className="mt-3 text-center text-[8px] font-black uppercase tracking-[0.08em]">SEMOGA PERJALANAN ANDA MENYENANGKAN</p>
             </div>
           </div>
+
+          {actionError ? <p role="alert" className="rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">{actionError}</p> : null}
 
           <div className="grid grid-cols-2 gap-2">
             <Button variant="outline" className="h-11 rounded-xl" onClick={() => void downloadPdf()} disabled={working}>
@@ -750,15 +748,7 @@ export function UnitQrBatchPrintDialog({
       if (!labels.length) throw new Error("QR unit belum tersedia untuk pilihan ini.");
 
       const bytes = await generateUnitQrLabelPdf(labels, { format: "a4", labelsPerPage: 8 });
-      const blobBytes = new Uint8Array(bytes.byteLength);
-      blobBytes.set(bytes);
-      const blob = new Blob([blobBytes.buffer], { type: "application/pdf" });
-      const href = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = href;
-      anchor.download = "qr-unit-" + selectedUnits.length + "-label.pdf";
-      anchor.click();
-      URL.revokeObjectURL(href);
+      await downloadPdfBytes(bytes, "qr-unit-" + selectedUnits.length + "-label.pdf");
     } catch (cause) {
       setMessage(cause instanceof Error ? cause.message : "PDF QR gagal dibuat.");
     } finally {

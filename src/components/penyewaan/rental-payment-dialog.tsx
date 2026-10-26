@@ -92,14 +92,23 @@ export function RentalPaymentDialog({
   const total = Number(rental.total_amount);
   const remaining = Math.max(0, total - recorded);
   const capabilities = getFinanceCapabilities();
-  const validAmount = Number(amount) > 0;
-  const canSubmit = validAmount && Boolean(akunKeuanganId) && Boolean(dibayarAt) && Boolean(capabilities.mutation);
+  const validAmount = amount.trim() !== "" && Number.isFinite(Number(amount)) && Number(amount) > 0;
+  const amountTooHigh = validAmount && Number(amount) > remaining;
+  const paymentSummaryReady = Boolean(summary.data) && !summary.isPending && !summary.error;
+  const isFullyPaid = paymentSummaryReady && remaining <= 0;
+  const canSubmit = validAmount && !amountTooHigh && remaining > 0 && paymentSummaryReady
+    && Boolean(akunKeuanganId) && Boolean(dibayarAt) && Boolean(capabilities.mutation);
 
   const mutation = useMutation({
     mutationFn: async () => {
-      if (!akunKeuanganId) throw new Error("Akun penerima pembayaran wajib dipilih.");
-      if (!validAmount) throw new Error("Nominal pembayaran harus lebih dari 0.");
-      if (!dibayarAt) throw new Error("Waktu pembayaran wajib diisi.");
+      if (!paymentSummaryReady) throw new Error("VALIDATION: Ringkasan pembayaran belum siap. Muat ulang sebelum mencatat pembayaran.");
+      if (remaining <= 0) throw new Error("VALIDATION: Pembayaran sudah lunas. Tidak ada sisa tagihan.");
+      if (!akunKeuanganId) throw new Error("VALIDATION: Akun penerima pembayaran wajib dipilih.");
+      if (!validAmount) throw new Error("VALIDATION: Nominal pembayaran harus lebih dari 0.");
+      if (Number(amount) > remaining) {
+        throw new Error("VALIDATION: Nominal tidak boleh melebihi sisa pembayaran " + formatRentalMoney(remaining, rental.currency_code) + ".");
+      }
+      if (!dibayarAt) throw new Error("VALIDATION: Waktu pembayaran wajib diisi.");
       if (!commandRef.current) commandRef.current = createClientId();
 
       return recordPayment(
@@ -134,6 +143,12 @@ export function RentalPaymentDialog({
       await onRecorded?.();
     },
     onError: async (error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.startsWith("VALIDATION:")) {
+        setFeedback(message.slice("VALIDATION:".length).trim());
+        setMode("form");
+        return;
+      }
       if (!commandRef.current) {
         setFeedback("Hasil transaksi belum dapat dipastikan. Jangan mengulang sebelum status diperiksa.");
         setMode("unknown");
@@ -154,7 +169,6 @@ export function RentalPaymentDialog({
         // Keep unknown outcome and never blind-retry a financial mutation.
       }
 
-      const message = error instanceof Error ? error.message : String(error);
       setFeedback(message || "Status transaksi belum dapat dipastikan.");
       setMode("unknown");
     },
@@ -241,6 +255,14 @@ export function RentalPaymentDialog({
               <span>{rental.penyewa_nama ?? "Penyewa tidak ditemukan"}</span>
             </div>
 
+            {isFullyPaid ? (
+              <Alert className="rounded-2xl border-emerald-200 bg-emerald-50/70 dark:border-emerald-900/50 dark:bg-emerald-950/20">
+                <ShieldCheck className="size-4" />
+                <AlertTitle>Pembayaran sudah lunas</AlertTitle>
+                <AlertDescription>Tidak ada sisa tagihan untuk dicatat. Total pembayaran sudah mencapai {formatRentalMoney(total, rental.currency_code)}.</AlertDescription>
+              </Alert>
+            ) : null}
+
             {summary.error ? (
               <Alert variant="destructive" className="rounded-2xl">
                 <CircleAlert className="size-4" />
@@ -273,10 +295,39 @@ export function RentalPaymentDialog({
 
             <div className="space-y-1.5">
               <label className="text-xs font-semibold" htmlFor="rental-payment-amount">Nominal Pembayaran</label>
-              <div className="flex items-center rounded-xl border bg-card px-3 focus-within:ring-2 focus-within:ring-ring/60">
+              <div className={`flex items-center rounded-xl border bg-card px-3 focus-within:ring-2 focus-within:ring-ring/60 ${amountTooHigh ? "border-destructive" : ""}`}>
                 <span className="text-sm font-semibold text-muted-foreground">Rp</span>
-                <Input id="rental-payment-amount" type="number" min="1" value={amount} onChange={(event) => setAmount(event.target.value)} className="h-12 border-0 text-right text-lg font-bold shadow-none focus-visible:ring-0" placeholder="150000" />
+                <Input
+                  id="rental-payment-amount"
+                  type="number"
+                  min="1"
+                  max={remaining}
+                  step="1"
+                  inputMode="numeric"
+                  value={amount}
+                  disabled={!paymentSummaryReady || isFullyPaid || mutation.isPending}
+                  aria-invalid={amountTooHigh}
+                  aria-describedby="rental-payment-amount-hint"
+                  onChange={(event) => { setAmount(event.target.value); setFeedback(""); }}
+                  className="h-12 border-0 text-right text-lg font-bold shadow-none focus-visible:ring-0"
+                  placeholder={remaining > 0 ? String(remaining) : "0"}
+                />
               </div>
+              {amountTooHigh ? (
+                <p id="rental-payment-amount-hint" role="alert" className="text-[11px] leading-4 text-destructive">
+                  Nominal tidak boleh melebihi sisa pembayaran {formatRentalMoney(remaining, rental.currency_code)}.
+                </p>
+              ) : isFullyPaid ? (
+                <p id="rental-payment-amount-hint" className="text-[11px] leading-4 text-emerald-700 dark:text-emerald-300">
+                  Pembayaran sudah lunas. Input nominal dinonaktifkan.
+                </p>
+              ) : summary.isPending ? (
+                <p id="rental-payment-amount-hint" className="text-[11px] text-muted-foreground">Memuat sisa pembayaran…</p>
+              ) : paymentSummaryReady ? (
+                <p id="rental-payment-amount-hint" className="text-[11px] leading-4 text-muted-foreground">
+                  Maksimum pembayaran: {formatRentalMoney(remaining, rental.currency_code)}.
+                </p>
+              ) : null}
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2">

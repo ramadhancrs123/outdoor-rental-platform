@@ -6,8 +6,6 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { getOperationalReturnWorkspace, processOperationalUnitReturn, type OperationalReturnUnitState } from "@/features/pengembalian/operational";
 import { formatRentalDateTime } from "@/features/penyewaan";
@@ -293,22 +291,29 @@ export function RentalOperationalWorkspace({ usahaId, penyewaanId, enabled, rent
                   </div>
 
                   {conditionExpanded[unit.unit_barang_id] ? (
-                    <RadioGroup
-                      id={`condition-options-${unit.unit_barang_id}`}
-                      value={selected ?? ""}
-                      onValueChange={(value) => {
-                        setCondition((current) => ({ ...current, [unit.unit_barang_id]: value as ConditionChoice }));
-                        setConditionExpanded((current) => ({ ...current, [unit.unit_barang_id]: false }));
-                      }}
-                      className="grid gap-2 sm:grid-cols-2"
-                    >
-                      {CONDITION_OPTIONS.map((option) => (
-                        <Label key={option.value} htmlFor={`condition-${unit.unit_barang_id}-${option.value}`} className="flex cursor-pointer items-start gap-2 rounded-xl border p-2.5 hover:bg-accent/20">
-                          <RadioGroupItem id={`condition-${unit.unit_barang_id}-${option.value}`} value={option.value} className="mt-0.5" />
-                          <span className="min-w-0"><span className="block text-[10px] font-semibold">{option.label}</span><span className="mt-0.5 block text-[9px] leading-4 text-muted-foreground">{option.description}</span></span>
-                        </Label>
-                      ))}
-                    </RadioGroup>
+                    <div id={`condition-options-${unit.unit_barang_id}`} role="radiogroup" aria-label={`Kondisi ${unitIdentity(unit)}`} className="grid gap-2 sm:grid-cols-2">
+                      {CONDITION_OPTIONS.map((option) => {
+                        const isSelected = selected === option.value;
+                        return (
+                          <button
+                            key={option.value}
+                            type="button"
+                            role="radio"
+                            aria-checked={isSelected}
+                            onClick={() => {
+                              setCondition((current) => ({ ...current, [unit.unit_barang_id]: option.value }));
+                              setConditionExpanded((current) => ({ ...current, [unit.unit_barang_id]: false }));
+                            }}
+                            className={`flex w-full items-start gap-2 rounded-xl border p-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${isSelected ? "border-primary bg-primary/5 ring-1 ring-primary/30" : "hover:bg-accent/20"}`}
+                          >
+                            <span aria-hidden="true" className={`mt-0.5 grid size-4 shrink-0 place-items-center rounded-full border ${isSelected ? "border-primary" : "border-muted-foreground/50"}`}>
+                              {isSelected ? <span className="size-2 rounded-full bg-primary" /> : null}
+                            </span>
+                            <span className="min-w-0"><span className="block text-[10px] font-semibold">{option.label}</span><span className="mt-0.5 block text-[9px] leading-4 text-muted-foreground">{option.description}</span></span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   ) : (
                     <div className={`rounded-xl px-3 py-2 text-[9px] ${selected ? "bg-primary/5 text-foreground" : "bg-muted/20 text-muted-foreground"}`}>
                       {selected
