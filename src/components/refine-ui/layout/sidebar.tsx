@@ -11,7 +11,6 @@ import {
   Home,
   Package,
   Receipt,
-  SearchCheck,
   ShoppingCart,
   TentTree,
   Users,
@@ -36,7 +35,6 @@ const sections = [
   {
     group: "Operasional Sewa",
     items: [
-      ["Permintaan", paths.permintaan, SearchCheck],
       ["Reservasi", paths.reservasi, ClipboardCheck],
       ["Penyewaan", paths.penyewaan, TentTree],
       ["Perawatan", paths.perawatan, Wrench],
