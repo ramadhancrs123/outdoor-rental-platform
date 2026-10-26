@@ -1,7 +1,7 @@
 import { createClientId } from "@/lib/client-id";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, ChevronDown, Clock3, History, Info, MoreHorizontal, Package, PackageCheck, QrCode, ReceiptText, RefreshCw, ShieldAlert, UsersRound, WalletCards } from "lucide-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -29,7 +29,7 @@ import {
   reconcileReturnCommand,
   semanticReturnLabel,
 } from "@/features/pengembalian";
-import { listRentalToleranceHistory } from "@/features/penyewaan";
+import { getPenyewaanContext, listRentalToleranceHistory, pushRentalFineToAndroid } from "@/features/penyewaan";
 import { listRentalConsequenceReviews } from "@/features/keuangan";
 import type { ReturnWorkspace as ReturnWorkspaceData } from "@/features/pengembalian";
 import { deriveReturnDueState } from "@/features/pengembalian/utils";
@@ -133,6 +133,26 @@ export function ReturnShow() {
     queryFn: () => listRentalToleranceHistory(context.data!.usahaId, id!),
     enabled: Boolean(context.data?.usahaId && id),
   });
+  const penyewaanContext = useQuery({
+    queryKey: ["penyewaan", "context"],
+    queryFn: getPenyewaanContext,
+    staleTime: 60_000,
+  });
+  useEffect(() => {
+    const rental = workspace.data?.rental;
+    const lateFeeContext = penyewaanContext.data;
+    if (!rental || !lateFeeContext) return;
+    pushRentalFineToAndroid({
+      rentalId: rental.penyewaan_id,
+      nomor: rental.nomor_penyewaan,
+      enabled: lateFeeContext.lateFeeEnabled,
+      ratePerHour: lateFeeContext.lateFeePerHour,
+      currencyCode: "IDR",
+      jadwalKembali: rental.jadwal_kembali,
+      toleranceDeadline: rental.tolerance_deadline,
+      actualReturn: rental.actual_return_completed_at,
+    });
+  }, [penyewaanContext.data, workspace.data]);
   const consequenceReviews = useQuery({
     queryKey: ["keuangan", "rental-consequence", context.data?.usahaId, id],
     queryFn: () => listRentalConsequenceReviews(context.data!.usahaId, id!),

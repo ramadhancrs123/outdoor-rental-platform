@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, ArrowRight, Calculator, ChevronDown, Clock3, CreditCard, Filter, Handshake, History, MessageCircle, MoreHorizontal, Package, PackageCheck, Phone, Plus, QrCode, ReceiptText, RefreshCw, Search, ShieldCheck, WalletCards } from "lucide-react";
 import { Link, useParams } from "react-router";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -9,7 +9,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { RentalTimingSummary } from "@/components/penyewaan/rental-timing";
 import { ToleranceExtensionDialog } from "@/components/penyewaan/tolerance-extension-dialog";
 import { RentalConsequenceList } from "@/components/keuangan/rental-consequence-list";
-import { getPenyewaanContext, getRentalCapabilities, getRental, listRentalToleranceHistory } from "@/features/penyewaan";
+import { getPenyewaanContext, getRentalCapabilities, getRental, listRentalToleranceHistory, pushRentalFineToAndroid } from "@/features/penyewaan";
 import { listRentalConsequenceReviews } from "@/features/keuangan";
 import { formatRentalDateTime, formatRentalMoney, semanticRentalLabel, rentalStatusVariant } from "@/features/penyewaan";
 import { QrPreviewDialog, RentalReceiptDialog } from "@/components/qr-operasional/qr-operasional";
@@ -42,6 +42,21 @@ export function RentalShow() {
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [phase2Open, setPhase2Open] = useState(false);
   const [lateFeeExpanded, setLateFeeExpanded] = useState(false);
+  useEffect(() => {
+    const rental = query.data;
+    const rentalContext = context.data;
+    if (!rental || !rentalContext) return;
+    pushRentalFineToAndroid({
+      rentalId: rental.penyewaan_id,
+      nomor: rental.nomor_penyewaan,
+      enabled: rentalContext.lateFeeEnabled,
+      ratePerHour: rentalContext.lateFeePerHour,
+      currencyCode: rental.currency_code,
+      jadwalKembali: rental.jadwal_kembali,
+      toleranceDeadline: rental.tolerance_deadline,
+      actualReturn: rental.actual_return_completed_at,
+    });
+  }, [context.data, query.data]);
   const rentalQr = useQuery({
     queryKey: ["qr-operasional", "penyewaan", context.data?.usahaId, id],
     queryFn: () => getQrPenyewaanRecord(context.data!.usahaId, id!),
