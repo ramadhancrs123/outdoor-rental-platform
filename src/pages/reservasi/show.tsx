@@ -20,7 +20,7 @@ import {
   X,
 } from "lucide-react";
 import { useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router";
+import { Link, useParams } from "react-router";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Drawer,
@@ -52,7 +52,7 @@ import {
   getReservasiContext,
 } from "@/features/reservasi";
 import { paths } from "@/routes/paths";
-import { createRentalFromReservation, getPenyewaanContext, reconcileRentalCreation } from "@/features/penyewaan";
+import { getRentalForReservation } from "@/features/penyewaan";
 
 function formatQuantity(value: string | number) {
   const numberValue = Number(value);
@@ -92,18 +92,12 @@ function statusCopy(status: string) {
 
 export function ReservationShow() {
   const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [cancelReason, setCancelReason] = useState("");
   const [cancelOpen, setCancelOpen] = useState(false);
   const [commandFeedback, setCommandFeedback] = useState<CommandFeedback>(null);
-  const [rentalOpen, setRentalOpen] = useState(false);
-  const [rentalStart, setRentalStart] = useState("");
-  const [rentalEnd, setRentalEnd] = useState("");
-  const [rentalFeedback, setRentalFeedback] = useState<CommandFeedback>(null);
   const confirmCommandContext = useRef<{ idempotencyKey: string; requestId: string } | null>(null);
   const cancelCommandContext = useRef<{ idempotencyKey: string; requestId: string } | null>(null);
-  const rentalCommandContext = useRef<{ idempotencyKey: string; requestId: string } | null>(null);
 
   const context = useQuery({
     queryKey: ["reservasi", "context"],
@@ -117,62 +111,12 @@ export function ReservationShow() {
     enabled: Boolean(context.data?.usahaId && id),
   });
 
-  const rentalContext = useQuery({
-    queryKey: ["penyewaan", "context"],
-    queryFn: getPenyewaanContext,
-    staleTime: 60_000,
-    enabled: Boolean(id),
-  });
-
-  const createRentalMutation = useMutation({
-    mutationFn: async () => {
-      if (!rentalContext.data || !id) throw new Error("Konteks Penyewaan belum siap.");
-      if (!rentalStart || !rentalEnd) throw new Error("Jadwal mulai dan jadwal kembali wajib diisi.");
-      if (!rentalCommandContext.current) {
-        rentalCommandContext.current = {
-          idempotencyKey: `create-rental-${id}-${createClientId()}`,
-          requestId: createClientId(),
-        };
-      }
-      return createRentalFromReservation(rentalContext.data.usahaId, {
-        reservasiId: id,
-        jadwalMulai: zonedLocalDateTimeToIso(rentalStart, rentalContext.data.timezone),
-        jadwalKembali: zonedLocalDateTimeToIso(rentalEnd, rentalContext.data.timezone),
-      }, rentalCommandContext.current);
-    },
-    onSuccess: async (result) => {
-      rentalCommandContext.current = null;
-      setRentalFeedback(null);
-      setRentalOpen(false);
-      await detail.refetch();
-      await queryClient.invalidateQueries({ queryKey: ["penyewaan", "list"] });
-      if (result.penyewaan_id) navigate(`${paths.penyewaan}/${result.penyewaan_id}`);
-    },
-    onError: async (error) => {
-      const key = rentalCommandContext.current?.idempotencyKey;
-      if (!key || !rentalContext.data) {
-        setRentalFeedback({ kind: "error", message: error instanceof Error ? error.message : "Pembuatan rental gagal." });
-        return;
-      }
-      try {
-        const reconciliation = await reconcileRentalCreation(rentalContext.data.usahaId, key);
-        if (reconciliation.state === "committed" && reconciliation.response?.penyewaan_id) {
-          rentalCommandContext.current = null;
-          setRentalFeedback({ kind: "success", message: "Request tidak mendapat respons, tetapi server sudah membuat rental. Membuka sumber transaksi." });
-          await detail.refetch();
-          navigate(`${paths.penyewaan}/${reconciliation.response.penyewaan_id}`);
-          return;
-        }
-        if (reconciliation.state === "not_found") {
-          rentalCommandContext.current = null;
-          setRentalFeedback({ kind: "error", message: error instanceof Error ? error.message : "Pembuatan rental belum berhasil. Anda dapat mencoba lagi." });
-          return;
-        }
-        setRentalFeedback({ kind: "unknown", message: "Status pembuatan penyewaan belum dapat dipastikan. Jangan mengulang tindakan sebelum statusnya diperiksa." });
-      } catch (reconciliationError) {
-        setRentalFeedback({ kind: "unknown", message: reconciliationError instanceof Error ? reconciliationError.message : "Rekonsiliasi pembuatan rental gagal." });
-      }
-    },
+  const linkedRental = useQuery({
+    queryKey: ["penyewaan", "reservation-link", context.data?.usahaId, id],
+    queryFn: () => getRentalForReservation(context.data!.usahaId, id!),
+    enabled: Boolean(context.data?.usahaId && id && detail.data?.status === "confirmed"),
+    staleTime: 0,
+    refetchOnMount: "always",
   });
 
   const confirmMutation = useMutation({
@@ -283,9 +227,18 @@ export function ReservationShow() {
   const reservation = detail.data;
   const capabilities = getReservationCapabilities();
   const canConfirm = capabilities.mutation && reservation.status === "draft";
-  const canCancel = capabilities.mutation && (reservation.status === "draft" || reservation.status === "confirmed");
-  const canPrepare = reservation.status === "confirmed";
-  const busy = confirmMutation.isPending || cancelMutation.isPending || createRentalMutation.isPending;
+  const linkedRentalResolved = linkedRental.isSuccess && !linkedRental.isFetching;
+  const canCancel = capabilities.mutation && (
+    reservation.status === "draft" ||
+    (reservation.status === "confirmed" && linkedRentalResolved && !linkedRental.data)
+  );
+  const canPrepare = capabilities.mutation &&
+    reservation.status === "confirmed" &&
+    reservation.stock_lock_status === "locked" &&
+    linkedRentalResolved &&
+    !linkedRental.data;
+  const canOpenLinkedRental = reservation.status === "confirmed" && Boolean(linkedRental.data);
+  const busy = confirmMutation.isPending || cancelMutation.isPending;
   const lockView = stockLockPresentation(reservation.stock_lock_status);
   const LockIcon = lockView.iconName === "lock" ? LockKeyhole : lockView.iconName === "clock" ? Clock3 : LockKeyholeOpen;
   const totalValue = reservation.lines.reduce((total, line) => total + (Number(line.subtotal) || 0), 0);
@@ -383,7 +336,7 @@ export function ReservationShow() {
         </Alert>
       )}
 
-      {(canConfirm || canCancel) && (
+      {(canConfirm || canCancel || reservation.status === "confirmed") && (
         <Card className="shadow-sm">
           <CardHeader className="pb-3">
             <div className="flex items-center gap-2">
@@ -395,66 +348,48 @@ export function ReservationShow() {
             </div>
           </CardHeader>
           <CardContent className="space-y-3">
-            {canPrepare && (
-              <Drawer open={rentalOpen} onOpenChange={setRentalOpen}>
-                <div className="mb-3 flex flex-col gap-4 rounded-2xl border bg-primary/[0.03] p-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="min-w-0">
-                    <p className="font-semibold">Buat Penyewaan dari Reservasi</p>
-                    <p className="mt-1 text-sm leading-5 text-muted-foreground">Masukkan waktu operasional penyewaan secara jelas. Sistem akan menyalin detail Reservasi sebagai bagian dari transaksi.</p>
-                  </div>
-                  <DrawerTrigger asChild>
-                    <Button className="h-11 shrink-0 rounded-xl px-5" disabled={busy}>
-                      Buat Penyewaan <ArrowRight className="size-4" />
-                    </Button>
-                  </DrawerTrigger>
-                </div>
-                <DrawerContent className="rounded-t-3xl">
-                  <DrawerHeader className="pb-3 text-left">
-                    <DrawerTitle className="text-xl">Buat Penyewaan {reservation.nomor_reservasi}</DrawerTitle>
-                    <DrawerDescription>
-                      Jadwal disimpan sebagai waktu rental sebenarnya dalam timezone Usaha. Konversi ke status active baru terjadi setelah assignment dan serah-terima selesai.
-                    </DrawerDescription>
-                  </DrawerHeader>
-                  <div className="space-y-4 px-4 pb-4 sm:px-6">
-                    {rentalFeedback && (
-                      <Alert variant={rentalFeedback.kind === "error" || rentalFeedback.kind === "unknown" ? "destructive" : "default"}>
-                        <AlertTitle>{rentalFeedback.kind === "unknown" ? "Status penyewaan belum pasti" : rentalFeedback.kind === "success" ? "Penyewaan sudah dibuat" : "Penyewaan belum dibuat"}</AlertTitle>
-                        <AlertDescription>{rentalFeedback.message}</AlertDescription>
-                      </Alert>
-                    )}
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <div className="space-y-2">
-                        <Label htmlFor="rental-start">Jadwal mulai</Label>
-                        <Input id="rental-start" type="datetime-local" value={rentalStart} onChange={(event) => setRentalStart(event.target.value)} disabled={createRentalMutation.isPending} />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="rental-end">Jadwal kembali</Label>
-                        <Input id="rental-end" type="datetime-local" value={rentalEnd} onChange={(event) => setRentalEnd(event.target.value)} disabled={createRentalMutation.isPending} />
-                      </div>
-                    </div>
-                    <div className="rounded-xl border bg-muted/30 p-3 text-sm">
-                      <p className="font-medium">Timezone Usaha</p>
-                      <p className="mt-1 text-muted-foreground">{rentalContext.data?.timezone ?? "Memuat timezone…"}</p>
-                    </div>
-                    <Button className="h-11 w-full" onClick={() => createRentalMutation.mutate()} disabled={busy || !rentalStart || !rentalEnd || rentalContext.isPending}>
-                      {createRentalMutation.isPending ? "Membuat rental…" : "Buat Penyewaan"}
-                    </Button>
-                  </div>
-                </DrawerContent>
-              </Drawer>
+            {reservation.status === "confirmed" && linkedRental.isPending && (
+              <div className="rounded-xl border bg-muted/20 px-3 py-3 text-sm text-muted-foreground">
+                Memeriksa apakah reservasi sudah diteruskan menjadi penyewaan…
+              </div>
             )}
-            {canConfirm && (
-              <div className="flex flex-col gap-4 rounded-2xl border bg-primary/[0.03] p-4 sm:flex-row sm:items-center sm:justify-between">
+            {reservation.status === "confirmed" && linkedRental.error && (
+              <Alert variant="destructive">
+                <AlertTitle>Status penyewaan belum dapat diperiksa</AlertTitle>
+                <AlertDescription className="space-y-2">
+                  <p>{linkedRental.error instanceof Error ? linkedRental.error.message : "Gagal memeriksa penyewaan yang terkait."}</p>
+                  <Button type="button" variant="outline" size="sm" onClick={() => void linkedRental.refetch()}>Coba lagi</Button>
+                </AlertDescription>
+              </Alert>
+            )}
+            {canPrepare && (
+              <div className="mb-3 flex flex-col gap-4 rounded-2xl border bg-primary/[0.03] p-4 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0">
-                  <p className="font-semibold">Konfirmasi Reservasi</p>
-                  <p className="mt-1 text-sm leading-5 text-muted-foreground">Sistem akan memeriksa status dan ketersediaan, lalu mengesahkan Reservasi dan mengunci stok bila berhasil.</p>
+                  <p className="font-semibold">Lanjutkan ke Penyewaan</p>
+                  <p className="mt-1 text-sm leading-5 text-muted-foreground">
+                    Nama penyewa dan barang dari reservasi akan terisi otomatis. Isi jadwal mulai dan kembali sesuai waktu kedatangan aktual sebelum membuat penyewaan.
+                  </p>
                 </div>
-                <Button className="h-11 shrink-0 rounded-xl px-5" onClick={() => confirmMutation.mutate()} disabled={busy}>
-                  {confirmMutation.isPending ? "Mengonfirmasi…" : "Konfirmasi Reservasi"}
+                <Button asChild className="h-11 shrink-0 rounded-xl px-5">
+                  <Link to={paths.penyewaanWalkIn + "?reservasi_id=" + encodeURIComponent(reservation.reservasi_id)}>
+                    Lanjutkan Penyewaan <ArrowRight className="size-4" />
+                  </Link>
                 </Button>
               </div>
             )}
-
+            {canOpenLinkedRental && linkedRental.data && (
+              <div className="mb-3 flex flex-col gap-4 rounded-2xl border bg-emerald-50/60 p-4 sm:flex-row sm:items-center sm:justify-between dark:bg-emerald-950/15">
+                <div className="min-w-0">
+                  <p className="font-semibold">Penyewaan sudah dibuat</p>
+                  <p className="mt-1 text-sm text-muted-foreground">{linkedRental.data.nomor_penyewaan} · status {linkedRental.data.status}</p>
+                </div>
+                <Button asChild variant="outline" className="h-11 shrink-0 rounded-xl px-5">
+                  <Link to={paths.penyewaan + "/" + linkedRental.data.penyewaan_id}>
+                    Buka Penyewaan <ArrowRight className="size-4" />
+                  </Link>
+                </Button>
+              </div>
+            )}
             {canCancel && (
               <Drawer open={cancelOpen} onOpenChange={setCancelOpen}>
                 <DrawerTrigger asChild>
@@ -671,7 +606,12 @@ export function ReservationShow() {
         <div className="grid gap-2">
           {canPrepare && (
             <Button asChild className="h-11 rounded-xl">
-              <Link to={paths.penyewaan}>Siapkan Penyewaan <ArrowRight className="size-4" /></Link>
+              <Link to={paths.penyewaanWalkIn + "?reservasi_id=" + encodeURIComponent(reservation.reservasi_id)}>Lanjutkan Penyewaan <ArrowRight className="size-4" /></Link>
+            </Button>
+          )}
+          {canOpenLinkedRental && linkedRental.data && (
+            <Button asChild variant="outline" className="h-11 rounded-xl">
+              <Link to={paths.penyewaan + "/" + linkedRental.data.penyewaan_id}>Buka Penyewaan <ArrowRight className="size-4" /></Link>
             </Button>
           )}
           {canConfirm && (
@@ -729,25 +669,3 @@ function BoundaryRow({ title, value, active = false }: { title: string; value: s
 }
 
 ReservationShow.displayName = "ReservationShow";
-
-
-function zonedLocalDateTimeToIso(value: string, timeZone: string) {
-  const [datePart, timePart] = value.split("T");
-  const [year, month, day] = datePart.split("-").map(Number);
-  const [hour, minute] = timePart.split(":").map(Number);
-  if (![year, month, day, hour, minute].every(Number.isFinite)) throw new Error("Jadwal rental tidak valid.");
-  const utcGuess = Date.UTC(year, month - 1, day, hour, minute, 0);
-  const formatter = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hourCycle: "h23",
-  });
-  const parts = Object.fromEntries(formatter.formatToParts(new Date(utcGuess)).map((part) => [part.type, part.value]));
-  const representedUtc = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour), Number(parts.minute), Number(parts.second));
-  return new Date(utcGuess - (representedUtc - utcGuess)).toISOString();
-}

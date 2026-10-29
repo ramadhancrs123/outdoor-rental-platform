@@ -5,6 +5,7 @@ import type {
   ProcurementTenantContext,
   ProcurementReconciliation,
   PurchaseMutationResult,
+  PurchaseFinanceMutationResult,
   PurchaseCatalogOption,
   PurchaseVariantOption,
   SupplierOption,
@@ -24,6 +25,10 @@ import { sanitizeProcurementSearch } from "./utils";
 
 type MembershipRow = { usaha_id: string; status: string; revoked_at: string | null };
 type CountRow = { pemasok_id: string | null; tanggal_pembelian: string };
+type PurchaseProgressLine = { detail_pembelian_id: string; pembelian_id: string; jumlah: string | number };
+type PurchaseUnitSourceRow = { sumber_pembelian_detail_id: string | null };
+type PurchaseInventoryProgress = { registeredUnits: number; pendingUnits: number; quantityReviewCount: number };
+type PurchaseLineInventoryProgress = { registered: number; remaining: number; needsReview: boolean };
 type PurchaseHeaderRow = {
   pembelian_id: string;
   usaha_id: string;
@@ -46,6 +51,20 @@ const PURCHASE_SELECT =
 
 const PURCHASE_LINE_SELECT =
   "detail_pembelian_id,usaha_id,pembelian_id,barang_id,varian_barang_id,deskripsi,jumlah,unit_price,subtotal,created_at,updated_at";
+
+export async function getPurchaseNumberPreview(usahaId: string, tanggalPembelian: string): Promise<string> {
+  if (!usahaId.trim()) throw new Error("Usaha wajib ditentukan.");
+  if (!tanggalPembelian.trim()) throw new Error("Tanggal pembelian wajib diisi.");
+  const { data, error } = await supabase.rpc("purchase_number_preview", {
+    p_usaha_id: usahaId,
+    p_tanggal_pembelian: tanggalPembelian,
+  });
+  if (error) throw error;
+  if (typeof data !== "string" || !data.trim()) {
+    throw new Error("Nomor pembelian otomatis belum dapat disiapkan.");
+  }
+  return data;
+}
 
 export async function getPemasokContext(): Promise<ProcurementTenantContext> {
   const { data: userData, error: userError } = await supabase.auth.getUser();
@@ -235,6 +254,70 @@ async function findSupplierIdsBySearch(usahaId: string, search: string) {
   return (data ?? []).map((row) => row.pemasok_id as string);
 }
 
+async function getPurchaseLineInventoryProgress(
+  usahaId: string,
+  purchaseIds: string[],
+): Promise<{
+  byPurchase: Map<string, PurchaseInventoryProgress>;
+  byLine: Map<string, PurchaseLineInventoryProgress>;
+}> {
+  const byPurchase = new Map<string, PurchaseInventoryProgress>();
+  const byLine = new Map<string, PurchaseLineInventoryProgress>();
+  if (!purchaseIds.length) return { byPurchase, byLine };
+
+  const { data: lineRows, error: lineError } = await supabase
+    .from("detail_pembelian")
+    .select("detail_pembelian_id,pembelian_id,jumlah")
+    .eq("usaha_id", usahaId)
+    .in("pembelian_id", purchaseIds);
+  if (lineError) throw lineError;
+
+  const lines = (lineRows ?? []) as PurchaseProgressLine[];
+  const lineIds = lines.map((line) => line.detail_pembelian_id);
+  const registeredByLine = new Map<string, number>();
+  if (lineIds.length) {
+    const { data: unitRows, error: unitError } = await supabase
+      .from("unit_barang")
+      .select("sumber_pembelian_detail_id")
+      .eq("usaha_id", usahaId)
+      .in("sumber_pembelian_detail_id", lineIds);
+    if (unitError) throw unitError;
+    for (const unit of (unitRows ?? []) as PurchaseUnitSourceRow[]) {
+      if (!unit.sumber_pembelian_detail_id) continue;
+      registeredByLine.set(
+        unit.sumber_pembelian_detail_id,
+        (registeredByLine.get(unit.sumber_pembelian_detail_id) ?? 0) + 1,
+      );
+    }
+  }
+
+  for (const line of lines) {
+    const rawQuantity = Number(line.jumlah);
+    const quantity = Number.isFinite(rawQuantity) && rawQuantity > 0 ? rawQuantity : 0;
+    const registered = registeredByLine.get(line.detail_pembelian_id) ?? 0;
+    const needsReview = !Number.isInteger(quantity) || registered > Math.floor(quantity);
+    const remaining = Math.max(0, Math.floor(quantity) - registered);
+    byLine.set(line.detail_pembelian_id, { registered, remaining, needsReview });
+    const current = byPurchase.get(line.pembelian_id) ?? {
+      registeredUnits: 0,
+      pendingUnits: 0,
+      quantityReviewCount: 0,
+    };
+    current.registeredUnits += registered;
+    current.pendingUnits += remaining;
+    if (needsReview) current.quantityReviewCount += 1;
+    byPurchase.set(line.pembelian_id, current);
+  }
+
+  for (const purchaseId of purchaseIds) {
+    if (!byPurchase.has(purchaseId)) {
+      byPurchase.set(purchaseId, { registeredUnits: 0, pendingUnits: 0, quantityReviewCount: 0 });
+    }
+  }
+
+  return { byPurchase, byLine };
+}
+
 export async function listPurchases(
   usahaId: string,
   filters: PurchaseListFilters,
@@ -266,9 +349,10 @@ export async function listPurchases(
   if (error) throw error;
 
   const purchases = (data ?? []) as PurchaseHeaderRow[];
-  const [supplierNames, lineCounts] = await Promise.all([
+  const [supplierNames, lineCounts, inventoryProgress] = await Promise.all([
     resolveSupplierNames(usahaId, purchases.map((purchase) => purchase.pemasok_id)),
     getLineCounts(usahaId, purchases.map((purchase) => purchase.pembelian_id)),
+    getPurchaseLineInventoryProgress(usahaId, purchases.map((purchase) => purchase.pembelian_id)),
   ]);
 
   return {
@@ -277,6 +361,9 @@ export async function listPurchases(
         ...purchase,
         pemasok_nama: purchase.pemasok_id ? supplierNames.get(purchase.pemasok_id) ?? null : null,
         line_count: lineCounts.get(purchase.pembelian_id) ?? 0,
+        inventory_registered_units: inventoryProgress.byPurchase.get(purchase.pembelian_id)?.registeredUnits ?? 0,
+        inventory_pending_units: inventoryProgress.byPurchase.get(purchase.pembelian_id)?.pendingUnits ?? 0,
+        inventory_quantity_review_count: inventoryProgress.byPurchase.get(purchase.pembelian_id)?.quantityReviewCount ?? 0,
       }),
     ),
     total: count ?? 0,
@@ -315,6 +402,11 @@ export async function getPurchase(usahaId: string, pembelianId: string): Promise
     new Set(lines.map((line) => line.varian_barang_id).filter((id): id is string => Boolean(id))),
   );
 
+  const inventoryProgress = await getPurchaseLineInventoryProgress(
+    usahaId,
+    [purchase.pembelian_id],
+  );
+
   const [catalogResult, variantResult] = await Promise.all([
     catalogIds.length
       ? supabase.from("barang").select("barang_id,nama").eq("usaha_id", usahaId).in("barang_id", catalogIds)
@@ -351,6 +443,9 @@ export async function getPurchase(usahaId: string, pembelianId: string): Promise
             ? catalogNames.get(variantProductIds.get(line.varian_barang_id) ?? "") ?? null
             : null,
       varian_nama: line.varian_barang_id ? variantNames.get(line.varian_barang_id) ?? null : null,
+      registered_unit_count: inventoryProgress.byLine.get(line.detail_pembelian_id)?.registered ?? 0,
+      remaining_unit_count: inventoryProgress.byLine.get(line.detail_pembelian_id)?.remaining ?? 0,
+      quantity_needs_review: inventoryProgress.byLine.get(line.detail_pembelian_id)?.needsReview ?? false,
     })),
   };
 }
@@ -526,6 +621,41 @@ export async function createPurchaseDraft(
   );
 }
 
+export async function createPurchaseWithFinanceCashout(
+  usahaId: string,
+  input: CreatePurchaseDraftInput,
+  allocations: Array<{ akunKeuanganId: string; amount: number }>,
+  options: ProcurementCommandOptions = {},
+): Promise<PurchaseFinanceMutationResult> {
+  if (!usahaId.trim()) throw new Error("Usaha wajib ditentukan.");
+  if (!input.tanggalPembelian.trim()) throw new Error("Tanggal pembelian wajib diisi.");
+  if (!Array.isArray(allocations) || allocations.length === 0) {
+    throw new Error("Pilih akun uang untuk menyelesaikan pembayaran pembelian.");
+  }
+  const idempotencyKey = procurementCommandKey("create-purchase-with-finance-cashout", options);
+  return executeProcurementCommand<PurchaseFinanceMutationResult>(
+    usahaId,
+    "create_purchase_with_finance_cashout",
+    "command_create_purchase_with_finance_cashout",
+    {
+      p_usaha_id: usahaId,
+      p_pemasok_id: input.pemasokId ?? null,
+      p_nomor_pembelian: input.nomorPembelian.trim(),
+      p_tanggal_pembelian: input.tanggalPembelian,
+      p_lines: normalizePurchaseLines(input.lines),
+      p_catatan: input.catatan?.trim() || null,
+      p_allocations: allocations.map((allocation) => ({
+        akun_keuangan_id: allocation.akunKeuanganId,
+        amount: allocation.amount,
+      })),
+      p_idempotency_key: idempotencyKey,
+      p_request_id: options.requestId ?? createClientId(),
+    },
+    "Pembuatan dan pembayaran pembelian",
+    idempotencyKey,
+  );
+}
+
 export async function updatePurchaseDraft(
   usahaId: string,
   pembelianId: string,
@@ -620,6 +750,7 @@ export async function reconcileProcurementMutation(
     | "update_supplier"
     | "set_supplier_status"
     | "create_purchase"
+    | "create_purchase_with_finance_cashout"
     | "update_purchase_draft",
   idempotencyKey: string,
 ): Promise<ProcurementReconciliation> {

@@ -203,6 +203,64 @@ describe("Manual expense cash-out command", () => {
     });
   });
 
+  test("purchase-sourced expense cash-out carries the purchase source id", async () => {
+    rpcMock.mockResolvedValueOnce({
+      data: {
+        pengeluaran_id: "expense-purchase-1",
+        nomor_pengeluaran: "EXP-2026-014",
+        transaksi_keuangan_id: "transaction-purchase-1",
+        nomor_transaksi: "TRX-2026-014",
+        status: "recorded",
+        source_type: "purchase",
+        source_id: "purchase-1",
+        amount: 300000,
+        currency_code: "IDR",
+        cash_out_recorded: true,
+        purchase_status: "completed",
+      },
+      error: null,
+    });
+
+    await expect(recordExpenseWithFinanceCashout("usaha-1", {
+      sourceType: "purchase",
+      sourceId: "purchase-1",
+      pemasokId: "supplier-1",
+      kategoriBiaya: "Pembelian",
+      deskripsi: "Pembelian PB-2026-014",
+      amount: 300000,
+      tanggalPengeluaran: "2026-10-28",
+      allocations: [{ akunKeuanganId: "cash-operasional", amount: 300000 }],
+    }, {
+      idempotencyKey: "expense-from-purchase-test",
+      requestId: "request-expense-from-purchase-test",
+    })).resolves.toMatchObject({
+      pengeluaran_id: "expense-purchase-1",
+      cash_out_recorded: true,
+    });
+
+    expect(rpcMock).toHaveBeenCalledWith("command_record_expense_with_finance_cashout", expect.objectContaining({
+      p_usaha_id: "usaha-1",
+      p_source_type: "purchase",
+      p_source_id: "purchase-1",
+      p_pemasok_id: "supplier-1",
+      p_amount: 300000,
+      p_allocations: [{ akun_keuangan_id: "cash-operasional", amount: 300000 }],
+      p_idempotency_key: "expense-from-purchase-test",
+      p_request_id: "request-expense-from-purchase-test",
+    }));
+  });
+
+  test("rejects purchase cash-out without a purchase source before RPC", async () => {
+    await expect(recordExpenseWithFinanceCashout("usaha-1", {
+      sourceType: "purchase",
+      kategoriBiaya: "Pembelian",
+      deskripsi: "Pembelian tanpa sumber",
+      amount: 300000,
+      allocations: [{ akunKeuanganId: "cash-operasional", amount: 300000 }],
+    })).rejects.toThrow("Pilih pembelian yang akan diselesaikan.");
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
+
   test("rejects incomplete allocations before calling the RPC", async () => {
     await expect(
       recordExpenseWithFinanceCashout(

@@ -123,6 +123,12 @@ export function PurchaseList() {
                     <div className="border-t pt-3 text-xs text-muted-foreground">
                       <span>{formatProcurementDate(purchase.tanggal_pembelian)}</span><span className="mx-2">•</span><span>{purchase.line_count} item</span>
                     </div>
+                    {(purchase.inventory_pending_units ?? 0) > 0 || (purchase.inventory_quantity_review_count ?? 0) > 0 ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {(purchase.inventory_pending_units ?? 0) > 0 ? <Badge variant="outline" className="rounded-full border-amber-300 bg-amber-50 text-amber-800">{purchase.inventory_pending_units} unit belum didaftarkan</Badge> : null}
+                        {(purchase.inventory_quantity_review_count ?? 0) > 0 ? <Badge variant="outline" className="rounded-full border-orange-300 bg-orange-50 text-orange-800">Periksa jumlah barang</Badge> : null}
+                      </div>
+                    ) : null}
                     <div className="flex items-center justify-between"><p className="text-base font-bold">{formatPurchaseMoney(purchase.total_amount, purchase.currency_code)}</p><ChevronRight className="size-4 text-muted-foreground" /></div>
                   </CardContent>
                 </Card>
@@ -132,7 +138,7 @@ export function PurchaseList() {
 
           <div className="hidden overflow-hidden rounded-2xl border bg-card shadow-sm md:block">
             <table className="w-full text-sm">
-              <thead className="border-b bg-muted/35 text-left"><tr><th className="px-5 py-3 font-medium">Nomor</th><th className="px-5 py-3 font-medium">Pemasok</th><th className="px-5 py-3 font-medium">Tanggal</th><th className="px-5 py-3 font-medium">Item</th><th className="px-5 py-3 font-medium">Total</th><th className="px-5 py-3 font-medium">Status</th></tr></thead>
+              <thead className="border-b bg-muted/35 text-left"><tr><th className="px-5 py-3 font-medium">Nomor</th><th className="px-5 py-3 font-medium">Pemasok</th><th className="px-5 py-3 font-medium">Tanggal</th><th className="px-5 py-3 font-medium">Item</th><th className="px-5 py-3 font-medium">Total</th><th className="px-5 py-3 font-medium">Inventaris</th><th className="px-5 py-3 font-medium">Status</th></tr></thead>
               <tbody>
                 {purchases.data.purchases.map((purchase) => (
                   <tr key={purchase.pembelian_id} className="border-b last:border-0">
@@ -141,6 +147,9 @@ export function PurchaseList() {
                     <td className="px-5 py-4">{formatProcurementDate(purchase.tanggal_pembelian)}</td>
                     <td className="px-5 py-4">{purchase.line_count}</td>
                     <td className="px-5 py-4 font-semibold">{formatPurchaseMoney(purchase.total_amount, purchase.currency_code)}</td>
+                    <td className="px-5 py-4">
+                      {(purchase.inventory_pending_units ?? 0) > 0 ? <Badge variant="outline" className="rounded-full border-amber-300 bg-amber-50 text-amber-800">{purchase.inventory_pending_units} belum masuk</Badge> : (purchase.inventory_quantity_review_count ?? 0) > 0 ? <Badge variant="outline" className="rounded-full border-orange-300 bg-orange-50 text-orange-800">Periksa jumlah</Badge> : <span className="text-xs text-muted-foreground">Terdaftar / tidak perlu unit</span>}
+                    </td>
                     <td className="px-5 py-4"><Badge variant={purchaseStatusVariant()} className="rounded-full bg-amber-50 text-amber-700 hover:bg-amber-50">{purchaseStatusLabel(purchase.status)}</Badge></td>
                   </tr>
                 ))}

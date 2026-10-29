@@ -142,6 +142,26 @@ check("cors_rejects_unknown_origin", status == 403 and headers.get("access-contr
       and isinstance(payload, dict) and payload.get("error") == "ORIGIN_NOT_ALLOWED",
       f"HTTP {status}; ACAO={headers.get('access-control-allow-origin')}")
 
+VERCEL_PREVIEW_ORIGIN = "https://outdoor-rental-platform-1int3mrh0-din-media.vercel.app"
+for label, path in [
+    ("admin preview origin", "/functions/v1/hiking-admin-api"),
+    ("route import preview origin", "/functions/v1/hiking-route-import"),
+    ("media upload preview origin", "/functions/v1/hiking-media-upload"),
+]:
+    status, payload, headers = request(label, path, method="OPTIONS", origin=VERCEL_PREVIEW_ORIGIN)
+    check(label.replace(" ", "_"), status == 200 and headers.get("access-control-allow-origin") == VERCEL_PREVIEW_ORIGIN,
+          f"HTTP {status}; ACAO={headers.get('access-control-allow-origin')}")
+
+LOCAL_DEV_ORIGIN = "http://127.0.0.1:5173"
+for label, path in [
+    ("admin localhost origin", "/functions/v1/hiking-admin-api"),
+    ("route import localhost origin", "/functions/v1/hiking-route-import"),
+    ("media upload localhost origin", "/functions/v1/hiking-media-upload"),
+]:
+    status, payload, headers = request(label, path, method="OPTIONS", origin=LOCAL_DEV_ORIGIN)
+    check(label.replace(" ", "_"), status == 200 and headers.get("access-control-allow-origin") == LOCAL_DEV_ORIGIN,
+          f"HTTP {status}; ACAO={headers.get('access-control-allow-origin')}")
+
 if CATALOG_DISABLED:
     for label, path in [
         ("REST mountains view hidden", "/rest/v1/v_public_hiking_mountains?select=mountain_id,slug"),

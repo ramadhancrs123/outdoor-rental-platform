@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, Menu, Search, SunMoon } from "lucide-react";
+import { Bell, Menu, Search } from "lucide-react";
 import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";

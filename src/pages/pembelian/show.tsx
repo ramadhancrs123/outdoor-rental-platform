@@ -1,6 +1,9 @@
-import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Edit3, Info, MoreVertical, ShoppingBag } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { AlertCircle, ArrowLeft, Check, Edit3, Info, MoreVertical, ShoppingBag } from "lucide-react";
+import { useState } from "react";
 import { Link, useParams } from "react-router";
+
+import { registerInventoryUnit } from "@/features/inventaris";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -17,11 +20,16 @@ import {
   formatPurchaseMoney,
   purchaseStatusLabel,
   purchaseStatusVariant,
+  type PurchaseLineItem,
 } from "@/features/pemasok";
 import { paths } from "@/routes/paths";
 
 export function PurchaseShow() {
   const { id } = useParams<{ id: string }>();
+  const queryClient = useQueryClient();
+  const [registeringLineId, setRegisteringLineId] = useState<string | null>(null);
+  const [inventoryFeedback, setInventoryFeedback] = useState<string | null>(null);
+  const [inventoryError, setInventoryError] = useState<string | null>(null);
   const context = useQuery({ queryKey: ["pembelian", "context"], queryFn: getPemasokContext, staleTime: 60_000 });
   const purchase = useQuery({
     queryKey: ["pembelian", "detail", context.data?.usahaId, id],
@@ -45,6 +53,43 @@ export function PurchaseShow() {
 
   const item = purchase.data;
   const capabilities = getProcurementCapabilities();
+  const pendingInventoryUnits = item.lines.reduce((sum, line) => sum + Math.max(0, Number(line.remaining_unit_count ?? 0)), 0);
+  const quantityReviewCount = item.lines.filter((line) => line.quantity_needs_review).length;
+  const hasRegisteredUnits = item.lines.some((line) => Number(line.registered_unit_count ?? 0) > 0);
+
+  const registerRemainingUnits = async (line: PurchaseLineItem) => {
+    if (!context.data?.usahaId) return;
+    const quantity = Number(line.jumlah);
+    const remaining = Math.max(0, Math.floor(Number.isFinite(quantity) ? quantity : 0) - Number(line.registered_unit_count ?? 0));
+    if (line.quantity_needs_review) { setInventoryError("Periksa jumlah barang sebelum mendaftarkan unit."); return; }
+    if (!line.barang_id) { setInventoryError("Item belum terhubung ke barang katalog."); return; }
+    if (remaining < 1) return;
+    setRegisteringLineId(line.detail_pembelian_id);
+    setInventoryError(null);
+    setInventoryFeedback(null);
+    let done = 0;
+    try {
+      for (let i = 0; i < remaining; i += 1) {
+        await registerInventoryUnit(context.data.usahaId, {
+          barangId: line.barang_id,
+          varianBarangId: line.varian_barang_id,
+          kodeUnit: "",
+          lokasiId: null,
+          tanggalDiperoleh: item.tanggal_pembelian,
+          sumberPembelianDetailId: line.detail_pembelian_id,
+          catatanInternal: "Didaftarkan dari pembelian " + item.nomor_pembelian,
+        });
+        done += 1;
+      }
+      setInventoryFeedback(done + " unit berhasil didaftarkan.");
+    } catch (error) {
+      setInventoryError((done ? done + " unit berhasil; " : "") + (error instanceof Error ? error.message : "Pendaftaran unit gagal."));
+    } finally {
+      await purchase.refetch();
+      await queryClient.invalidateQueries({ queryKey: ["inventaris"] });
+      setRegisteringLineId(null);
+    }
+  };
 
   return (
     <div className="space-y-4 pb-24 lg:space-y-5 lg:pb-10">
@@ -56,7 +101,7 @@ export function PurchaseShow() {
             <h1 className="text-[22px] font-bold tracking-tight">{item.nomor_pembelian}</h1>
             <Badge variant={purchaseStatusVariant()} className="rounded-full bg-amber-50 text-amber-700 hover:bg-amber-50">{purchaseStatusLabel(item.status)}</Badge>
           </div>
-          <p className="mt-1 text-sm text-muted-foreground">Draft pembelian · dapat diedit selama status draft.</p>
+          <p className="mt-1 text-sm text-muted-foreground">{item.status === "draft" ? "Draft pembelian · belum dibayar atau diselesaikan." : "Pembelian tercatat · periksa status inventaris di bawah."}</p>
         </div>
         <Button variant="ghost" size="icon" className="rounded-xl" aria-label="Menu pembelian"><MoreVertical /></Button>
       </header>
@@ -65,9 +110,23 @@ export function PurchaseShow() {
         <CardContent className="flex items-center gap-3 p-4">
           <div className="grid size-12 place-items-center rounded-full bg-muted"><ShoppingBag className="size-5 text-muted-foreground" /></div>
           <div className="min-w-0 flex-1"><p className="font-semibold">{item.nomor_pembelian}</p><p className="mt-1 text-xs text-muted-foreground">{item.pemasok_nama ?? "Pemasok tidak dicatat"} · {formatProcurementDate(item.tanggal_pembelian)}</p></div>
-          {item.status === "draft" ? <Button asChild size="sm" className="rounded-xl"><Link to={paths.pembelian + "/" + item.pembelian_id + "/edit"}><Edit3 />Ubah Draf</Link></Button> : null}
+          {item.status === "draft" ? <div className="flex flex-wrap items-center gap-2"><Button asChild variant="outline" size="sm" className="rounded-xl"><Link to={paths.keuangan + "/pengeluaran/create?sourceType=purchase&sourceId=" + encodeURIComponent(item.pembelian_id)}>Catat Pengeluaran</Link></Button>{hasRegisteredUnits ? <span className="text-xs text-muted-foreground">Detail dikunci karena unit sudah terdaftar.</span> : <Button asChild size="sm" className="rounded-xl"><Link to={paths.pembelian + "/" + item.pembelian_id + "/edit"}><Edit3 />Ubah Draf</Link></Button>}</div> : null}
         </CardContent>
       </Card>
+
+      {pendingInventoryUnits > 0 || quantityReviewCount > 0 ? (
+        <Alert className="border-amber-300 bg-amber-50/70 text-amber-950">
+          <AlertCircle className="size-4" />
+          <AlertTitle>Barang belum lengkap di inventaris</AlertTitle>
+          <AlertDescription>
+            {pendingInventoryUnits > 0 ? pendingInventoryUnits + " unit belum didaftarkan. " : ""}
+            {quantityReviewCount > 0 ? quantityReviewCount + " item memiliki jumlah yang perlu diperiksa. " : ""}
+            Buka tab Item, lalu daftarkan unit yang benar. Kode unit dibuat otomatis.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+      {inventoryFeedback ? <Alert className="border-emerald-200 bg-emerald-50/70"><Check className="size-4 text-emerald-700" /><AlertTitle>Inventaris diperbarui</AlertTitle><AlertDescription>{inventoryFeedback}</AlertDescription></Alert> : null}
+      {inventoryError ? <Alert variant="destructive"><AlertCircle className="size-4" /><AlertTitle>Unit belum seluruhnya didaftarkan</AlertTitle><AlertDescription>{inventoryError}</AlertDescription></Alert> : null}
 
       <Tabs defaultValue="summary" className="space-y-4">
         <TabsList className="grid w-full grid-cols-2 rounded-xl">
@@ -119,13 +178,14 @@ export function PurchaseShow() {
                           <div><p className="text-xs text-muted-foreground">Jumlah</p><p className="mt-1 font-medium">{line.jumlah}</p></div>
                           <div><p className="text-xs text-muted-foreground">Harga / unit</p><p className="mt-1 font-medium">{formatPurchaseMoney(line.unit_price, item.currency_code)}</p></div>
                         </div>
+                        <InventoryProgressControl line={line} loading={registeringLineId === line.detail_pembelian_id} disabled={registeringLineId !== null} onRegister={() => void registerRemainingUnits(line)} />
                         {line.deskripsi ? <p className="mt-3 text-sm leading-6 text-muted-foreground">{line.deskripsi}</p> : null}
                       </div>
                     ))}
                   </div>
                   <div className="hidden overflow-hidden rounded-xl border md:block">
                     <table className="w-full text-sm">
-                      <thead className="border-b bg-muted/35 text-left"><tr><th className="px-4 py-3 font-medium">Barang</th><th className="px-4 py-3 font-medium">Varian</th><th className="px-4 py-3 font-medium">Jumlah</th><th className="px-4 py-3 font-medium">Harga / unit</th><th className="px-4 py-3 font-medium">Subtotal</th></tr></thead>
+                      <thead className="border-b bg-muted/35 text-left"><tr><th className="px-4 py-3 font-medium">Barang</th><th className="px-4 py-3 font-medium">Varian</th><th className="px-4 py-3 font-medium">Jumlah</th><th className="px-4 py-3 font-medium">Harga / unit</th><th className="px-4 py-3 font-medium">Subtotal</th><th className="px-4 py-3 font-medium">Inventaris</th></tr></thead>
                       <tbody>
                         {item.lines.map((line) => (
                           <tr key={line.detail_pembelian_id} className="border-b last:border-0">
@@ -134,6 +194,7 @@ export function PurchaseShow() {
                             <td className="px-4 py-3">{line.jumlah}</td>
                             <td className="px-4 py-3">{formatPurchaseMoney(line.unit_price, item.currency_code)}</td>
                             <td className="px-4 py-3 font-semibold">{formatPurchaseMoney(line.subtotal, item.currency_code)}</td>
+                            <td className="min-w-56 px-4 py-3"><InventoryProgressControl line={line} loading={registeringLineId === line.detail_pembelian_id} disabled={registeringLineId !== null} onRegister={() => void registerRemainingUnits(line)} /></td>
                           </tr>
                         ))}
                       </tbody>
@@ -151,4 +212,79 @@ export function PurchaseShow() {
 
 function InfoRow({ label, value }: { label: string; value: string }) {
   return <div><p className="text-xs text-muted-foreground">{label}</p><p className="mt-1 break-words text-sm font-medium whitespace-pre-wrap">{value}</p></div>;
+}
+
+
+function InventoryProgressControl({
+  line,
+  loading,
+  disabled,
+  onRegister,
+}: {
+  line: PurchaseLineItem;
+  loading: boolean;
+  disabled: boolean;
+  onRegister: () => void;
+}) {
+  const planned = Number(line.jumlah);
+  const wholeQuantity = Number.isFinite(planned) && planned > 0 ? Math.floor(planned) : 0;
+  const registered = Math.max(0, Number(line.registered_unit_count ?? 0));
+  const remaining = Math.max(0, wholeQuantity - registered);
+
+  return (
+    <div className="mt-3 space-y-2 rounded-xl border bg-muted/20 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-semibold">Status inventaris</p>
+        <Badge
+          variant="outline"
+          className={remaining > 0 || line.quantity_needs_review
+            ? "rounded-full border-amber-300 bg-amber-50 text-amber-800"
+            : "rounded-full border-emerald-200 bg-emerald-50 text-emerald-800"}
+        >
+          {registered}/{wholeQuantity} terdaftar
+        </Badge>
+      </div>
+
+      {line.quantity_needs_review ? (
+        <div className="space-y-2">
+          <p className="text-xs leading-5 text-amber-800">
+            Jumlah pada catatan pembelian perlu diperiksa. Pendaftaran unit fisik tetap dapat dilakukan melalui Inventaris.
+          </p>
+          <Button asChild type="button" variant="outline" size="sm" className="w-full rounded-xl">
+            <Link to={paths.inventarisCreate}>Daftarkan unit di Inventaris</Link>
+          </Button>
+        </div>
+      ) : !line.barang_id ? (
+        <p className="text-xs leading-5 text-muted-foreground">
+          Item belum terhubung ke barang katalog. Hubungkan barang terlebih dahulu.
+        </p>
+      ) : remaining > 0 ? (
+        <>
+          <p className="text-xs leading-5 text-muted-foreground">
+            {remaining} unit belum terdaftar di inventaris.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="w-full rounded-xl"
+            disabled={disabled || loading}
+            onClick={onRegister}
+          >
+            {loading ? <Check className="size-3.5 animate-pulse" /> : <ShoppingBag className="size-3.5" />}
+            {loading ? "Mendaftarkan unit…" : "Daftarkan " + remaining + " unit"}
+          </Button>
+        </>
+      ) : (
+        <div className="space-y-2">
+          <p className="text-xs leading-5 text-emerald-700">
+            Seluruh jumlah pada catatan pembelian sudah terhubung ke inventaris. Jika masih ada unit fisik lain, daftarkan melalui Inventaris; jumlah pembelian bukan batas stok.
+          </p>
+          <Button asChild type="button" variant="outline" size="sm" className="w-full rounded-xl">
+            <Link to={paths.inventarisCreate}>Daftarkan unit lain</Link>
+          </Button>
+        </div>
+      )}
+    </div>
+  );
 }

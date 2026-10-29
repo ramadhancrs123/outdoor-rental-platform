@@ -20,6 +20,8 @@ import {
   listPurchaseCatalogOptions,
   listPurchaseVariantOptions,
   createPurchaseDraft,
+  createPurchaseWithFinanceCashout,
+  getPurchaseNumberPreview,
   updatePurchaseDraft,
   type CreatePurchaseDraftInput,
   type PurchaseDraftLineInput,
@@ -27,6 +29,8 @@ import {
   type PurchaseDetail,
 } from "@/features/pemasok";
 import { ProcurementCommandState, ProcurementSteps } from "@/components/pemasok/procurement-ui";
+import { FinanceCashout } from "@/components/keuangan/finance-cashout";
+import { getFinanceAccountSummary, type FinanceAccount } from "@/features/keuangan";
 import { formatPurchaseMoney } from "@/features/pemasok";
 import { paths } from "@/routes/paths";
 
@@ -34,10 +38,15 @@ const emptyLine = (): PurchaseDraftLineInput => ({ barangId: "", varianBarangId:
 const emptyForm: CreatePurchaseDraftInput = {
   pemasokId: null,
   nomorPembelian: "",
-  tanggalPembelian: new Date().toISOString().slice(0, 10),
+  tanggalPembelian: getLocalDateInputValue(),
   lines: [emptyLine()],
   catatan: "",
 };
+
+function getLocalDateInputValue() {
+  const now = new Date();
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
+}
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Draft pembelian gagal disimpan.";
@@ -55,6 +64,10 @@ export function PurchaseCreate() {
   const [expectedUpdatedAt, setExpectedUpdatedAt] = useState("");
   const [feedback, setFeedback] = useState("");
   const [savedPurchaseId, setSavedPurchaseId] = useState<string | null>(editing ? id ?? null : null);
+  const [paymentMode, setPaymentMode] = useState<"draft" | "pay_now">("draft");
+  const [accountAllocations, setAccountAllocations] = useState<Record<string, string>>({});
+  const [completedWithPayment, setCompletedWithPayment] = useState(false);
+  const lastIntentRef = useRef<"draft" | "pay_now">("draft");
 
   const context = useQuery({ queryKey: ["pembelian", "context"], queryFn: getPemasokContext, staleTime: 60_000 });
   const purchase = useQuery({
@@ -84,6 +97,24 @@ export function PurchaseCreate() {
   });
 
   const capabilities = getProcurementCapabilities();
+  const editingDateChanged = Boolean(
+    editing && purchase.data && form.tanggalPembelian !== purchase.data.tanggal_pembelian,
+  );
+  const purchaseNumberPreview = useQuery({
+    queryKey: ["pembelian", "number-preview", context.data?.usahaId, form.tanggalPembelian],
+    queryFn: () => getPurchaseNumberPreview(context.data!.usahaId, form.tanggalPembelian),
+    enabled: Boolean(context.data?.usahaId && form.tanggalPembelian) && (!editing || editingDateChanged),
+    staleTime: 5_000,
+  });
+  const financeAccounts = useQuery({
+    queryKey: ["keuangan", "purchase-cashout-accounts", context.data?.usahaId],
+    queryFn: () => getFinanceAccountSummary(context.data!.usahaId),
+    enabled: Boolean(context.data?.usahaId && !editing && mode === "review" && paymentMode === "pay_now"),
+    staleTime: 5_000,
+  });
+  const displayPurchaseNumber = editing && !editingDateChanged
+    ? form.nomorPembelian
+    : purchaseNumberPreview.data || "Dibuat otomatis berdasarkan tanggal";
 
   useEffect(() => {
     if (!purchase.data || expectedUpdatedAt !== "") return;
@@ -97,7 +128,9 @@ export function PurchaseCreate() {
   );
 
   const ready = Boolean(
-    form.nomorPembelian.trim() &&
+    (editing && !editingDateChanged
+      ? form.nomorPembelian.trim()
+      : Boolean(purchaseNumberPreview.data) && !purchaseNumberPreview.isFetching) &&
     form.tanggalPembelian &&
     (form.lines ?? []).length > 0 &&
     (form.lines ?? []).every((line) => line.barangId || line.varianBarangId) &&
@@ -105,34 +138,65 @@ export function PurchaseCreate() {
   );
 
   const mutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (intent: "draft" | "pay_now") => {
       if (!context.data) throw new Error("Konteks Usaha belum siap.");
+      lastIntentRef.current = editing ? "draft" : intent;
       commandRef.current ??= createClientId();
       setFeedback("");
+      const options = { idempotencyKey: commandRef.current, requestId: createClientId() };
+      const submittedForm: CreatePurchaseDraftInput = {
+        ...form,
+        nomorPembelian: editing && !editingDateChanged
+          ? form.nomorPembelian.trim()
+          : purchaseNumberPreview.data?.trim() || "",
+      };
+      if (!submittedForm.nomorPembelian) throw new Error("Nomor pembelian otomatis belum siap. Muat ulang nomor lalu coba lagi.");
       if (editing) {
         return updatePurchaseDraft(
           context.data.usahaId,
           id!,
-          { ...form, expectedUpdatedAt },
-          { idempotencyKey: commandRef.current, requestId: createClientId() },
+          { ...submittedForm, expectedUpdatedAt },
+          options,
         );
       }
-      return createPurchaseDraft(
-        context.data.usahaId,
-        form,
-        { idempotencyKey: commandRef.current, requestId: createClientId() },
-      );
+      if (intent === "pay_now") {
+        const allocations = Object.entries(accountAllocations)
+          .map(([akunKeuanganId, amount]) => ({ akunKeuanganId, amount: Number(amount) }))
+          .filter((allocation) => Number.isFinite(allocation.amount) && allocation.amount > 0);
+        return createPurchaseWithFinanceCashout(context.data.usahaId, submittedForm, allocations, options);
+      }
+      return createPurchaseDraft(context.data.usahaId, submittedForm, options);
     },
     onMutate: () => setMode("processing"),
     onSuccess: async (result) => {
       setSavedPurchaseId(result.pembelian_id);
       setExpectedUpdatedAt(result.updated_at);
+      setForm((current) => ({ ...current, nomorPembelian: result.nomor_pembelian }));
+      setCompletedWithPayment("cash_out_recorded" in result && result.cash_out_recorded === true);
       commandRef.current = null;
       setMode("success");
-      await queryClient.invalidateQueries({ queryKey: ["pembelian"] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["pembelian"] }),
+        queryClient.invalidateQueries({ queryKey: ["keuangan"] }),
+      ]);
     },
     onError: (error) => {
       const message = errorMessage(error);
+      if (!editing && /nomor pembelian sudah digunakan|duplicate key value violates unique constraint.*pembelian_usaha_nomor_unik/i.test(message)) {
+        commandRef.current = null;
+        setForm((current) => ({ ...current, nomorPembelian: "" }));
+        setFeedback("Nomor pembelian baru saja digunakan. Sistem mengambil nomor berikutnya; periksa lalu simpan kembali.");
+        setMode("idle");
+        void purchaseNumberPreview.refetch();
+        return;
+      }
+      if (/saldo.{0,80}tidak cukup|tidak cukup.{0,80}saldo|VALIDATION_ERROR:|total alokasi akun harus sama|akun uang tidak boleh/i.test(message)) {
+        setFeedback(message.replace(/^(BUSINESS_CONFLICT|VALIDATION_ERROR|Error):\s*/i, "").trim());
+        commandRef.current = null;
+        setMode(lastIntentRef.current === "pay_now" ? "review" : "error");
+        void queryClient.invalidateQueries({ queryKey: ["keuangan", "purchase-cashout-accounts"] });
+        return;
+      }
       setFeedback(message);
       if (message.startsWith("UNKNOWN_OUTCOME:")) setMode("unknown");
       else if (message.startsWith("STALE_DATA:")) setMode("stale");
@@ -158,11 +222,13 @@ export function PurchaseCreate() {
     try {
       const result = await reconcileProcurementMutation(
         context.data.usahaId,
-        editing ? "update_purchase_draft" : "create_purchase",
+        editing ? "update_purchase_draft" : lastIntentRef.current === "pay_now" ? "create_purchase_with_finance_cashout" : "create_purchase",
         commandRef.current,
       );
       if (result.state === "committed" && result.response && "pembelian_id" in result.response) {
         setSavedPurchaseId(result.response.pembelian_id);
+        setForm((current) => ({ ...current, nomorPembelian: "nomor_pembelian" in result.response! && typeof result.response!.nomor_pembelian === "string" ? result.response!.nomor_pembelian : current.nomorPembelian }));
+        setCompletedWithPayment("cash_out_recorded" in result.response && result.response.cash_out_recorded === true);
         commandRef.current = null;
         setMode("success");
       } else if (result.state === "not_found") {
@@ -210,12 +276,14 @@ export function PurchaseCreate() {
       <div className="mx-auto w-full max-w-md space-y-2 pb-10">
         <ProcurementCommandState
           state="success"
-          title={editing ? "Draft Pembelian Berhasil Diperbarui" : "Draft Pembelian Dibuat"}
-          message="Draft pembelian telah disimpan. Draft ini belum berarti barang sudah diterima, masuk inventaris, atau dibayar."
+          title={completedWithPayment ? "Pembelian & Pembayaran Berhasil Dicatat" : editing ? "Draft Pembelian Berhasil Diperbarui" : "Draft Pembelian Dibuat"}
+          message={completedWithPayment
+            ? "Pembelian, pengeluaran, dan pengurangan saldo akun uang berhasil dicatat. Barang tetap perlu didaftarkan ke inventaris."
+            : "Draft pembelian telah disimpan. Barang belum otomatis masuk inventaris dan belum dibayar."}
         />
         <Card className="rounded-2xl">
           <CardContent className="space-y-2 p-4">
-            <div className="flex items-center justify-between"><span className="text-xs text-muted-foreground">Nomor</span><span className="font-semibold">{form.nomorPembelian}</span></div>
+            <div className="flex items-center justify-between"><span className="text-xs text-muted-foreground">Nomor</span><span className="font-semibold">{form.nomorPembelian || displayPurchaseNumber}</span></div>
             <div className="flex items-center justify-between"><span className="text-xs text-muted-foreground">Total preview</span><span className="font-bold">{formatPurchaseMoney(totalPreview, "IDR")}</span></div>
           </CardContent>
         </Card>
@@ -255,16 +323,28 @@ export function PurchaseCreate() {
         <Review
           form={form}
           totalPreview={totalPreview}
+          displayPurchaseNumber={displayPurchaseNumber}
+          editing={editing}
+          paymentMode={paymentMode}
+          onPaymentModeChange={(value) => { setPaymentMode(value); setAccountAllocations({}); setFeedback(""); }}
+          accounts={financeAccounts.data?.accounts ?? []}
+          accountsPending={financeAccounts.isPending}
+          accountsError={financeAccounts.error}
+          allocations={accountAllocations}
+          onAllocationsChange={setAccountAllocations}
+          feedback={feedback}
           suppliers={suppliers.data ?? []}
           catalog={catalog.data ?? []}
           variants={variants.data ?? []}
-          onBack={() => setMode("idle")}
-          onCommit={() => mutation.mutate()}
+          onBack={() => { setFeedback(""); setMode("idle"); }}
+          onCommit={(intent) => mutation.mutate(intent)}
           busy={mutation.isPending}
           mutationEnabled={capabilities.mutation}
+          setupHref={paths.keuangan + "/akun"}
         />
       ) : (
         <>
+          {purchaseNumberPreview.error && (!editing || editingDateChanged) ? <Alert variant="destructive"><AlertTitle>Nomor pembelian otomatis belum tersedia</AlertTitle><AlertDescription className="space-y-2"><p>{errorMessage(purchaseNumberPreview.error)}</p><Button type="button" variant="outline" size="sm" className="rounded-xl" onClick={() => void purchaseNumberPreview.refetch()}>Coba lagi</Button></AlertDescription></Alert> : null}
           <Card className="rounded-2xl shadow-sm">
             <CardHeader><CardTitle className="text-base">Informasi Pembelian</CardTitle></CardHeader>
             <CardContent className="space-y-4">
@@ -286,8 +366,8 @@ export function PurchaseCreate() {
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2">
-                <label className="grid gap-2 text-sm font-medium" htmlFor="purchase-number">Nomor Pembelian <span className="text-destructive">*</span><Input id="purchase-number" value={form.nomorPembelian} onChange={(event) => setForm((current) => ({ ...current, nomorPembelian: event.target.value }))} className="h-11 rounded-xl" placeholder="PB-2026-004" /></label>
-                <label className="grid gap-2 text-sm font-medium" htmlFor="purchase-date">Tanggal Pembelian <span className="text-destructive">*</span><Input id="purchase-date" type="date" value={form.tanggalPembelian} onChange={(event) => setForm((current) => ({ ...current, tanggalPembelian: event.target.value }))} className="h-11 rounded-xl" /></label>
+                <label className="grid gap-2 text-sm font-medium" htmlFor="purchase-number">Nomor Pembelian <span className="text-xs font-normal text-muted-foreground">(otomatis berdasarkan tanggal)</span><Input id="purchase-number" value={displayPurchaseNumber} readOnly className="h-11 rounded-xl bg-muted/40" placeholder="PB-YYYY-MM-DD dibuat otomatis dari tanggal" /></label>
+                <label className="grid gap-2 text-sm font-medium" htmlFor="purchase-date">Tanggal Pembelian <span className="text-destructive">*</span><Input id="purchase-date" type="date" value={form.tanggalPembelian} onChange={(event) => setForm((current) => ({ ...current, tanggalPembelian: event.target.value }))} className="h-11 rounded-xl" />{editingDateChanged ? <span className="text-xs font-normal text-muted-foreground">Nomor akan mengikuti tanggal baru secara otomatis.</span> : null}</label>
               </div>
 
               <label className="grid gap-2 text-sm font-medium" htmlFor="purchase-note">Catatan (Opsional)<Textarea id="purchase-note" value={form.catatan ?? ""} onChange={(event) => setForm((current) => ({ ...current, catatan: event.target.value }))} rows={4} className="rounded-xl" placeholder="Catatan pembelian..." /></label>
@@ -362,7 +442,7 @@ export function PurchaseCreate() {
           </Card>
 
           <div className="sticky bottom-2 z-20 rounded-2xl border bg-background/95 p-2 shadow-lg backdrop-blur">
-            <Button className="h-12 w-full rounded-xl" disabled={!ready || !form.pemasokId} onClick={() => setMode("review")}>Lanjut ke Tinjau <ArrowRight /></Button>
+            <Button className="h-12 w-full rounded-xl" disabled={!ready || !form.pemasokId || (!editing && (purchaseNumberPreview.isPending || !purchaseNumberPreview.data))} onClick={() => setMode("review")}>Lanjut ke Tinjau <ArrowRight /></Button>
           </div>
         </>
       )}
@@ -373,6 +453,16 @@ export function PurchaseCreate() {
 function Review({
   form,
   totalPreview,
+  displayPurchaseNumber,
+  editing,
+  paymentMode,
+  onPaymentModeChange,
+  accounts,
+  accountsPending,
+  accountsError,
+  allocations,
+  onAllocationsChange,
+  feedback,
   suppliers,
   catalog,
   variants,
@@ -380,32 +470,54 @@ function Review({
   onCommit,
   busy,
   mutationEnabled,
+  setupHref,
 }: {
   form: CreatePurchaseDraftInput;
   totalPreview: number;
+  displayPurchaseNumber: string;
+  editing: boolean;
+  paymentMode: "draft" | "pay_now";
+  onPaymentModeChange: (value: "draft" | "pay_now") => void;
+  accounts: FinanceAccount[];
+  accountsPending: boolean;
+  accountsError: unknown;
+  allocations: Record<string, string>;
+  onAllocationsChange: (value: Record<string, string>) => void;
+  feedback: string;
   suppliers: Array<{ pemasok_id: string; nama: string }>;
   catalog: Array<{ barang_id: string; nama: string }>;
   variants: Array<{ varian_barang_id: string; barang_id: string; nama: string }>;
   onBack: () => void;
-  onCommit: () => void;
+  onCommit: (intent: "draft" | "pay_now") => void;
   busy: boolean;
   mutationEnabled: boolean;
+  setupHref: string;
 }) {
   const supplierName = suppliers.find((supplier) => supplier.pemasok_id === form.pemasokId)?.nama ?? "Tidak ditautkan";
+  const accountsErrorMessage = accountsError instanceof Error ? accountsError.message : "Saldo akun uang belum dapat diverifikasi.";
+
   return (
     <>
       <Card className="rounded-2xl shadow-sm">
-        <CardHeader><CardTitle className="text-base">Tinjau Draft Pembelian</CardTitle><p className="text-sm text-muted-foreground">Pastikan data berikut sudah benar.</p></CardHeader>
+        <CardHeader>
+          <CardTitle className="text-base">Tinjau Pembelian</CardTitle>
+          <p className="text-sm text-muted-foreground">Periksa jumlah dan total sebelum disimpan atau dibayar.</p>
+        </CardHeader>
         <CardContent className="space-y-3">
           <ReviewRow label="Pemasok" value={supplierName} />
-          <ReviewRow label="Nomor Pembelian" value={form.nomorPembelian} />
+          <ReviewRow label="Nomor Pembelian" value={displayPurchaseNumber} />
           <ReviewRow label="Tanggal" value={form.tanggalPembelian} />
           <ReviewRow label="Catatan" value={form.catatan || "-"} />
         </CardContent>
       </Card>
 
       <Card className="rounded-2xl shadow-sm">
-        <CardHeader className="flex-row items-center justify-between"><CardTitle className="text-base">Daftar Item</CardTitle><Button variant="outline" size="sm" className="rounded-xl" onClick={onBack}><ChevronDown className="size-4 rotate-90" />Ubah</Button></CardHeader>
+        <CardHeader className="flex-row items-center justify-between">
+          <CardTitle className="text-base">Daftar Item</CardTitle>
+          <Button variant="outline" size="sm" className="rounded-xl" onClick={onBack}>
+            <ChevronDown className="size-4 rotate-90" />Ubah
+          </Button>
+        </CardHeader>
         <CardContent className="space-y-2">
           {(form.lines ?? []).map((line, index) => {
             const productName = catalog.find((item) => item.barang_id === line.barangId)?.nama ?? "Barang";
@@ -427,13 +539,63 @@ function Review({
       </Card>
 
       <Card className="rounded-2xl shadow-sm">
-        <CardContent className="p-4"><p className="text-xs text-muted-foreground">Total (Preview)</p><p className="mt-1 text-[28px] font-bold">{formatPurchaseMoney(totalPreview, "IDR")}</p><p className="mt-1 text-xs text-muted-foreground">Total final dihitung dan divalidasi server.</p></CardContent>
+        <CardContent className="p-4">
+          <p className="text-xs text-muted-foreground">Total pembelian</p>
+          <p className="mt-1 text-[28px] font-bold">{formatPurchaseMoney(totalPreview, "IDR")}</p>
+          <p className="mt-1 text-xs text-muted-foreground">Total resmi divalidasi ulang oleh server.</p>
+        </CardContent>
       </Card>
 
-      <div className="sticky bottom-2 z-20 flex gap-2 rounded-2xl border bg-background/95 p-2 shadow-lg backdrop-blur">
-        <Button variant="outline" className="h-12 flex-1 rounded-xl" onClick={onBack}>Kembali</Button>
-        <Button className="h-12 flex-1 rounded-xl" disabled={!mutationEnabled || busy} onClick={onCommit}>{busy ? <Loader2 className="animate-spin" /> : <Check />}Simpan Draft</Button>
-      </div>
+      {!editing ? (
+        <Card className="rounded-2xl shadow-sm">
+          <CardHeader>
+            <CardTitle className="text-base">Langkah berikutnya</CardTitle>
+            <p className="text-sm text-muted-foreground">Pembayaran bisa dilakukan sekarang atau dilanjutkan nanti dari Keuangan.</p>
+          </CardHeader>
+          <CardContent className="grid gap-2 sm:grid-cols-2">
+            <button type="button" onClick={() => onPaymentModeChange("draft")} className={paymentMode === "draft" ? "rounded-xl border border-primary bg-primary/[0.035] p-3 text-left ring-1 ring-primary/20" : "rounded-xl border p-3 text-left hover:bg-muted/40"}>
+              <p className="text-sm font-semibold">Simpan sebagai draft</p>
+              <p className="mt-1 text-xs text-muted-foreground">Pembayaran bisa dicatat nanti dari menu Keuangan.</p>
+            </button>
+            <button type="button" onClick={() => onPaymentModeChange("pay_now")} className={paymentMode === "pay_now" ? "rounded-xl border border-primary bg-primary/[0.035] p-3 text-left ring-1 ring-primary/20" : "rounded-xl border p-3 text-left hover:bg-muted/40"}>
+              <p className="text-sm font-semibold">Bayar sekarang</p>
+              <p className="mt-1 text-xs text-muted-foreground">Pilih akun uang; pembelian dan pengeluaran dicatat bersama.</p>
+            </button>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {feedback && paymentMode === "pay_now" ? (
+        <Alert variant="destructive"><AlertTitle>Pembayaran belum dapat diselesaikan</AlertTitle><AlertDescription>{feedback}</AlertDescription></Alert>
+      ) : null}
+
+      {paymentMode === "pay_now" && !editing ? (
+        <>
+          {accountsError ? <Alert variant="destructive"><AlertTitle>Akun uang belum dapat dimuat</AlertTitle><AlertDescription>{accountsErrorMessage}</AlertDescription></Alert> : null}
+          {totalPreview <= 0 ? <Alert variant="destructive"><AlertTitle>Total belum valid</AlertTitle><AlertDescription>Isi nominal harga beli agar pembayaran dapat dicatat.</AlertDescription></Alert> : null}
+          <FinanceCashout
+            accounts={accounts}
+            amount={totalPreview}
+            allocations={allocations}
+            onAllocationsChange={onAllocationsChange}
+            onProceed={() => onCommit("pay_now")}
+            disabled={!mutationEnabled || busy || accountsPending || Boolean(accountsError) || totalPreview <= 0}
+            isPending={busy}
+            setupHref={setupHref}
+            title="Bayar pembelian dari akun uang"
+            description="Saldo diperiksa ulang oleh server. Jika dana tidak cukup, sistem menolak pembayaran dan pembelian tidak akan diselesaikan."
+            submitLabel="Selesaikan Pembelian & Catat Pembayaran"
+            pendingLabel="Mencatat pembelian dan pembayaran…"
+          />
+        </>
+      ) : (
+        <div className="sticky bottom-2 z-20 flex gap-2 rounded-2xl border bg-background/95 p-2 shadow-lg backdrop-blur">
+          <Button variant="outline" className="h-12 flex-1 rounded-xl" onClick={onBack}>Kembali</Button>
+          <Button className="h-12 flex-1 rounded-xl" disabled={!mutationEnabled || busy} onClick={() => onCommit("draft")}>
+            {busy ? <Loader2 className="animate-spin" /> : <Check />}Simpan Draft
+          </Button>
+        </div>
+      )}
     </>
   );
 }

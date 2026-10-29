@@ -8,6 +8,8 @@ import type {
   InventoryCatalogItem,
   InventoryCommandOptions,
   InventoryCommandResult,
+  InventoryBatchCommandResult,
+  RegisterInventoryUnitsInput,
   InventoryConditionCorrectionInput,
   InventoryConditionCorrectionResult,
   UpdateInventoryLocationInput,
@@ -287,6 +289,7 @@ export function getInventoryStateCapabilities(): InventoryCapabilities {
     mutation: true,
     commands: [
       "register_inventory_unit",
+      "register_inventory_units",
       "move_inventory_unit",
       "mark_inventory_unit_ready",
       "command_mark_inventory_unit_inspection_pending",
@@ -352,7 +355,9 @@ async function reconcileInventoryAfterUncertainResult(
 
   const result = data as InventoryReconciliationResult | null;
   if (!result) return null;
-  if (result.state === "committed" && result.response) return result.response;
+  if (result.state === "committed" && result.response && "unit_barang_id" in result.response) {
+    return result.response as InventoryCommandResult;
+  }
   if (result.state === "unknown") {
     throw new Error(
       "Hasil tindakan Inventaris belum dapat dipastikan. Jangan mengulang tindakan; periksa status terbaru terlebih dahulu.",
@@ -423,6 +428,64 @@ export async function registerInventoryUnit(
     "Pendaftaran unit",
     idempotencyKey,
   );
+}
+
+export async function registerInventoryUnits(
+  usahaId: string,
+  input: RegisterInventoryUnitsInput,
+  jumlahUnit: number,
+  options: InventoryCommandOptions = {},
+): Promise<InventoryBatchCommandResult> {
+  if (!usahaId.trim()) throw new Error("Usaha wajib ditentukan.");
+  if (!input.barangId.trim()) throw new Error("Barang wajib dipilih.");
+  if (!Number.isInteger(jumlahUnit) || jumlahUnit < 1 || jumlahUnit > 250) {
+    throw new Error("Jumlah unit harus berupa bilangan bulat antara 1 dan 250.");
+  }
+
+  const idempotencyKey = options.idempotencyKey ?? `register-inventory-units-${createClientId()}`;
+  const args = {
+    p_usaha_id: usahaId,
+    p_barang_id: input.barangId,
+    p_varian_barang_id: input.varianBarangId ?? null,
+    p_jumlah_unit: jumlahUnit,
+    p_lokasi_id: input.lokasiId ?? null,
+    p_tanggal_diperoleh: input.tanggalDiperoleh || null,
+    p_sumber_pembelian_detail_id: input.sumberPembelianDetailId ?? null,
+    p_catatan_internal: input.catatanInternal?.trim() || null,
+    p_idempotency_key: idempotencyKey,
+    p_request_id: options.requestId ?? newInventoryCommandRequestId(),
+  };
+
+  const { data, error } = await supabase.rpc("command_register_inventory_units", args);
+  if (!error && data) return data as InventoryBatchCommandResult;
+
+  try {
+    const { data: reconciliation, error: reconciliationError } = await supabase.rpc(
+      "command_reconcile_inventory_unit_mutation",
+      {
+        p_usaha_id: usahaId,
+        p_command_name: "register_inventory_units",
+        p_idempotency_key: idempotencyKey,
+      },
+    );
+    if (!reconciliationError && reconciliation) {
+      const result = reconciliation as InventoryReconciliationResult;
+      if (result.state === "committed" && result.response && "units" in result.response) {
+        return result.response as InventoryBatchCommandResult;
+      }
+      if (result.state === "unknown") {
+        throw new Error("UNKNOWN_OUTCOME: hasil pendaftaran massal belum dapat dipastikan. Jangan mengirim ulang sebelum status diperiksa.");
+      }
+    }
+  } catch (reconciliationError) {
+    if (reconciliationError instanceof Error && reconciliationError.message.startsWith("UNKNOWN_OUTCOME:")) {
+      throw reconciliationError;
+    }
+    // A validation/business failure can have no idempotency response. Preserve the original RPC error.
+  }
+
+  if (error) throw normalizeRpcError(error, "Pendaftaran unit");
+  throw new Error("Pendaftaran unit: server tidak mengembalikan hasil command.");
 }
 
 export async function moveInventoryUnit(
@@ -574,6 +637,7 @@ export async function reconcileInventoryCommand(
   usahaId: string,
   commandName:
     | "register_inventory_unit"
+    | "register_inventory_units"
     | "move_inventory_unit"
     | "mark_inventory_unit_ready"
     | "mark_inventory_unit_inspection_pending",

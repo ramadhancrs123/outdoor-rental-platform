@@ -39,6 +39,19 @@ function priorityClass(value: string) {
   return "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/50 dark:bg-sky-950/25 dark:text-sky-300";
 }
 
+function notificationCategoryLabel(value: string | null) {
+  const source = (value ?? "").toLowerCase();
+  if (source.includes("consequence") || source.includes("payment") || source.includes("pembayaran") ||
+      source.includes("expense") || source.includes("profit") || source.includes("payout") ||
+      source.includes("keuangan")) return "Keuangan";
+  if (source.includes("rental") || source.includes("reservation") || source.includes("penyewaan") ||
+      source.includes("reservasi")) return "Penyewaan";
+  if (source.includes("return") || source.includes("pengembalian")) return "Pengembalian";
+  if (source.includes("inventory") || source.includes("inspection") || source.includes("maintenance") ||
+      source.includes("damage") || source.includes("inventaris") || source.includes("perawatan")) return "Inventaris";
+  return "Aktivitas";
+}
+
 export function PemberitahuanList() {
   const { current } = useCurrentUsaha();
   const [items, setItems] = useState<NotificationRecord[]>([]);
@@ -219,7 +232,7 @@ export function PemberitahuanList() {
 
                         <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[10px] text-muted-foreground">
                           <time dateTime={item.created_at}>{formatDate(item.created_at)}</time>
-                          {item.sumber_type ? <span className="before:mr-1 before:content-['•']">{item.sumber_type.replaceAll("_", " ")}</span> : null}
+                          {item.sumber_type ? <span className="before:mr-1 before:content-['•']">{notificationCategoryLabel(item.sumber_type)}</span> : null}
                           {item.dibaca_at ? <span className="inline-flex items-center gap-1"><Check className="size-3" aria-hidden="true" /> Dibaca</span> : null}
                         </div>
 

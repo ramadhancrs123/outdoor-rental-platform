@@ -135,6 +135,14 @@ export type InventoryCommandResult = {
   state?: "changed" | "unchanged";
 };
 
+export type RegisterInventoryUnitsInput = Omit<RegisterInventoryUnitInput, "kodeUnit" | "serialNumber">;
+
+export type InventoryBatchCommandResult = {
+  usaha_id: string;
+  jumlah_unit: number;
+  units: InventoryCommandResult[];
+};
+
 export type InventoryOperationalStatus = "damaged" | "lost" | "inactive";
 
 export type InventoryOperationalStatusInput = {
@@ -146,7 +154,7 @@ export type InventoryOperationalStatusInput = {
 
 export type InventoryReconciliationResult = {
   state: "committed" | "not_found" | "unknown";
-  response: InventoryCommandResult | null;
+  response: InventoryCommandResult | InventoryBatchCommandResult | null;
 };
 
 export type InventoryConditionCorrectionInput = {

@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { AlertCircle, ArrowRight, CheckCircle2, WalletCards, WandSparkles, X } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -42,7 +42,10 @@ export function FinanceCashout({
   submitLabel = "Bayar & Catat Pengeluaran",
   pendingLabel = "Mencatat pengeluaran & cash out…",
 }: Props) {
-  const activeAccounts = accounts.filter((account) => account.status === "active" && account.fungsi_akun === "operasional" && account.mata_uang === "IDR");
+  const activeAccounts = useMemo(
+    () => accounts.filter((account) => account.status === "active" && account.fungsi_akun === "operasional" && account.mata_uang === "IDR"),
+    [accounts],
+  );
   const availableTotal = activeAccounts.reduce((sum, account) => sum + Math.max(0, Number(account.saldo)), 0);
   const allocatedTotal = Object.values(allocations).reduce((sum, value) => sum + Math.max(0, Number(value || 0)), 0);
   const remaining = Math.max(0, amount - allocatedTotal);
@@ -78,10 +81,21 @@ export function FinanceCashout({
     onAllocationsChange(next);
   };
 
-  const autoAllocate = () => {
+  const autoAllocate = useCallback(() => {
     let left = Math.max(0, amount);
+    const preference = (account: FinanceAccount) => {
+      const label = (account.nama_akun + " " + account.kode_akun).toLowerCase();
+      if (account.jenis_akun === "kas" && /operasional/.test(label)) return 0;
+      if (account.jenis_akun === "kas") return 1;
+      if (account.jenis_akun === "bank") return 2;
+      if (account.jenis_akun === "e_wallet") return 3;
+      return 4;
+    };
+    const preferredAccounts = [...activeAccounts].sort((a, b) =>
+      preference(a) - preference(b) || Number(b.saldo) - Number(a.saldo),
+    );
     const next: Record<string, string> = {};
-    for (const account of [...activeAccounts].sort((a, b) => Number(b.saldo) - Number(a.saldo))) {
+    for (const account of preferredAccounts) {
       if (left <= 0.000001) break;
       const available = Math.max(0, Number(account.saldo));
       const take = Math.min(left, available);
@@ -91,7 +105,20 @@ export function FinanceCashout({
       }
     }
     onAllocationsChange(next);
-  };
+  }, [activeAccounts, amount, onAllocationsChange]);
+
+  const autoAllocationInitialized = useRef(false);
+
+  useEffect(() => {
+    if (autoAllocationInitialized.current) return;
+    if (Object.keys(allocations).length > 0) {
+      autoAllocationInitialized.current = true;
+      return;
+    }
+    if (amount <= 0 || activeAccounts.length === 0) return;
+    autoAllocationInitialized.current = true;
+    autoAllocate();
+  }, [activeAccounts, allocations, amount, autoAllocate]);
 
   const clearAllocations = () => onAllocationsChange({});
 

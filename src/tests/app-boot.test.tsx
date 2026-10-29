@@ -8,6 +8,9 @@ vi.mock("@/app/providers/supabase/client", () => ({
     auth: {
       getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "test-auth-user" } } }, error: null }),
       getUser: vi.fn().mockResolvedValue({ data: { user: { id: "test-auth-user", email: "admin@rentaloutdoor.test" } }, error: null }),
+      onAuthStateChange: vi.fn(() => ({
+        data: { subscription: { unsubscribe: vi.fn() } },
+      })),
     },
     from: vi.fn(() => {
       const queryBuilder = {
@@ -27,7 +30,6 @@ vi.mock("@/app/providers/supabase/client", () => ({
 
 const navigation = [
   "Dashboard",
-  "Permintaan",
   "Reservasi",
   "Penyewaan",
   "Inventaris",
@@ -71,6 +73,7 @@ describe("scenario A — app boot", () => {
       }, { timeout: 10000 });
     }
 
+    expect(screen.queryByRole("link", { name: /^Permintaan$/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /^Pengembalian$/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /^Pemeriksaan$/ })).not.toBeInTheDocument();
   }, 30000);

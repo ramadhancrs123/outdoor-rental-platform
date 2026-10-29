@@ -20,6 +20,44 @@ vi.mock("@/app/providers/auth", () => ({
   },
 }));
 
+vi.mock("@/app/providers/supabase/client", () => {
+  const makeQuery = () => {
+    const result = { data: [], error: null, count: 0 };
+    const query: Record<string, unknown> = {};
+    for (const method of [
+      "select", "insert", "upsert", "update", "delete", "eq", "neq",
+      "is", "in", "order", "limit", "range", "match", "filter",
+      "or", "ilike", "like", "gte", "lte",
+    ]) {
+      query[method] = vi.fn(() => query);
+    }
+    query.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+    query.single = vi.fn().mockResolvedValue({ data: null, error: null });
+    query.then = (resolve: (value: typeof result) => unknown, reject?: (reason: unknown) => unknown) =>
+      Promise.resolve(result).then(resolve, reject);
+    return query;
+  };
+  const channel = {
+    on: vi.fn(() => channel),
+    subscribe: vi.fn(() => channel),
+  };
+  return {
+    supabase: {
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
+        getUser: vi.fn().mockResolvedValue({ data: { user: null }, error: null }),
+        onAuthStateChange: vi.fn(() => ({
+          data: { subscription: { unsubscribe: vi.fn() } },
+        })),
+      },
+      from: vi.fn(makeQuery),
+      rpc: vi.fn().mockResolvedValue({ data: [], error: null }),
+      channel: vi.fn(() => channel),
+      removeChannel: vi.fn(),
+    },
+  };
+});
+
 const tenantA = { akunAdminId: "admin-1", usahaId: "usaha-a", usahaNama: "Usaha A" };
 const tenantB = { akunAdminId: "admin-1", usahaId: "usaha-b", usahaNama: "Usaha B" };
 const renterA = {
@@ -150,7 +188,8 @@ describe("Penyewa Phase 1 read-side contract", () => {
   test("empty database has a dedicated empty state", async () => {
     installTenantFetch([]);
     renderList();
-    expect(await screen.findByText("Belum ada penyewa")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("Usaha A")).toBeInTheDocument());
+    expect(await screen.findByText("Belum ada penyewa", {}, { timeout: 3000 })).toBeInTheDocument();
     expect(screen.queryByText(/Tidak ada penyewa yang cocok/)).not.toBeInTheDocument();
   });
 

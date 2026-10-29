@@ -2,7 +2,7 @@ import { createClientId } from "@/lib/client-id";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, Check, CircleAlert, FileText, Search, ShieldCheck, Truck, Wrench, Building2, ReceiptText } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router";
+import { Link, useNavigate, useSearchParams } from "react-router";
 import { supabase } from "@/app/providers/supabase/client";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { getFinanceAccountSummary, getFinanceCapabilities, getKeuanganContext, listFinanceSuppliers, recordExpense, recordExpenseWithFinanceCashout, reconcileExpenseCashoutCommand, reconcileExpenseCommand, getFinanceBusinessDateOnly, useFinanceRealtime, type RecordExpenseInput, type SupplierOption } from "@/features/keuangan";
 import { FinanceCashout } from "@/components/keuangan/finance-cashout";
-import { listPurchases } from "@/features/pemasok";
+import { getPurchase, listPurchases, type PurchaseListItem } from "@/features/pemasok";
 import { listMaintenanceQueue, semanticMaintenanceLabel } from "@/features/perawatan";
 import { paths } from "@/routes/paths";
 import { AmountDisplay, FinanceShell, FinanceStateScreen, SourcePreview } from "@/components/keuangan/finance-ui";
@@ -27,12 +27,16 @@ export function ExpenseCreate() {
   useFinanceRealtime();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [searchParams] = useSearchParams();
+  const purchaseIdFromUrl = searchParams.get("purchaseId") ?? (searchParams.get("sourceType") === "purchase" ? searchParams.get("sourceId") : null);
+  const directPurchaseApplied = useRef(false);
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [mode, setMode] = useState<"form" | "processing" | "success" | "unknown">("form");
   const [sourceType, setSourceType] = useState<RecordPaymentSource>( "operational");
   const [supplierSearch, setSupplierSearch] = useState("");
   const [sourceSearch, setSourceSearch] = useState("");
   const [supplier, setSupplier] = useState<SupplierOption | null>(null);
+  const [selectedPurchaseInfo, setSelectedPurchaseInfo] = useState<PurchaseListItem | null>(null);
   const [form, setForm] = useState<RecordExpenseInput>({ sourceType: "operational", kategoriBiaya: "Operasional", deskripsi: "", amount: 0, tanggalPengeluaran: "", pemasokId: null, sourceId: null, buktiStoragePath: null, catatan: "" });
   const [evidenceUploading, setEvidenceUploading] = useState(false);
   const [evidenceFilename, setEvidenceFilename] = useState<string | null>(null);
@@ -63,7 +67,7 @@ export function ExpenseCreate() {
     return () => URL.revokeObjectURL(preview);
   }, [selectedEvidenceFile]);
 
-  const cashoutRequired = sourceType === "operational" || sourceType === "other" || sourceType === "manual";
+  const cashoutRequired = sourceType === "purchase" || sourceType === "operational" || sourceType === "other" || sourceType === "manual";
   const financeAccounts = useQuery({
     queryKey: ["keuangan", "expense-cashout-accounts", context.data?.usahaId],
     queryFn: () => getFinanceAccountSummary(context.data!.usahaId),
@@ -73,9 +77,16 @@ export function ExpenseCreate() {
   const suppliers = useQuery({ queryKey: ["keuangan", "suppliers", context.data?.usahaId, supplierSearch], queryFn: () => listFinanceSuppliers(context.data!.usahaId, supplierSearch), enabled: Boolean(context.data?.usahaId), staleTime: 15_000 });
   const purchases = useQuery({
     queryKey: ["keuangan", "expense-sources", "purchase", context.data?.usahaId, sourceSearch],
-    queryFn: () => listPurchases(context.data!.usahaId, { search: sourceSearch, status: "all", page: 1, pageSize: 20 }),
+    queryFn: () => listPurchases(context.data!.usahaId, { search: sourceSearch, status: "draft", page: 1, pageSize: 20 }),
     enabled: Boolean(context.data?.usahaId) && sourceType === "purchase",
     staleTime: 15_000,
+  });
+  const directPurchase = useQuery({
+    queryKey: ["keuangan", "expense-direct-purchase", context.data?.usahaId, purchaseIdFromUrl],
+    queryFn: () => getPurchase(context.data!.usahaId, purchaseIdFromUrl!),
+    enabled: Boolean(context.data?.usahaId && purchaseIdFromUrl),
+    staleTime: 15_000,
+    retry: false,
   });
   const maintenances = useQuery({
     queryKey: ["keuangan", "expense-sources", "maintenance", context.data?.usahaId, sourceSearch],
@@ -84,6 +95,40 @@ export function ExpenseCreate() {
     staleTime: 15_000,
   });
   const capabilities = getFinanceCapabilities();
+
+  useEffect(() => {
+    if (directPurchase.error && !directPurchaseApplied.current) {
+      directPurchaseApplied.current = true;
+      setFeedback(directPurchase.error instanceof Error ? directPurchase.error.message : "Pembelian sumber tidak dapat dimuat.");
+      return;
+    }
+    const purchase = directPurchase.data;
+    if (!purchase || directPurchaseApplied.current) return;
+    directPurchaseApplied.current = true;
+    if (purchase.status !== "draft") {
+      setFeedback("Pembelian ini sudah diselesaikan. Pilih draft pembelian lain yang belum dibayar.");
+      return;
+    }
+    setSourceType("purchase");
+    setSelectedPurchaseInfo(purchase);
+    setSupplier(purchase.pemasok_id && purchase.pemasok_nama
+      ? { id: purchase.pemasok_id, name: purchase.pemasok_nama }
+      : null);
+    setForm((current) => ({
+      ...current,
+      sourceType: "purchase",
+      sourceId: purchase.pembelian_id,
+      pemasokId: purchase.pemasok_id,
+      kategoriBiaya: "Pembelian",
+      deskripsi: "Pembelian " + purchase.nomor_pembelian,
+      amount: Number(purchase.total_amount),
+      tanggalPengeluaran: purchase.tanggal_pembelian,
+      buktiStoragePath: null,
+      catatan: purchase.catatan ?? "",
+    }));
+    setAccountAllocations({});
+    setStep(2);
+  }, [directPurchase.data, directPurchase.error]);
 
   const sourceRequiresId = sourceType === "purchase" || sourceType === "maintenance";
   const detailReady = Boolean(form.kategoriBiaya.trim()) && Boolean(form.deskripsi.trim()) && Number(form.amount) > 0 && Boolean(form.tanggalPengeluaran);
@@ -192,9 +237,25 @@ export function ExpenseCreate() {
       setResult({ id: data.pengeluaran_id ?? "", number: data.nomor_pengeluaran ?? "Pengeluaran baru" });
       setMode("success");
       commandRef.current = null;
-      await queryClient.invalidateQueries({ queryKey: ["keuangan"] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["keuangan"] }),
+        queryClient.invalidateQueries({ queryKey: ["pembelian"] }),
+      ]);
     },
     onError: async (error) => {
+      const rawMessage = error instanceof Error ? error.message : "Pengeluaran gagal dicatat.";
+      if (/saldo.{0,80}tidak cukup|tidak cukup.{0,80}saldo|VALIDATION_ERROR:|akun uang tidak boleh|total alokasi akun harus sama|source id hanya digunakan|pilih pembelian yang akan diselesaikan|pembelian ini sudah dibayar|pembelian ini sudah diselesaikan/i.test(rawMessage)) {
+        const friendlyMessage = rawMessage
+          .replace(/^(BUSINESS_CONFLICT|VALIDATION_ERROR|Error):\s*/i, "")
+          .replace(/\s+/g, " ")
+          .trim();
+        setFeedback(friendlyMessage + ( /saldo.{0,80}tidak cukup|tidak cukup.{0,80}saldo/i.test(rawMessage) ? " Pilih akun lain atau gunakan Bagi otomatis setelah saldo diperbarui." : ""));
+        setMode("form");
+        setStep(3);
+        commandRef.current = null;
+        await queryClient.invalidateQueries({ queryKey: ["keuangan", "expense-cashout-accounts"] });
+        return;
+      }
       if (!context.data || !commandRef.current) { setMode("unknown"); return; }
       try {
         const reconciliation = cashoutRequired
@@ -225,15 +286,33 @@ export function ExpenseCreate() {
 
     {step===1 ? <div className="space-y-4">
       <section><h2 className="text-base font-semibold">Jenis Sumber Pengeluaran</h2><p className="mt-1 text-xs text-muted-foreground">Pengeluaran dari Pembelian dan Perawatan memerlukan sumber. Operasional, Lainnya, dan Manual tidak memerlukannya.</p></section>
-      <div className="grid gap-2">{sourceTypes.map(([key,label,desc]) => { const Icon=key==="purchase"?Truck:key==="maintenance"?Wrench:key==="operational"?Building2:key==="other"?ReceiptText:FileText; return <button key={key} type="button" onClick={() => { setSourceType(key); setSourceSearch(""); setAccountAllocations({}); setForm((c)=>({...c,sourceType:key,sourceId:null})); }} className={sourceType===key ? "flex items-center gap-3 rounded-2xl border border-primary bg-primary/[0.035] p-4 text-left ring-1 ring-primary/20" : "flex items-center gap-3 rounded-2xl border bg-card p-4 text-left hover:bg-muted/40"}><div className="grid size-11 place-items-center rounded-xl bg-primary/10 text-primary"><Icon className="size-5"/></div><div className="min-w-0 flex-1"><p className="text-sm font-semibold">{label}</p><p className="mt-0.5 text-xs text-muted-foreground">{desc}</p></div>{sourceType===key ? <Check className="size-4 text-primary"/> : null}</button>; })}</div>
+      {feedback ? <Alert variant="destructive"><CircleAlert className="size-4"/><AlertTitle>Sumber belum siap</AlertTitle><AlertDescription>{feedback}</AlertDescription></Alert> : null}
+      <div className="grid gap-2">{sourceTypes.map(([key,label,desc]) => { const Icon=key==="purchase"?Truck:key==="maintenance"?Wrench:key==="operational"?Building2:key==="other"?ReceiptText:FileText; return <button key={key} type="button" onClick={() => { if (sourceType === key) return; setSourceType(key); setSourceSearch(""); setAccountAllocations({}); setSelectedPurchaseInfo(null); setSupplier(null); const defaultCategory = key === "purchase" ? "Pembelian" : key === "maintenance" ? "Perawatan" : key === "operational" ? "Operasional" : key === "other" ? "Lainnya" : "Manual"; setForm((c)=>({...c,sourceType:key,sourceId:null,pemasokId:null,kategoriBiaya:defaultCategory,deskripsi:"",amount:0,tanggalPengeluaran:c.tanggalPengeluaran,buktiStoragePath:null,catatan:""})); setFeedback(""); }} className={sourceType===key ? "flex items-center gap-3 rounded-2xl border border-primary bg-primary/[0.035] p-4 text-left ring-1 ring-primary/20" : "flex items-center gap-3 rounded-2xl border bg-card p-4 text-left hover:bg-muted/40"}><div className="grid size-11 place-items-center rounded-xl bg-primary/10 text-primary"><Icon className="size-5"/></div><div className="min-w-0 flex-1"><p className="text-sm font-semibold">{label}</p><p className="mt-0.5 text-xs text-muted-foreground">{desc}</p></div>{sourceType===key ? <Check className="size-4 text-primary"/> : null}</button>; })}</div>
       {(sourceType==="purchase"||sourceType==="maintenance") ? <><Card className="shadow-sm"><CardContent className="space-y-3 p-4">
         <div><p className="text-xs font-semibold">Pilih sumber {sourceType==="purchase" ? "Pembelian" : "Perawatan"}</p><p className="mt-1 text-[11px] text-muted-foreground">Pilih dari data yang sudah tercatat. Anda tidak perlu memasukkan ID teknis.</p></div>
         <div className="relative"><Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"/><Input value={sourceSearch} onChange={(e)=>setSourceSearch(e.target.value)} placeholder={sourceType==="purchase" ? "Cari nomor pembelian atau pemasok…" : "Cari kode unit, jenis, atau pelaksana…"} className="h-11 rounded-xl pl-9"/></div>
         {sourceType==="purchase" ? <div className="grid gap-2">
-          {(purchases.data?.purchases ?? []).map((item)=> <button key={item.pembelian_id} type="button" onClick={()=>setForm((c)=>({...c,sourceId:item.pembelian_id}))} className={form.sourceId===item.pembelian_id ? "rounded-xl border border-primary bg-primary/[0.035] p-3 text-left ring-1 ring-primary/20" : "rounded-xl border p-3 text-left hover:bg-muted/40"}>
+          {(purchases.data?.purchases ?? []).map((item)=> <button key={item.pembelian_id} type="button" onClick={()=>{
+            setSelectedPurchaseInfo(item);
+            setSupplier(item.pemasok_id && item.pemasok_nama ? { id: item.pemasok_id, name: item.pemasok_nama } : null);
+            setAccountAllocations({});
+            setForm((c)=>({
+              ...c,
+              sourceType: "purchase",
+              sourceId: item.pembelian_id,
+              pemasokId: item.pemasok_id,
+              kategoriBiaya: "Pembelian",
+              deskripsi: "Pembelian " + item.nomor_pembelian,
+              amount: Number(item.total_amount),
+              tanggalPengeluaran: item.tanggal_pembelian,
+              buktiStoragePath: null,
+              catatan: item.catatan ?? "",
+            }));
+          }} className={form.sourceId===item.pembelian_id ? "rounded-xl border border-primary bg-primary/[0.035] p-3 text-left ring-1 ring-primary/20" : "rounded-xl border p-3 text-left hover:bg-muted/40"}>
             <p className="text-sm font-semibold">{item.nomor_pembelian}</p>
             <p className="mt-0.5 text-xs text-muted-foreground">{item.pemasok_nama ?? "Pemasok tidak tercatat"} · {item.tanggal_pembelian}</p>
             <p className="mt-1 text-[11px] text-muted-foreground">{item.line_count} item · {item.status}</p>
+            <p className="mt-1 text-xs font-semibold">{new Intl.NumberFormat("id-ID", { style: "currency", currency: item.currency_code || "IDR", maximumFractionDigits: 0 }).format(Number(item.total_amount) || 0)}</p>
           </button>)}
           {!purchases.isPending && (purchases.data?.purchases ?? []).length===0 ? <p className="rounded-xl border border-dashed p-4 text-center text-xs text-muted-foreground">Pembelian tidak ditemukan.</p> : null}
         </div> : <div className="grid gap-2">
@@ -245,21 +324,22 @@ export function ExpenseCreate() {
           {!maintenances.isPending && (maintenances.data ?? []).length===0 ? <p className="rounded-xl border border-dashed p-4 text-center text-xs text-muted-foreground">Perawatan tidak ditemukan.</p> : null}
         </div>}
       </CardContent></Card>
-      <Card className="shadow-sm"><CardContent className="space-y-3 p-4"><label className="text-xs font-semibold">Pemasok <span className="font-normal text-muted-foreground">(opsional)</span></label><div className="relative"><Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"/><Input value={supplierSearch} onChange={(e)=>setSupplierSearch(e.target.value)} placeholder="Cari pemasok…" className="h-11 rounded-xl pl-9"/></div><div className="grid gap-2">{(suppliers.data??[]).slice(0,5).map((item)=> <button key={item.id} type="button" onClick={()=>setSupplier(item)} className={supplier?.id===item.id ? "rounded-xl border border-primary bg-primary/[0.035] p-3 text-left text-sm font-semibold" : "rounded-xl border p-3 text-left text-sm hover:bg-muted/40"}>{item.name}</button>)}</div>{supplier ? <p className="text-xs text-primary">Pemasok dipilih: {supplier.name}</p> : null}</CardContent></Card></> : null}
+      <Card className="shadow-sm"><CardContent className="space-y-3 p-4"><label className="text-xs font-semibold">Pemasok <span className="font-normal text-muted-foreground">{sourceType === "purchase" ? "(mengikuti pembelian)" : "(opsional)"}</span></label>{sourceType === "purchase" ? <p className="rounded-xl bg-muted/35 p-3 text-sm font-medium">{selectedPurchaseInfo?.pemasok_nama ?? supplier?.name ?? "Pemasok tidak dicatat pada pembelian"}</p> : <><div className="relative"><Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"/><Input value={supplierSearch} onChange={(e)=>setSupplierSearch(e.target.value)} placeholder="Cari pemasok…" className="h-11 rounded-xl pl-9"/></div><div className="grid gap-2">{(suppliers.data??[]).slice(0,5).map((item)=> <button key={item.id} type="button" onClick={()=>setSupplier(item)} className={supplier?.id===item.id ? "rounded-xl border border-primary bg-primary/[0.035] p-3 text-left text-sm font-semibold" : "rounded-xl border p-3 text-left text-sm hover:bg-muted/40"}>{item.name}</button>)}</div>{supplier ? <p className="text-xs text-primary">Pemasok dipilih: {supplier.name}</p> : null}</>}</CardContent></Card></> : null}
       <StickyFinanceAction><Button className="h-12 w-full rounded-xl" disabled={!(!sourceRequiresId || Boolean(form.sourceId))} onClick={()=>setStep(2)}>Lanjutkan <ArrowRight/></Button></StickyFinanceAction>
     </div> : null}
 
     {step===2 ? <div className="space-y-4">
       <section><h2 className="text-base font-semibold">Detail Pengeluaran</h2><p className="mt-1 text-xs text-muted-foreground">Nominal, tanggal, deskripsi, bukti, dan catatan.</p></section>
-      <Card className="shadow-sm"><CardContent className="space-y-4 p-4"><div className="space-y-1.5"><label className="text-xs font-semibold" htmlFor="expense-category">Kategori Biaya</label><Input id="expense-category" value={form.kategoriBiaya} onChange={(e)=>setForm((c)=>({...c,kategoriBiaya:e.target.value}))} className="h-12 rounded-xl" placeholder="Operasional"/></div><div className="space-y-1.5"><label className="text-xs font-semibold" htmlFor="expense-description">Deskripsi</label><Input id="expense-description" value={form.deskripsi} onChange={(e)=>setForm((c)=>({...c,deskripsi:e.target.value}))} className="h-12 rounded-xl" placeholder="Uang digunakan untuk apa?" /></div><div className="space-y-1.5"><label className="text-xs font-semibold" htmlFor="expense-amount">Nominal</label><div className="flex items-center rounded-xl border px-3"><span className="text-sm font-semibold text-muted-foreground">Rp</span><Input id="expense-amount" type="number" min="1" value={form.amount||""} onChange={(e)=>setForm((c)=>({...c,amount:Number(e.target.value)}))} className="h-12 border-0 text-right text-lg font-bold shadow-none focus-visible:ring-0"/></div></div><div className="space-y-1.5"><label className="text-xs font-semibold" htmlFor="expense-date">Tanggal Pengeluaran</label><Input id="expense-date" type="date" value={form.tanggalPengeluaran??""} onChange={(e)=>setForm((c)=>({...c,tanggalPengeluaran:e.target.value}))} className="h-12 rounded-xl"/></div><div className="space-y-1.5"><label className="text-xs font-semibold" htmlFor="expense-evidence">Bukti</label><input ref={evidenceInputRef} id="expense-evidence" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,application/pdf" className="sr-only" onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; selectExpenseEvidence(file); }} /><div className="flex gap-2"><Button type="button" variant="outline" disabled={evidenceUploading} className="h-12 flex-1 justify-between rounded-xl" onClick={() => evidenceInputRef.current?.click()}><span>{evidenceUploading ? "Memproses bukti…" : selectedEvidenceFile ? "Pilih bukti lain" : form.buktiStoragePath ? evidenceFilename ?? "Bukti tersedia" : "Pilih Bukti"}</span><FileText className="size-4"/></Button>{form.buktiStoragePath && !selectedEvidenceFile ? <Button type="button" variant="ghost" disabled={evidenceUploading} className="h-12 rounded-xl" onClick={() => void removeExpenseEvidence()}>Hapus</Button> : null}</div>{selectedEvidenceFile ? <div className="space-y-3 rounded-xl border p-3"><div className="flex items-start gap-3">{evidencePreviewUrl ? <img src={evidencePreviewUrl} alt="Pratinjau bukti pengeluaran" className="size-20 rounded-lg border object-cover" /> : <div className="grid size-20 shrink-0 place-items-center rounded-lg bg-muted"><FileText className="size-7" /></div>}<div className="min-w-0 flex-1"><p className="break-words text-sm font-semibold">{selectedEvidenceFile.name}</p><p className="mt-1 text-xs text-muted-foreground">{(selectedEvidenceFile.size / 1024 / 1024).toFixed(2)} MB · Pratinjau lokal, belum diunggah.</p></div></div><div className="flex gap-2"><Button type="button" className="flex-1 rounded-xl" disabled={evidenceUploading || !context.data?.usahaId} onClick={() => void uploadExpenseEvidence()}>{evidenceUploading ? "Mengunggah…" : "Unggah Bukti"}</Button><Button type="button" variant="outline" className="rounded-xl" disabled={evidenceUploading} onClick={cancelEvidencePreview}>Batal</Button></div></div> : form.buktiStoragePath ? <p className="text-xs text-emerald-700">Bukti terunggah: {evidenceFilename ?? "berkas privat"}</p> : null}{evidenceError ? <Alert variant="destructive"><AlertTitle>Bukti belum siap</AlertTitle><AlertDescription>{evidenceError}</AlertDescription></Alert> : null}<p className="text-[11px] text-muted-foreground">Pratinjau sebelum unggah. File disimpan di penyimpanan privat Usaha. JPG, PNG, WebP, HEIC, HEIF, atau PDF; maksimal 10 MB.</p></div><div className="space-y-1.5"><label className="text-xs font-semibold" htmlFor="expense-note">Catatan</label><Input id="expense-note" value={form.catatan??""} onChange={(e)=>setForm((c)=>({...c,catatan:e.target.value}))} className="h-12 rounded-xl" placeholder="Catatan tambahan (opsional)"/></div></CardContent></Card>
+      <Card className="shadow-sm"><CardContent className="space-y-4 p-4"><div className="space-y-1.5"><label className="text-xs font-semibold" htmlFor="expense-category">Kategori Biaya</label><Input id="expense-category" value={form.kategoriBiaya} readOnly={sourceType === "purchase"} onChange={(e)=>setForm((c)=>({...c,kategoriBiaya:e.target.value}))} className={sourceType === "purchase" ? "h-12 rounded-xl bg-muted/40" : "h-12 rounded-xl"} placeholder="Operasional"/></div><div className="space-y-1.5"><label className="text-xs font-semibold" htmlFor="expense-description">Deskripsi</label><Input id="expense-description" value={form.deskripsi} readOnly={sourceType === "purchase"} onChange={(e)=>setForm((c)=>({...c,deskripsi:e.target.value}))} className={sourceType === "purchase" ? "h-12 rounded-xl bg-muted/40" : "h-12 rounded-xl"} placeholder="Uang digunakan untuk apa?" /></div><div className="space-y-1.5"><label className="text-xs font-semibold" htmlFor="expense-amount">Nominal{sourceType === "purchase" ? " (otomatis dari pembelian)" : ""}</label><div className="flex items-center rounded-xl border px-3"><span className="text-sm font-semibold text-muted-foreground">Rp</span><Input id="expense-amount" type="number" min="1" value={form.amount||""} readOnly={sourceType === "purchase"} onChange={(e)=>setForm((c)=>({...c,amount:Number(e.target.value)}))} className={sourceType === "purchase" ? "h-12 border-0 bg-muted/40 text-right text-lg font-bold shadow-none focus-visible:ring-0" : "h-12 border-0 text-right text-lg font-bold shadow-none focus-visible:ring-0"}/></div>{sourceType === "purchase" ? <p className="text-[11px] text-muted-foreground">Nominal diambil dari total pembelian yang tersimpan dan diverifikasi kembali oleh server.</p> : null}</div><div className="space-y-1.5"><label className="text-xs font-semibold" htmlFor="expense-date">Tanggal Pengeluaran</label><Input id="expense-date" type="date" value={form.tanggalPengeluaran??""} readOnly={sourceType === "purchase"} onChange={(e)=>setForm((c)=>({...c,tanggalPengeluaran:e.target.value}))} className={sourceType === "purchase" ? "h-12 rounded-xl bg-muted/40" : "h-12 rounded-xl"}/></div><div className="space-y-1.5"><label className="text-xs font-semibold" htmlFor="expense-evidence">Bukti</label><input ref={evidenceInputRef} id="expense-evidence" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,application/pdf" className="sr-only" onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; selectExpenseEvidence(file); }} /><div className="flex gap-2"><Button type="button" variant="outline" disabled={evidenceUploading} className="h-12 flex-1 justify-between rounded-xl" onClick={() => evidenceInputRef.current?.click()}><span>{evidenceUploading ? "Memproses bukti…" : selectedEvidenceFile ? "Pilih bukti lain" : form.buktiStoragePath ? evidenceFilename ?? "Bukti tersedia" : "Pilih Bukti"}</span><FileText className="size-4"/></Button>{form.buktiStoragePath && !selectedEvidenceFile ? <Button type="button" variant="ghost" disabled={evidenceUploading} className="h-12 rounded-xl" onClick={() => void removeExpenseEvidence()}>Hapus</Button> : null}</div>{selectedEvidenceFile ? <div className="space-y-3 rounded-xl border p-3"><div className="flex items-start gap-3">{evidencePreviewUrl ? <img src={evidencePreviewUrl} alt="Pratinjau bukti pengeluaran" className="size-20 rounded-lg border object-cover" /> : <div className="grid size-20 shrink-0 place-items-center rounded-lg bg-muted"><FileText className="size-7" /></div>}<div className="min-w-0 flex-1"><p className="break-words text-sm font-semibold">{selectedEvidenceFile.name}</p><p className="mt-1 text-xs text-muted-foreground">{(selectedEvidenceFile.size / 1024 / 1024).toFixed(2)} MB · Pratinjau lokal, belum diunggah.</p></div></div><div className="flex gap-2"><Button type="button" className="flex-1 rounded-xl" disabled={evidenceUploading || !context.data?.usahaId} onClick={() => void uploadExpenseEvidence()}>{evidenceUploading ? "Mengunggah…" : "Unggah Bukti"}</Button><Button type="button" variant="outline" className="rounded-xl" disabled={evidenceUploading} onClick={cancelEvidencePreview}>Batal</Button></div></div> : form.buktiStoragePath ? <p className="text-xs text-emerald-700">Bukti terunggah: {evidenceFilename ?? "berkas privat"}</p> : null}{evidenceError ? <Alert variant="destructive"><AlertTitle>Bukti belum siap</AlertTitle><AlertDescription>{evidenceError}</AlertDescription></Alert> : null}<p className="text-[11px] text-muted-foreground">Pratinjau sebelum unggah. File disimpan di penyimpanan privat Usaha. JPG, PNG, WebP, HEIC, HEIF, atau PDF; maksimal 10 MB.</p></div><div className="space-y-1.5"><label className="text-xs font-semibold" htmlFor="expense-note">Catatan</label><Input id="expense-note" value={form.catatan??""} onChange={(e)=>setForm((c)=>({...c,catatan:e.target.value}))} className="h-12 rounded-xl" placeholder="Catatan tambahan (opsional)"/></div></CardContent></Card>
       <div className="flex gap-2"><Button variant="ghost" className="h-11" onClick={()=>setStep(1)}>Sebelumnya</Button><Button className="h-11 flex-1 rounded-xl" disabled={!detailReady || evidenceUploading || Boolean(selectedEvidenceFile)} onClick={()=>setStep(3)}>Lanjutkan <ArrowRight/></Button></div>
       <StickyFinanceAction><Button className="h-12 w-full rounded-xl" disabled={!detailReady || evidenceUploading || Boolean(selectedEvidenceFile)} onClick={()=>setStep(3)}>Lanjutkan <ArrowRight/></Button></StickyFinanceAction>
     </div> : null}
 
     {step===3 ? <div className="space-y-4">
       <section><h2 className="text-base font-semibold">Tinjauan Pengeluaran</h2><p className="mt-1 text-xs text-muted-foreground">Pastikan sumber dan nominal benar sebelum dicatat.</p></section>
-      <Card className="shadow-sm"><CardContent className="space-y-4 p-4">{sourceRequiresId && form.sourceId ? <SourcePreview type={sourceType==="purchase"?"Pembelian":"Perawatan"} number={form.sourceId} meta="Hubungan Sumber" /> : null}<div className="grid gap-3 rounded-2xl bg-muted/40 p-4 sm:grid-cols-2"><ReviewRow label="Jenis Sumber" value={sourceTypes.find(([key])=>key===sourceType)?.[1]??sourceType}/><ReviewRow label="Kategori" value={form.kategoriBiaya}/><ReviewRow label="Tanggal" value={form.tanggalPengeluaran??"-"}/><ReviewRow label="Pemasok" value={supplier?.name??"Tidak ditautkan"}/><ReviewRow label="Bukti" value={evidenceFilename ?? (form.buktiStoragePath ? "Bukti tersedia" : "Tidak dilampirkan")}/></div><AmountDisplay amount={form.amount} label="Total Pengeluaran" direction="expense"/><div className="rounded-2xl border p-4"><p className="text-xs text-muted-foreground">Deskripsi</p><p className="mt-1 text-sm font-medium">{form.deskripsi}</p></div></CardContent></Card>
+      <Card className="shadow-sm"><CardContent className="space-y-4 p-4">{sourceRequiresId && form.sourceId ? <SourcePreview type={sourceType==="purchase"?"Pembelian":"Perawatan"} number={sourceType === "purchase" ? selectedPurchaseInfo?.nomor_pembelian ?? form.sourceId : form.sourceId} meta="Hubungan Sumber" /> : null}<div className="grid gap-3 rounded-2xl bg-muted/40 p-4 sm:grid-cols-2"><ReviewRow label="Jenis Sumber" value={sourceTypes.find(([key])=>key===sourceType)?.[1]??sourceType}/><ReviewRow label="Kategori" value={form.kategoriBiaya}/><ReviewRow label="Tanggal" value={form.tanggalPengeluaran??"-"}/><ReviewRow label="Pemasok" value={supplier?.name??"Tidak ditautkan"}/><ReviewRow label="Bukti" value={evidenceFilename ?? (form.buktiStoragePath ? "Bukti tersedia" : "Tidak dilampirkan")}/></div><AmountDisplay amount={form.amount} label="Total Pengeluaran" direction="expense"/><div className="rounded-2xl border p-4"><p className="text-xs text-muted-foreground">Deskripsi</p><p className="mt-1 text-sm font-medium">{form.deskripsi}</p></div></CardContent></Card>
       <Alert className="border-primary/10 bg-primary/[0.03]"><ShieldCheck className="size-4"/><AlertTitle>Pengeluaran → Transaksi Keuangan</AlertTitle><AlertDescription>Pengeluaran akan dicatat sebagai fakta Keuangan. Pembelian/Perawatan tetap menjadi sumber pengeluaran, bukan pembayaran.</AlertDescription></Alert>
+      {feedback && step === 3 ? <Alert variant="destructive"><CircleAlert className="size-4"/><AlertTitle>Pengeluaran belum dapat diselesaikan</AlertTitle><AlertDescription>{feedback}</AlertDescription></Alert> : null}
       {cashoutRequired && financeAccounts.error ? <Alert variant="destructive"><CircleAlert className="size-4"/><AlertTitle>Akun uang belum dapat dimuat</AlertTitle><AlertDescription>{financeAccounts.error instanceof Error ? financeAccounts.error.message : "Saldo akun uang belum dapat diverifikasi."}</AlertDescription></Alert> : null}
       {cashoutRequired ? <FinanceCashout
         accounts={financeAccounts.data?.accounts ?? []}

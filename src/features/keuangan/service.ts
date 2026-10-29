@@ -558,12 +558,17 @@ export async function recordExpenseWithFinanceCashout(
   input: RecordExpenseInput,
   options: FinanceCommandOptions = {},
 ): Promise<FinanceCommandResult> {
-  if (!["operational", "other", "manual"].includes(input.sourceType)) {
-    throw new Error("Cash out satu-langkah hanya digunakan untuk pengeluaran Operasional, Lainnya, atau Manual.");
+  if (!["purchase", "operational", "other", "manual"].includes(input.sourceType)) {
+    throw new Error("Cash out satu-langkah hanya digunakan untuk Pembelian, Operasional, Lainnya, atau Manual.");
   }
 
   const sourceId = input.sourceId?.trim() || null;
-  if (sourceId) throw new Error("Source ID tidak digunakan untuk pengeluaran manual/operasional.");
+  if (input.sourceType === "purchase" && !sourceId) {
+    throw new Error("Pilih pembelian yang akan diselesaikan.");
+  }
+  if (input.sourceType !== "purchase" && sourceId) {
+    throw new Error("Source ID hanya digunakan untuk pembayaran pembelian.");
+  }
   if (!input.kategoriBiaya.trim()) throw new Error("Kategori biaya wajib diisi.");
   if (!input.deskripsi.trim()) throw new Error("Deskripsi pengeluaran wajib diisi.");
   if (!Number.isFinite(input.amount) || input.amount <= 0) throw new Error("Nominal pengeluaran harus lebih dari 0.");
@@ -587,7 +592,7 @@ export async function recordExpenseWithFinanceCashout(
   const { data, error } = await supabase.rpc("command_record_expense_with_finance_cashout", {
     p_usaha_id: usahaId,
     p_source_type: input.sourceType,
-    p_source_id: null,
+    p_source_id: sourceId,
     p_pemasok_id: input.pemasokId?.trim() || null,
     p_kategori_biaya: input.kategoriBiaya.trim(),
     p_deskripsi: input.deskripsi.trim(),

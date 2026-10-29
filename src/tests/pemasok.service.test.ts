@@ -10,6 +10,8 @@ vi.mock("@/app/providers/supabase/client", () => ({
 
 import {
   createPurchaseDraft,
+  createPurchaseWithFinanceCashout,
+  getPurchaseNumberPreview,
   createSupplier,
   setSupplierStatus,
   updatePurchaseDraft,
@@ -330,6 +332,80 @@ describe("Pemasok & Pembelian trusted mutation service", () => {
       p_expected_updated_at: "2026-09-29T00:00:00Z",
       p_idempotency_key: "purchase-update-test",
       p_request_id: "request-purchase-update-test",
+    });
+  });
+});
+
+
+describe("Purchase number and one-step purchase settlement", () => {
+  test("number preview is requested from the tenant-scoped backend", async () => {
+    rpcMock.mockResolvedValueOnce({ data: "PB-2026-10-28", error: null });
+
+    await expect(getPurchaseNumberPreview("usaha-1", "2026-10-28")).resolves.toBe("PB-2026-10-28");
+    expect(rpcMock).toHaveBeenCalledWith("purchase_number_preview", {
+      p_usaha_id: "usaha-1",
+      p_tanggal_pembelian: "2026-10-28",
+    });
+  });
+
+  test("purchase payment sends the exact preview number and cash allocations to one trusted command", async () => {
+    rpcMock.mockResolvedValueOnce({
+      data: {
+        pembelian_id: "purchase-paid-1",
+        usaha_id: "usaha-1",
+        pemasok_id: "supplier-1",
+        nomor_pembelian: "PB-2026-014",
+        tanggal_pembelian: "2026-10-28",
+        status: "completed",
+        total_amount: "300000.00",
+        currency_code: "IDR",
+        catatan: null,
+        line_count: 1,
+        created_at: "2026-10-28T10:00:00Z",
+        updated_at: "2026-10-28T10:00:01Z",
+        finance_expense_recorded: true,
+        pengeluaran_id: "expense-1",
+        nomor_pengeluaran: "EXP-2026-014",
+        transaksi_keuangan_id: "transaction-1",
+        nomor_transaksi: "TRX-2026-014",
+        cash_out_recorded: true,
+        settlement: { allocations: [{ akun_keuangan_id: "cash-operasional", amount: 300000 }] },
+      },
+      error: null,
+    });
+
+    await expect(createPurchaseWithFinanceCashout("usaha-1", {
+      pemasokId: "supplier-1",
+      nomorPembelian: "PB-2026-014",
+      tanggalPembelian: "2026-10-28",
+      lines: [{ barangId: "barang-1", deskripsi: "Tenda", jumlah: "2", unitPrice: "150000" }],
+      catatan: "",
+    }, [{ akunKeuanganId: "cash-operasional", amount: 300000 }], {
+      idempotencyKey: "purchase-pay-now-test",
+      requestId: "request-purchase-pay-now-test",
+    })).resolves.toMatchObject({
+      pembelian_id: "purchase-paid-1",
+      status: "completed",
+      finance_expense_recorded: true,
+      cash_out_recorded: true,
+    });
+
+    expect(rpcMock).toHaveBeenCalledWith("command_create_purchase_with_finance_cashout", {
+      p_usaha_id: "usaha-1",
+      p_pemasok_id: "supplier-1",
+      p_nomor_pembelian: "PB-2026-014",
+      p_tanggal_pembelian: "2026-10-28",
+      p_lines: [{
+        barang_id: "barang-1",
+        varian_barang_id: null,
+        deskripsi: "Tenda",
+        jumlah: "2",
+        unit_price: "150000",
+      }],
+      p_catatan: null,
+      p_allocations: [{ akun_keuangan_id: "cash-operasional", amount: 300000 }],
+      p_idempotency_key: "purchase-pay-now-test",
+      p_request_id: "request-purchase-pay-now-test",
     });
   });
 });

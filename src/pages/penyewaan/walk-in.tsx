@@ -32,10 +32,12 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   createDirectRental,
+  createRentalFromReservation,
   getOperationalRentalWorkspace,
   getRental,
   getPenyewaanContext,
   reconcileDirectRentalCreation,
+  reconcileRentalCreation,
   type DirectRentalLineInput,
   type OperationalRentalWorkspace,
 } from "@/features/penyewaan";
@@ -60,6 +62,8 @@ import {
 import { isActiveCatalogTariff, formatCatalogMoney } from "@/features/katalog/utils";
 import { listInventoryPackageAvailability, listInventoryReadyUnitCovers, type InventoryPackageAvailability } from "@/features/inventaris";
 import { createRenter, listRenters, reconcileRenterCreation } from "@/features/penyewa/service";
+import { getReservation } from "@/features/reservasi/service";
+import type { ReservationDetail } from "@/features/reservasi/types";
 import {
   listFinanceAccounts,
   recordPayment,
@@ -154,12 +158,21 @@ function getLineIdentity(productId: string, variantId: string) {
 export function RentalWalkIn() {
   const [searchParams] = useSearchParams();
   const renterIdFromQuery = searchParams.get("renter_id");
+  const reservationIdFromQuery = searchParams.get("reservasi_id");
+  const isReservationFlow = Boolean(reservationIdFromQuery);
   const queryClient = useQueryClient();
 
   const context = useQuery({
     queryKey: ["penyewaan", "context"],
     queryFn: getPenyewaanContext,
     staleTime: 60_000,
+  });
+
+  const reservationPrefill = useQuery<ReservationDetail>({
+    queryKey: ["penyewaan", "reservation-prefill", context.data?.usahaId, reservationIdFromQuery],
+    queryFn: () => getReservation(context.data!.usahaId, reservationIdFromQuery!),
+    enabled: Boolean(context.data?.usahaId && reservationIdFromQuery),
+    staleTime: 30_000,
   });
 
   const [selectedRenterId, setSelectedRenterId] = useState(renterIdFromQuery ?? "");
@@ -221,21 +234,21 @@ export function RentalWalkIn() {
   const products = useQuery({
     queryKey: ["penyewaan", "walk-in", "products", context.data?.usahaId],
     queryFn: () => listCatalogProducts(context.data!.usahaId, DEFAULT_CATALOG_FILTERS),
-    enabled: Boolean(context.data?.usahaId && !rentalId),
+    enabled: Boolean(context.data?.usahaId && !rentalId && !isReservationFlow),
     staleTime: 60_000,
   });
 
   const packages = useQuery({
     queryKey: ["penyewaan", "walk-in", "packages", context.data?.usahaId],
     queryFn: () => listCatalogPackages(context.data!.usahaId),
-    enabled: Boolean(context.data?.usahaId && !rentalId),
+    enabled: Boolean(context.data?.usahaId && !rentalId && !isReservationFlow),
     staleTime: 60_000,
   });
 
   const packageAvailability = useQuery<InventoryPackageAvailability[]>({
     queryKey: ["penyewaan", "walk-in", "package-availability", context.data?.usahaId],
     queryFn: () => listInventoryPackageAvailability(context.data!.usahaId),
-    enabled: Boolean(context.data?.usahaId && !rentalId),
+    enabled: Boolean(context.data?.usahaId && !rentalId && !isReservationFlow),
     staleTime: 10_000,
   });
 
@@ -247,21 +260,21 @@ export function RentalWalkIn() {
   const productCovers = useQuery({
     queryKey: ["penyewaan", "walk-in", "product-covers", context.data?.usahaId, productIds.join(",")],
     queryFn: () => listCatalogProductCovers(context.data!.usahaId, productIds),
-    enabled: Boolean(context.data?.usahaId && productIds.length && !rentalId),
+    enabled: Boolean(context.data?.usahaId && productIds.length && !rentalId && !isReservationFlow),
     staleTime: 60_000,
   });
 
   const unitCovers = useQuery({
     queryKey: ["penyewaan", "walk-in", "ready-unit-covers", context.data?.usahaId, productIds.join(",")],
     queryFn: () => listInventoryReadyUnitCovers(context.data!.usahaId, productIds),
-    enabled: Boolean(context.data?.usahaId && productIds.length && !rentalId),
+    enabled: Boolean(context.data?.usahaId && productIds.length && !rentalId && !isReservationFlow),
     staleTime: 15_000,
   });
 
   const readyStock = useQuery({
     queryKey: ["penyewaan", "walk-in", "ready-stock", context.data?.usahaId, productIds.join(",")],
     queryFn: () => listCatalogReadyStock(context.data!.usahaId, productIds),
-    enabled: Boolean(context.data?.usahaId && productIds.length && !rentalId),
+    enabled: Boolean(context.data?.usahaId && productIds.length && !rentalId && !isReservationFlow),
     staleTime: 10_000,
   });
 
@@ -277,7 +290,7 @@ export function RentalWalkIn() {
       itemDialogId || null,
     ],
     queryFn: () => getCatalogProduct(context.data!.usahaId, itemDialogId),
-    enabled: Boolean(context.data?.usahaId && itemDialogId && !rentalId),
+    enabled: Boolean(context.data?.usahaId && itemDialogId && !rentalId && !isReservationFlow),
     staleTime: 60_000,
   });
 
@@ -298,7 +311,7 @@ export function RentalWalkIn() {
       packageDialogId || null,
     ],
     queryFn: () => getCatalogPackageDetails(context.data!.usahaId, selectedPackage!.paket_sewa_id),
-    enabled: Boolean(context.data?.usahaId && packageDialogId && !rentalId),
+    enabled: Boolean(context.data?.usahaId && packageDialogId && !rentalId && !isReservationFlow),
     staleTime: 60_000,
   });
 
@@ -473,7 +486,11 @@ export function RentalWalkIn() {
       ? calculateTariffPeriods(startAt, endAt, selectedTariff)
       : 0;
 
-  const totalRental = draftLines.reduce((sum, line) => sum + Number(line.input.subtotal), 0);
+  const reservationLines = reservationPrefill.data?.lines ?? [];
+  const totalRental = isReservationFlow
+    ? reservationLines.reduce((sum, line) => sum + Number(line.subtotal ?? 0), 0)
+    : draftLines.reduce((sum, line) => sum + Number(line.input.subtotal), 0);
+  const rentalCurrencyCode = isReservationFlow ? reservationLines[0]?.currency_code ?? "IDR" : "IDR";
   const selectedQuantityNumber = Number(selectedQuantity);
   const selectedPackageQuantityNumber = Number(selectedPackageQuantity);
 
@@ -499,7 +516,8 @@ export function RentalWalkIn() {
       Boolean(context.data?.usahaId && itemDialogId) &&
       Number.isInteger(selectedQuantityNumber) &&
       selectedQuantityNumber > 0 &&
-      !rentalId,
+      !rentalId &&
+      !isReservationFlow,
     staleTime: 10_000,
   });
 
@@ -588,9 +606,15 @@ export function RentalWalkIn() {
   }, [currentPaymentStatus, operationalWorkspace.data, paymentRecorded, paymentRemaining, receiptSupport.data, rentalQr.data]);
 
   useEffect(() => {
-    if (!context.data || startAt || rentalId) return;
+    if (!context.data || startAt || rentalId || isReservationFlow) return;
     setStartAt(formatDateTimeLocalInTimezone(new Date(), context.data.timezone));
-  }, [context.data, rentalId, startAt]);
+  }, [context.data, isReservationFlow, rentalId, startAt]);
+
+  useEffect(() => {
+    const reservation = reservationPrefill.data;
+    if (!isReservationFlow || !reservation || reservation.status !== "confirmed" || reservation.stock_lock_status !== "locked") return;
+    setSelectedRenterId(reservation.penyewa_id);
+  }, [isReservationFlow, reservationPrefill.data]);
 
   useEffect(() => {
     if (!accounts.data?.length || paymentAccountId) return;
@@ -655,11 +679,40 @@ export function RentalWalkIn() {
     },
   });
 
+  const rentalCommandIdempotencyKey =
+    isReservationFlow && reservationIdFromQuery
+      ? "create-rental-from-reservation-" + reservationIdFromQuery + "-" + rentalCommandKey
+      : rentalCommandKey;
+
   const createRentalMutation = useMutation({
     mutationFn: async () => {
       if (!context.data) throw new Error("Konteks Usaha belum tersedia.");
       if (!selectedRenterId) throw new Error("Pilih penyewa terlebih dahulu.");
-      if (!canMoveFromPeriod) throw new Error("Periode rental belum valid.");
+      if (!canMoveFromPeriod) throw new Error("Waktu mulai dan kembali wajib diisi dengan durasi yang valid.");
+      if (isReservationFlow) {
+        const reservation = reservationPrefill.data;
+        if (!reservationIdFromQuery || !reservation) throw new Error("Detail reservasi belum selesai dimuat.");
+        if (reservation.status !== "confirmed" || reservation.stock_lock_status !== "locked") {
+          throw new Error("Reservasi harus terkonfirmasi dan stoknya terkunci sebelum dilanjutkan.");
+        }
+        if (selectedRenterId !== reservation.penyewa_id) {
+          throw new Error("Penyewa harus mengikuti identitas yang terdaftar pada reservasi.");
+        }
+        if (startAt.slice(0, 10) !== reservation.mulai_reservasi || endAt.slice(0, 10) !== reservation.selesai_reservasi) {
+          throw new Error("Tanggal mulai dan kembali harus sesuai periode reservasi. Admin tetap menentukan jam aktual.");
+        }
+        if (!reservation.lines.length) throw new Error("Reservasi belum memiliki barang atau paket.");
+        setRentalCommandState("processing");
+        return createRentalFromReservation(
+          context.data.usahaId,
+          {
+            reservasiId: reservation.reservasi_id,
+            jadwalMulai: localDateTimeToUtcIso(startAt, context.data.timezone),
+            jadwalKembali: localDateTimeToUtcIso(endAt, context.data.timezone),
+          },
+          { idempotencyKey: rentalCommandIdempotencyKey, requestId: createClientId() },
+        );
+      }
       if (!draftLines.length) throw new Error("Tambahkan minimal satu barang atau paket.");
       setRentalCommandState("processing");
       return createDirectRental(
@@ -695,7 +748,9 @@ export function RentalWalkIn() {
       }
       if (isUnknownOutcome(error)) {
         try {
-          const reconciliation = await reconcileDirectRentalCreation(context.data.usahaId, rentalCommandKey);
+          const reconciliation = isReservationFlow
+            ? await reconcileRentalCreation(context.data.usahaId, rentalCommandIdempotencyKey)
+            : await reconcileDirectRentalCreation(context.data.usahaId, rentalCommandKey);
           if (reconciliation.state === "committed" && reconciliation.response?.penyewaan_id) {
             const id = reconciliation.response.penyewaan_id;
             setRentalId(id);
@@ -824,7 +879,24 @@ export function RentalWalkIn() {
     },
   });
 
-  const canPrepareRental = Boolean(selectedRenterId && canMoveFromPeriod && draftLines.length > 0);
+  const selectedRenterIsValid = isReservationFlow
+    ? Boolean(reservationPrefill.data && selectedRenterId === reservationPrefill.data.penyewa_id)
+    : Boolean(selectedRenterId);
+  const selectedLinesExist = isReservationFlow ? reservationLines.length > 0 : draftLines.length > 0;
+  const reservationContinuationIsValid = !isReservationFlow || Boolean(
+    reservationPrefill.data &&
+    reservationPrefill.data.status === "confirmed" &&
+    reservationPrefill.data.stock_lock_status === "locked" &&
+    startAt.slice(0, 10) === reservationPrefill.data.mulai_reservasi &&
+    endAt.slice(0, 10) === reservationPrefill.data.selesai_reservasi,
+  );
+  const canPrepareRental = Boolean(
+    selectedRenterIsValid &&
+    canMoveFromPeriod &&
+    selectedLinesExist &&
+    reservationContinuationIsValid &&
+    (!isReservationFlow || !reservationPrefill.isPending),
+  );
 
   const handleDirectRental = () => {
     if (!canPrepareRental || createRentalMutation.isPending || activationMutation.isPending) return;
@@ -1064,16 +1136,16 @@ export function RentalWalkIn() {
     <div className="mx-auto w-full max-w-7xl space-y-3 pb-28 lg:space-y-4 lg:pb-10">
       <header className="rounded-2xl border bg-card px-3 py-3 shadow-[0_3px_14px_rgba(23,61,51,.05)] sm:px-4">
         <div className="flex items-center gap-2.5">
-          <Button asChild variant="ghost" size="icon" className="size-8 shrink-0 rounded-xl" aria-label="Kembali ke penyewaan">
-            <Link to={paths.penyewaan}><ArrowLeft className="size-4" /></Link>
+          <Button asChild variant="ghost" size="icon" className="size-8 shrink-0 rounded-xl" aria-label={isReservationFlow ? "Kembali ke reservasi" : "Kembali ke penyewaan"}>
+            <Link to={isReservationFlow && reservationIdFromQuery ? paths.reservasi + "/" + reservationIdFromQuery : paths.penyewaan}><ArrowLeft className="size-4" /></Link>
           </Button>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="truncate text-[17px] font-bold tracking-tight">{prepared ? (workspace?.rental.nomor_penyewaan ?? "Rental") : "Rental Baru"}</h1>
-              <Badge variant="secondary" className="rounded-full px-2 py-0.5 text-[9px]">{prepared ? "Operasional" : "Penyewaan Langsung"}</Badge>
+              <h1 className="truncate text-[17px] font-bold tracking-tight">{prepared ? (workspace?.rental.nomor_penyewaan ?? "Rental") : isReservationFlow ? "Lanjutkan Penyewaan" : "Rental Baru"}</h1>
+              <Badge variant="secondary" className="rounded-full px-2 py-0.5 text-[9px]">{prepared ? "Operasional" : isReservationFlow ? "Dari Reservasi" : "Penyewaan Langsung"}</Badge>
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-muted-foreground">
-              <span className="font-semibold text-foreground">{prepared ? workspace?.renter.nama_lengkap : selectedRenter?.nama_lengkap ?? "Pilih penyewa"}</span>
+              <span className="font-semibold text-foreground">{prepared ? workspace?.renter.nama_lengkap : isReservationFlow ? reservationPrefill.data?.penyewa_nama ?? "Memuat penyewa reservasi…" : selectedRenter?.nama_lengkap ?? "Pilih penyewa"}</span>
               <span>·</span>
               <span>{prepared ? workspace?.renter.nomor_telepon ?? "—" : selectedRenter?.nomor_telepon ?? "—"}</span>
             </div>
@@ -1126,40 +1198,71 @@ export function RentalWalkIn() {
 
               {!rentalCreated ? (
                 <>
-                  <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="h-11 flex-1 justify-start rounded-xl px-3 text-left"
-                      onClick={() => {
-                        setRenterPickerSearch("");
-                        setRenterPickerOpen(true);
-                      }}
-                    >
-                      {selectedRenter ? <Users className="size-4" /> : <Search className="size-4" />}
-                      <span className="min-w-0 flex-1 truncate">
-                        {`${selectedRenter ? selectedRenter.nama_lengkap : "Pilih penyewa / cari nama atau nomor"}${selectedRenter?.nomor_telepon ? " · " + selectedRenter.nomor_telepon : ""}`}
-                      </span>
-                      <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
-                    </Button>
-                    <Button type="button" variant="outline" className="h-11 rounded-xl" onClick={() => setNewRenterOpen(true)}>
-                      <UserPlus className="size-4" />
-                      Baru
-                    </Button>
-                  </div>
-
-                  {selectedRenter ? (
-                    <div className="mt-2.5 flex items-center justify-between gap-3 rounded-xl border bg-primary/[0.035] px-3 py-2.5">
-                      <div className="min-w-0">
-                        <p className="truncate text-[11px] font-semibold">{selectedRenter.nama_lengkap}</p>
-                        <p className="mt-0.5 truncate text-[9px] text-muted-foreground">{selectedRenter.nomor_telepon || "Nomor telepon tidak tersedia"}</p>
-                      </div>
-                      <Button type="button" variant="ghost" size="sm" className="h-8 rounded-lg text-[10px]" onClick={() => setSelectedRenterId("")}>Ganti</Button>
+                  {isReservationFlow ? (
+                    <div className="mt-3 rounded-xl border bg-primary/[0.035] px-3 py-3">
+                      {reservationPrefill.isPending ? (
+                        <p className="text-[10px] text-muted-foreground">Memuat penyewa dari reservasi…</p>
+                      ) : reservationPrefill.error ? (
+                        <Alert variant="destructive" className="rounded-lg">
+                          <AlertTitle>Data reservasi tidak dapat dimuat</AlertTitle>
+                          <AlertDescription>{commandMessage(reservationPrefill.error, "Periksa kembali reservasi sebelum melanjutkan.")}</AlertDescription>
+                        </Alert>
+                      ) : reservationPrefill.data ? (
+                        <>
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">Penyewa terdaftar</p>
+                              <p className="mt-1 truncate text-[13px] font-bold">{reservationPrefill.data.penyewa_nama ?? "Nama penyewa tidak tersedia"}</p>
+                              <p className="mt-1 text-[9px] text-muted-foreground">Reservasi {reservationPrefill.data.nomor_reservasi}</p>
+                            </div>
+                            <Badge variant={reservationPrefill.data.status === "confirmed" && reservationPrefill.data.stock_lock_status === "locked" ? "secondary" : "destructive"} className="rounded-full text-[9px]">
+                              {reservationPrefill.data.status === "confirmed" && reservationPrefill.data.stock_lock_status === "locked" ? "Terkonfirmasi" : "Perlu diperiksa"}
+                            </Badge>
+                          </div>
+                          {reservationPrefill.data.status !== "confirmed" || reservationPrefill.data.stock_lock_status !== "locked" ? (
+                            <p className="mt-2 text-[10px] text-destructive">Reservasi harus dikonfirmasi dan stok terkunci sebelum penyewaan dibuat.</p>
+                          ) : null}
+                        </>
+                      ) : null}
                     </div>
                   ) : (
-                    <div className="mt-2 rounded-xl border border-dashed px-3 py-2 text-[9px] text-muted-foreground">
-                      Belum ada penyewa. Pilih penyewa untuk melanjutkan rental.
-                    </div>
+                    <>
+                      <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="h-11 flex-1 justify-start rounded-xl px-3 text-left"
+                          onClick={() => {
+                            setRenterPickerSearch("");
+                            setRenterPickerOpen(true);
+                          }}
+                        >
+                          {selectedRenter ? <Users className="size-4" /> : <Search className="size-4" />}
+                          <span className="min-w-0 flex-1 truncate">
+                            {selectedRenter ? selectedRenter.nama_lengkap + (selectedRenter.nomor_telepon ? " · " + selectedRenter.nomor_telepon : "") : "Pilih penyewa / cari nama atau nomor"}
+                          </span>
+                          <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
+                        </Button>
+                        <Button type="button" variant="outline" className="h-11 rounded-xl" onClick={() => setNewRenterOpen(true)}>
+                          <UserPlus className="size-4" />
+                          Baru
+                        </Button>
+                      </div>
+
+                      {selectedRenter ? (
+                        <div className="mt-2.5 flex items-center justify-between gap-3 rounded-xl border bg-primary/[0.035] px-3 py-2.5">
+                          <div className="min-w-0">
+                            <p className="truncate text-[11px] font-semibold">{selectedRenter.nama_lengkap}</p>
+                            <p className="mt-0.5 truncate text-[9px] text-muted-foreground">{selectedRenter.nomor_telepon || "Nomor telepon tidak tersedia"}</p>
+                          </div>
+                          <Button type="button" variant="ghost" size="sm" className="h-8 rounded-lg text-[10px]" onClick={() => setSelectedRenterId("")}>Ganti</Button>
+                        </div>
+                      ) : (
+                        <div className="mt-2 rounded-xl border border-dashed px-3 py-2 text-[9px] text-muted-foreground">
+                          Belum ada penyewa. Pilih penyewa untuk melanjutkan rental.
+                        </div>
+                      )}
+                    </>
                   )}
 
                   <div className="mt-3 border-t pt-3">
@@ -1174,13 +1277,38 @@ export function RentalWalkIn() {
                     <div className="grid gap-2 sm:grid-cols-2">
                       <label className="space-y-1">
                         <span className="text-[9px] font-medium text-muted-foreground">Mulai sewa</span>
-                        <Input type="datetime-local" value={startAt} onChange={(event) => setStartAt(event.target.value)} className="h-10 rounded-xl text-xs" />
+                        <Input
+                          type="datetime-local"
+                          value={startAt}
+                          min={isReservationFlow && reservationPrefill.data ? reservationPrefill.data.mulai_reservasi + "T00:00" : undefined}
+                          max={isReservationFlow && reservationPrefill.data ? reservationPrefill.data.mulai_reservasi + "T23:59" : undefined}
+                          onChange={(event) => setStartAt(event.target.value)}
+                          className="h-10 rounded-xl text-xs"
+                        />
                       </label>
                       <label className="space-y-1">
                         <span className="text-[9px] font-medium text-muted-foreground">Kembali</span>
-                        <Input type="datetime-local" value={endAt} onChange={(event) => setEndAt(event.target.value)} className="h-10 rounded-xl text-xs" />
+                        <Input
+                          type="datetime-local"
+                          value={endAt}
+                          min={isReservationFlow && reservationPrefill.data ? reservationPrefill.data.selesai_reservasi + "T00:00" : undefined}
+                          max={isReservationFlow && reservationPrefill.data ? reservationPrefill.data.selesai_reservasi + "T23:59" : undefined}
+                          onChange={(event) => setEndAt(event.target.value)}
+                          className="h-10 rounded-xl text-xs"
+                        />
                       </label>
                     </div>
+                    {isReservationFlow ? (
+                      <p className="mt-2 text-[9px] leading-4 text-muted-foreground">
+                        Isi jam mulai saat penyewa benar-benar datang dan jam kembali sesuai kesepakatan. Tanggal mengikuti reservasi dan waktu dikonversi memakai timezone Usaha.
+                      </p>
+                    ) : null}
+                    {isReservationFlow && reservationPrefill.data && startAt && endAt &&
+                      (startAt.slice(0, 10) !== reservationPrefill.data.mulai_reservasi || endAt.slice(0, 10) !== reservationPrefill.data.selesai_reservasi) ? (
+                      <Alert variant="destructive" className="mt-2 rounded-lg">
+                        <AlertDescription>Tanggal mulai dan kembali harus mengikuti tanggal reservasi. Ubah jam sesuai kondisi aktual tanpa mengubah tanggal reservasi.</AlertDescription>
+                      </Alert>
+                    ) : null}
 
                     {periodPreview?.isOver24Hours ? (
                       <div className="mt-2 rounded-xl border border-amber-300/70 bg-amber-50 px-3 py-2.5 text-[10px] text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/25 dark:text-amber-200">
@@ -1229,6 +1357,48 @@ export function RentalWalkIn() {
           </section>
 
           {!rentalCreated ? (
+            isReservationFlow ? (
+              <section className="rounded-2xl border bg-card">
+                <CardContent className="p-3 sm:p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className="grid size-8 place-items-center rounded-lg bg-primary/10 text-primary">
+                        <ShoppingBag className="size-4" />
+                      </span>
+                      <div className="min-w-0">
+                        <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Reservasi</p>
+                        <h2 className="text-[14px] font-bold">Barang yang dipilih</h2>
+                      </div>
+                    </div>
+                    <Badge variant="secondary" className="rounded-full text-[9px]">{reservationLines.length} item</Badge>
+                  </div>
+                  {reservationPrefill.isPending ? (
+                    <p className="mt-3 text-[10px] text-muted-foreground">Memuat barang reservasi…</p>
+                  ) : reservationPrefill.error ? (
+                    <Alert variant="destructive" className="mt-3 rounded-xl">
+                      <AlertTitle>Barang reservasi tidak dapat dimuat</AlertTitle>
+                      <AlertDescription>{commandMessage(reservationPrefill.error, "Coba buka ulang reservasi.")}</AlertDescription>
+                    </Alert>
+                  ) : reservationLines.length ? (
+                    <div className="mt-3 space-y-1.5">
+                      {reservationLines.map((line) => (
+                        <div key={line.detail_reservasi_id} className="flex items-start justify-between gap-3 rounded-xl border bg-muted/15 px-3 py-2.5">
+                          <div className="min-w-0">
+                            <p className="truncate text-[11px] font-semibold">{line.paket_nama ?? line.barang_nama ?? "Barang"}</p>
+                            {line.varian_nama ? <p className="mt-0.5 truncate text-[9px] text-muted-foreground">{line.varian_nama}</p> : null}
+                            <p className="mt-1 text-[9px] text-muted-foreground">{formatRentalMoney(line.unit_price ?? 0, line.currency_code)} × {new Intl.NumberFormat("id-ID").format(Number(line.jumlah))}</p>
+                          </div>
+                          <p className="shrink-0 text-[10px] font-bold">{formatRentalMoney(line.subtotal ?? 0, line.currency_code)}</p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="mt-3 rounded-xl border border-dashed p-4 text-center text-[10px] text-muted-foreground">Reservasi belum memiliki barang atau paket.</p>
+                  )}
+                  <p className="mt-3 text-[9px] leading-4 text-muted-foreground">Barang, jumlah, dan harga mengikuti reservasi yang sudah dikonfirmasi. Untuk mengubah pilihan, selesaikan koreksi di alur reservasi terlebih dahulu.</p>
+                </CardContent>
+              </section>
+            ) : (
             <section className="rounded-2xl border bg-card">
               <CardContent className="p-3 sm:p-4">
                 <div className="flex items-center justify-between gap-3">
@@ -1284,6 +1454,7 @@ export function RentalWalkIn() {
                 )}
               </CardContent>
             </section>
+            )
           ) : (
             <section className="rounded-2xl border bg-card">
               <CardContent className="flex items-center justify-between gap-3 p-3.5">
@@ -1308,11 +1479,11 @@ export function RentalWalkIn() {
                   <ShoppingBag className="size-4 text-primary" />
                   <CardTitle className="text-[14px]">Keranjang Rental</CardTitle>
                 </div>
-                <Badge variant="secondary" className="rounded-full text-[9px]">{prepared ? "Tersimpan" : draftLines.length + " line"}</Badge>
+                <Badge variant="secondary" className="rounded-full text-[9px]">{prepared ? "Tersimpan" : isReservationFlow ? reservationLines.length + " line" : draftLines.length + " line"}</Badge>
               </div>
             </CardHeader>
             <CardContent className="space-y-1.5 px-3.5 pb-3.5 pt-0 sm:px-4">
-              {(prepared ? (workspace?.lines ?? []) : draftLines).length ? (
+              {(prepared ? (workspace?.lines ?? []) : isReservationFlow ? reservationLines : draftLines).length ? (
                 prepared ? (
                   (workspace?.lines ?? []).map((line) => (
                     <div key={line.detail_penyewaan_id} className="rounded-xl border px-2.5 py-2.5">
@@ -1322,6 +1493,21 @@ export function RentalWalkIn() {
                           <p className="mt-0.5 truncate text-[9px] text-muted-foreground">{line.varian_nama ?? "Utama"} · {line.jumlah} unit · {line.subtotal ? line.unit_price + " / unit" : ""}</p>
                         </div>
                         <p className="shrink-0 text-[10px] font-bold">{formatRentalMoney(line.subtotal, line.currency_code)}</p>
+                      </div>
+                    </div>
+                  ))
+                ) : isReservationFlow ? (
+                  reservationLines.map((line) => (
+                    <div key={line.detail_reservasi_id} className="rounded-xl border bg-muted/10 px-2.5 py-2.5">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="truncate text-[11px] font-semibold">{line.paket_nama ?? line.barang_nama ?? "Barang"}</p>
+                          <p className="mt-0.5 truncate text-[9px] text-muted-foreground">
+                            {(line.varian_nama ?? "Utama") + " · " + Number(line.jumlah) + " unit"}
+                          </p>
+                          <p className="mt-1 text-[9px] text-muted-foreground">Harga mengikuti reservasi yang dikonfirmasi.</p>
+                        </div>
+                        <p className="shrink-0 text-[10px] font-bold">{formatRentalMoney(line.subtotal ?? 0, line.currency_code)}</p>
                       </div>
                     </div>
                   ))
@@ -1361,11 +1547,11 @@ export function RentalWalkIn() {
               <div className="border-t pt-2.5">
                 <div className="flex items-center justify-between gap-2 text-[10px]">
                   <span className="text-muted-foreground">Total rental</span>
-                  <span className="text-[16px] font-bold">{formatRentalMoney(prepared ? operationalTotal : totalRental, "IDR")}</span>
+                  <span className="text-[16px] font-bold">{formatRentalMoney(prepared ? operationalTotal : totalRental, isReservationFlow && !prepared ? rentalCurrencyCode : "IDR")}</span>
                 </div>
                 {!rentalCreated ? (
                   <Button className="mt-2.5 h-10 w-full rounded-xl text-[11px]" disabled={!canPrepareRental || createRentalMutation.isPending} onClick={() => createRentalMutation.mutate()}>
-                    {createRentalMutation.isPending || rentalCommandState === "processing" ? <><Loader2 className="animate-spin" /> Menyiapkan…</> : <>Siapkan Rental <ArrowRight /></>}
+                    {createRentalMutation.isPending || rentalCommandState === "processing" ? <><Loader2 className="animate-spin" /> Menyiapkan…</> : <>{isReservationFlow ? "Buat Penyewaan" : "Siapkan Rental"} <ArrowRight /></>}
                   </Button>
                 ) : null}
               </div>
@@ -1630,7 +1816,7 @@ export function RentalWalkIn() {
         <div className="flex items-center gap-2.5">
           <div className="min-w-0 flex-1">
             <p className="text-[8px] uppercase tracking-[0.12em] text-muted-foreground">{prepared ? "Total Rental" : "Total"}</p>
-            <p className="truncate text-[14px] font-black">{formatRentalMoney(prepared ? operationalTotal : totalRental, "IDR")}</p>
+            <p className="truncate text-[14px] font-black">{formatRentalMoney(prepared ? operationalTotal : totalRental, isReservationFlow && !prepared ? rentalCurrencyCode : "IDR")}</p>
             {prepared ? <p className="truncate text-[8px] text-muted-foreground">{formatRentalMoney(paymentRecorded, "IDR")} dibayar · {formatRentalMoney(paymentRemaining, "IDR")} sisa</p> : null}
           </div>
 
@@ -1644,7 +1830,7 @@ export function RentalWalkIn() {
                 onClick={() => createRentalMutation.mutate()}
               >
                 {createRentalMutation.isPending && !directAfterCreateRef.current ? <Loader2 className="animate-spin" /> : <ArrowRight />}
-                {createRentalMutation.isPending && !directAfterCreateRef.current ? "Menyiapkan…" : "Siapkan Rental"}
+                {createRentalMutation.isPending && !directAfterCreateRef.current ? "Menyiapkan…" : isReservationFlow ? "Buat Penyewaan" : "Siapkan Rental"}
               </Button>
               <Button
                 type="button"
@@ -1653,7 +1839,7 @@ export function RentalWalkIn() {
                 onClick={handleDirectRental}
               >
                 {(createRentalMutation.isPending && directAfterCreateRef.current) || activationMutation.isPending ? <Loader2 className="animate-spin" /> : <PackageCheck className="size-3.5" />}
-                {(createRentalMutation.isPending && directAfterCreateRef.current) || activationMutation.isPending ? "Menyiapkan…" : "Langsung Sewa"}
+                {(createRentalMutation.isPending && directAfterCreateRef.current) || activationMutation.isPending ? "Menyiapkan…" : isReservationFlow ? "Buat & Aktifkan Rental" : "Langsung Sewa"}
               </Button>
             </div>
           ) : isActive ? (

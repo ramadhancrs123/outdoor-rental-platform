@@ -9,6 +9,9 @@ vi.mock("@/app/providers/supabase/client", () => ({
     auth: {
       getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "test-auth-user" } } }, error: null }),
       getUser: vi.fn().mockResolvedValue({ data: { user: { id: "test-auth-user", email: "admin@rentaloutdoor.test" } }, error: null }),
+      onAuthStateChange: vi.fn(() => ({
+        data: { subscription: { unsubscribe: vi.fn() } },
+      })),
     },
     from: vi.fn(() => {
       const queryBuilder = {

@@ -1,11 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, CheckCircle2, ClipboardCheck, Filter, RefreshCw, Search, SlidersHorizontal, X } from "lucide-react";
+import { ArrowRight, CheckCircle2, ClipboardCheck, Filter, RefreshCw, Search, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getPemeriksaanContext, listInspectionQueue } from "@/features/pemeriksaan";

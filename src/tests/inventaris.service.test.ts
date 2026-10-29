@@ -23,6 +23,7 @@ import {
   setInventoryUnitOperationalStatus,
   moveInventoryUnit,
   registerInventoryUnit,
+  registerInventoryUnits,
 } from "@/features/inventaris/service";
 
 describe("Inventaris trusted command service", () => {
@@ -39,6 +40,7 @@ describe("Inventaris trusted command service", () => {
     expect(capabilities.mutation).toBe(true);
     expect(capabilities.commands).toEqual(expect.arrayContaining([
       "register_inventory_unit",
+      "register_inventory_units",
       "move_inventory_unit",
       "mark_inventory_unit_ready",
       "command_mark_inventory_unit_inspection_pending",
@@ -135,6 +137,59 @@ describe("Inventaris trusted command service", () => {
       p_idempotency_key: "inventory-register-key",
       p_request_id: "request-1",
     });
+  });
+
+  test("bulk register command sends quantity to the atomic trusted RPC and receives unique generated unit codes", async () => {
+    rpcMock.mockResolvedValueOnce({
+      data: {
+        usaha_id: "usaha-1",
+        jumlah_unit: 3,
+        units: [
+          { unit_barang_id: "unit-1", usaha_id: "usaha-1", kode_unit: "TENDA-001", status: "ready" },
+          { unit_barang_id: "unit-2", usaha_id: "usaha-1", kode_unit: "TENDA-002", status: "ready" },
+          { unit_barang_id: "unit-3", usaha_id: "usaha-1", kode_unit: "TENDA-003", status: "ready" },
+        ],
+      },
+      error: null,
+    });
+
+    await expect(registerInventoryUnits("usaha-1", {
+      barangId: "barang-1",
+      varianBarangId: "variant-1",
+      lokasiId: "loc-1",
+      tanggalDiperoleh: "2026-10-29",
+      sumberPembelianDetailId: "purchase-detail-1",
+      catatanInternal: "Bulk registration",
+    }, 3, {
+      idempotencyKey: "inventory-register-batch-test",
+      requestId: "request-inventory-register-batch-test",
+    })).resolves.toMatchObject({
+      jumlah_unit: 3,
+      units: [
+        { unit_barang_id: "unit-1", kode_unit: "TENDA-001" },
+        { unit_barang_id: "unit-2", kode_unit: "TENDA-002" },
+        { unit_barang_id: "unit-3", kode_unit: "TENDA-003" },
+      ],
+    });
+
+    expect(rpcMock).toHaveBeenCalledWith("command_register_inventory_units", {
+      p_usaha_id: "usaha-1",
+      p_barang_id: "barang-1",
+      p_varian_barang_id: "variant-1",
+      p_jumlah_unit: 3,
+      p_lokasi_id: "loc-1",
+      p_tanggal_diperoleh: "2026-10-29",
+      p_sumber_pembelian_detail_id: "purchase-detail-1",
+      p_catatan_internal: "Bulk registration",
+      p_idempotency_key: "inventory-register-batch-test",
+      p_request_id: "request-inventory-register-batch-test",
+    });
+  });
+
+  test("bulk register refuses a non-integer or out-of-range quantity before RPC", async () => {
+    await expect(registerInventoryUnits("usaha-1", { barangId: "barang-1" }, 0))
+      .rejects.toThrow("antara 1 dan 250");
+    expect(rpcMock).not.toHaveBeenCalled();
   });
 
   test("unknown outcome reconciles before returning committed response and never blind-retries mutation", async () => {

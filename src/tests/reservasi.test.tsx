@@ -4,6 +4,10 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
+const rentalServiceMock = vi.hoisted(() => ({
+  getRentalForReservation: vi.fn(),
+}));
+
 const serviceMock = vi.hoisted(() => ({
   getReservasiContext: vi.fn(),
   listRequests: vi.fn(),
@@ -17,6 +21,7 @@ const serviceMock = vi.hoisted(() => ({
 }));
 
 vi.mock("@/features/reservasi/service", () => serviceMock);
+vi.mock("@/features/penyewaan", () => rentalServiceMock);
 vi.mock("@/features/reservasi/utils", () => ({
   requestSourceLabel: (value: string) => value,
   semanticStatusLabel: (value: string) => value,
@@ -101,6 +106,8 @@ describe("Reservasi read-side", () => {
     serviceMock.createReservationFromRequest.mockReset();
     serviceMock.confirmReservation.mockReset();
     serviceMock.cancelReservation.mockReset();
+    rentalServiceMock.getRentalForReservation.mockReset();
+    rentalServiceMock.getRentalForReservation.mockResolvedValue(null);
     resetCapabilities();
   });
 
@@ -280,7 +287,47 @@ describe("Reservasi read-side", () => {
     expect(screen.getByText("Tenda Dome 4P")).toBeInTheDocument();
     expect(screen.getByText("Pembayaran", { exact: true })).toBeInTheDocument();
     expect(screen.getByText(/Pembayaran tetap dikelola oleh Keuangan/i)).toBeInTheDocument();
+    const continueLinks = await screen.findAllByRole("link", { name: /Lanjutkan Penyewaan/ });
+    expect(continueLinks[0]).toHaveAttribute("href", "/penyewaan/walk-in?reservasi_id=reservation-1");
+    expect(rentalServiceMock.getRentalForReservation).toHaveBeenCalledWith("usaha-a", "reservation-1");
+  });
 
+  test("confirmed reservation opens its linked rental and cannot be canceled after conversion", async () => {
+    serviceMock.getReservasiContext.mockResolvedValue(context);
+    serviceMock.getReservation.mockResolvedValue({
+      ...reservation,
+      lines: [{
+        detail_reservasi_id: "reservation-line-1",
+        usaha_id: "usaha-a",
+        reservasi_id: "reservation-1",
+        barang_id: "barang-1",
+        varian_barang_id: null,
+        paket_sewa_id: null,
+        jumlah: "1",
+        unit_price: "100000",
+        currency_code: "IDR",
+        subtotal: "100000",
+        catatan: null,
+        barang_nama: "Tenda Dome 4P",
+        varian_nama: null,
+        paket_nama: null,
+      }],
+    });
+    rentalServiceMock.getRentalForReservation.mockResolvedValue({
+      penyewaan_id: "rental-1",
+      nomor_penyewaan: "RNT-001",
+      status: "draft",
+    });
+
+    renderWithQuery(
+      <Routes><Route path="/reservasi/:id" element={<ReservationShow />} /></Routes>,
+      "/reservasi/reservation-1",
+    );
+
+    const openRentals = await screen.findAllByRole("link", { name: /Buka Penyewaan/ });
+    expect(openRentals[0]).toHaveAttribute("href", "/penyewaan/rental-1");
+    expect(openRentals[1]).toHaveAttribute("href", "/penyewaan/rental-1");
+    expect(screen.queryByRole("button", { name: /Batalkan Reservasi/ })).not.toBeInTheDocument();
   });
 });
 
@@ -295,6 +342,8 @@ describe("Reservasi reconciliation", () => {
     serviceMock.createReservationFromRequest.mockReset();
     serviceMock.confirmReservation.mockReset();
     serviceMock.cancelReservation.mockReset();
+    rentalServiceMock.getRentalForReservation.mockReset();
+    rentalServiceMock.getRentalForReservation.mockResolvedValue(null);
     resetCapabilities();
   });
 

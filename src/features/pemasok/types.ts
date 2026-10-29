@@ -49,6 +49,9 @@ export type PurchaseListItem = {
   updated_at: string;
   pemasok_nama: string | null;
   line_count: number;
+  inventory_registered_units?: number;
+  inventory_pending_units?: number;
+  inventory_quantity_review_count?: number;
 };
 
 export type PurchaseLineItem = {
@@ -65,6 +68,9 @@ export type PurchaseLineItem = {
   updated_at: string;
   barang_nama: string | null;
   varian_nama: string | null;
+  registered_unit_count?: number;
+  remaining_unit_count?: number;
+  quantity_needs_review?: boolean;
 };
 
 export type PurchaseDetail = PurchaseListItem & {
@@ -129,6 +135,16 @@ export type PurchaseMutationResult = {
   line_count: number;
   created_at: string;
   updated_at: string;
+};
+
+export type PurchaseFinanceMutationResult = PurchaseMutationResult & {
+  finance_expense_recorded: boolean;
+  pengeluaran_id: string | null;
+  nomor_pengeluaran: string | null;
+  transaksi_keuangan_id: string | null;
+  nomor_transaksi: string | null;
+  cash_out_recorded: boolean;
+  settlement?: { allocations?: Array<{ akun_keuangan_id: string; amount: number }> };
 };
 
 export type SupplierOption = {

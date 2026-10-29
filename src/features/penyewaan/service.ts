@@ -461,6 +461,26 @@ export async function listRentals(usahaId: string, filters: RentalListFilters, t
   };
 }
 
+export type ReservationRentalLink = {
+  penyewaan_id: string;
+  nomor_penyewaan: string;
+  status: string;
+};
+
+export async function getRentalForReservation(
+  usahaId: string,
+  reservasiId: string,
+): Promise<ReservationRentalLink | null> {
+  const { data, error } = await supabase
+    .from("penyewaan")
+    .select("penyewaan_id,nomor_penyewaan,status")
+    .eq("usaha_id", usahaId)
+    .eq("reservasi_id", reservasiId)
+    .maybeSingle();
+  if (error) throw error;
+  return (data as ReservationRentalLink | null) ?? null;
+}
+
 export async function getRental(usahaId: string, id: string): Promise<RentalDetail> {
   const { data, error } = await supabase.from("penyewaan").select(RENTAL_SELECT).eq("usaha_id", usahaId).eq("penyewaan_id", id).maybeSingle();
   if (error) throw error;
