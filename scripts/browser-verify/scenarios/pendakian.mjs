@@ -49,6 +49,43 @@ export default async function pendakianScenario({ page, capture }) {
     const mapCanvas = page.locator(".maplibregl-canvas");
     await mapCanvas.first().waitFor({ state: "visible", timeout: 15000 });
     await capture("maplibre-rendered");
+
+    const logoLink = page.locator(".maplibre-maptoolkit-logo-control a");
+    await logoLink.waitFor({ state: "visible", timeout: 10000 });
+    const logoHref = await logoLink.getAttribute("href");
+    if (!logoHref || !logoHref.startsWith("https://maptoolkit.org/")) {
+      throw new Error("Logo Maptoolkit tidak terpasang atau tautannya tidak sesuai.");
+    }
+    const logoBox = await logoLink.boundingBox();
+    if (!logoBox || logoBox.height < 24) {
+      throw new Error("Logo Maptoolkit harus tetap tampil dengan tinggi minimal 24 px.");
+    }
+
+    const attribution = page.locator(".maplibregl-ctrl-attrib");
+    await attribution.waitFor({ state: "visible", timeout: 10000 });
+    const attributionText = (await attribution.innerText()).replace(/\s+/g, " ");
+    if (!/Maptoolkit/i.test(attributionText) || !/OpenStreetMap/i.test(attributionText)) {
+      throw new Error("Atribusi Maptoolkit/OpenStreetMap belum terlihat lengkap.");
+    }
+
+    const mapResources = await page.evaluate(() =>
+      performance.getEntriesByType("resource").map((entry) => entry.name),
+    );
+    if (!mapResources.some((url) => url.startsWith("https://styles.maptoolkit.org/hiking.json"))) {
+      throw new Error("Gaya peta Maptoolkit Hiking tidak dimuat.");
+    }
+    if (mapResources.some((url) => /openfreemap/i.test(url))) {
+      throw new Error("Permintaan ke OpenFreeMap masih ditemukan.");
+    }
+
+    // Verify map-first admin automation without saving anything to Supabase.
+    await page.getByRole("button", { name: "Pilih titik dari peta", exact: true }).click();
+    await mapCanvas.first().click();
+    await page.getByText("Titik gunung telah dipilih", { exact: true }).waitFor({
+      state: "visible",
+      timeout: 10000,
+    });
+    await capture("map-pick-auto-coordinates");
   }
 
   const safetyButton = page.getByRole("button", { name: "Keselamatan", exact: true });

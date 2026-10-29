@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as maplibregl from "maplibre-gl";
 import type { GeoJSONSource, Map as MapLibreMap, MapMouseEvent } from "maplibre-gl";
+import { LogoControl } from "@maptoolkit/maplibre-logo-control";
+import "@maptoolkit/maplibre-logo-control/style.css";
 import mapWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { MapPin, MousePointer2 } from "lucide-react";
@@ -29,7 +31,7 @@ type FeatureCollection = {
 };
 
 const DEFAULT_CENTER: MapPoint = { latitude: -2.5, longitude: 117.5 };
-const BASEMAP_STYLE = import.meta.env.VITE_HIKING_BASEMAP_STYLE_URL || "https://tiles.openfreemap.org/styles/bright";
+const BASEMAP_STYLE = "https://styles.maptoolkit.org/hiking.json";
 
 function asCollection(features: FeatureCollection["features"]): FeatureCollection {
   return { type: "FeatureCollection", features };
@@ -103,11 +105,12 @@ export function HikingMapCanvas({
       zoom: center || selectedPoint ? 9 : 4.5,
       minZoom: 2,
       maxZoom: 18,
-      attributionControl: { compact: true },
+      attributionControl: { customAttribution: "", compact: false },
       cooperativeGestures: true,
       renderWorldCopies: false,
     });
     mapRef.current = map;
+    map.addControl(new LogoControl(), "bottom-left");
     map.addControl(new maplibregl.NavigationControl({ showCompass: true, visualizePitch: false }), "top-right");
 
     const installLayers = () => {
@@ -148,6 +151,7 @@ export function HikingMapCanvas({
         minzoom: 9,
         layout: {
           "text-field": ["get", "label"],
+          "text-font": ["Noto Sans Regular"],
           "text-size": 11,
           "text-offset": [0, 1.15],
           "text-anchor": "top",
