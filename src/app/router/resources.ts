@@ -15,5 +15,6 @@ export const resources: ResourceProps[] = [
   { name: "pembelian", list: paths.pembelian, meta: { label: "Pembelian" } },
   { name: "keuangan", list: paths.keuangan, meta: { label: "Keuangan" } },
   { name: "pemberitahuan", list: paths.pemberitahuan, meta: { label: "Pemberitahuan" } },
+  { name: "testimoni", list: paths.testimoni, meta: { label: "Testimoni" } },
   { name: "laporan", list: paths.laporan, meta: { label: "Laporan" } },
 ];

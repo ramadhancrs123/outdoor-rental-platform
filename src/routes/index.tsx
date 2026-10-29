@@ -89,6 +89,7 @@ const MaintenanceCreate = lazyNamed(() => import("@/pages/perawatan/create"), "P
 const MaintenanceShow = lazyNamed(() => import("@/pages/perawatan/show"), "PerawatanShow");
 
 const NotificationList = lazyNamed(() => import("@/pages/pemberitahuan"), "PemberitahuanList");
+const TestimoniList = lazyNamed(() => import("@/pages/testimoni"), "TestimoniList");
 const Reports = lazyNamed(() => import("@/pages/laporan"), "LaporanPage");
 const QrResolve = lazyNamed(() => import("@/pages/qr-operasional/resolve"), "QrResolvePage");
 
@@ -232,6 +233,7 @@ export function AppRoutes() {
         <Route path={paths.dashboard} element={<Dashboard />} />
 
         <Route path={paths.pemberitahuan} element={<NotificationList />} />
+        <Route path={paths.testimoni} element={<TestimoniList />} />
         <Route path={paths.laporan} element={<Reports />} />
         <Route path={paths.qrUnit + "/:token"} element={<QrResolve />} />
         <Route path={paths.qrPenyewaan + "/:token"} element={<QrResolve />} />

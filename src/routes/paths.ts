@@ -29,6 +29,7 @@ export const paths = {
   keuangan: "/keuangan",
   keuanganAkun: "/keuangan/akun",
   pemberitahuan: "/pemberitahuan",
+  testimoni: "/testimoni",
   laporan: "/laporan",
   qrUnit: "/qr/unit",
   qrPenyewaan: "/qr/penyewaan",

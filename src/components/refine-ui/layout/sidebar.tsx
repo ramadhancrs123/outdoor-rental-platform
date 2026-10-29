@@ -9,6 +9,7 @@ import {
   CircleDollarSign,
   FileBarChart,
   Home,
+  MessageSquareQuote,
   Package,
   Receipt,
   ShoppingCart,
@@ -64,7 +65,7 @@ const sections = [
   },
   {
     group: "Sistem",
-    items: [["Pemberitahuan", paths.pemberitahuan, Bell]],
+    items: [["Pemberitahuan", paths.pemberitahuan, Bell], ["Testimoni", paths.testimoni, MessageSquareQuote]],
   },
   {
     group: "Insight",
