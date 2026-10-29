@@ -14,12 +14,25 @@ const restrictedOrigins = new Set([
   "https://rental-web-din-media.vercel.app",
   "http://localhost:5173",
   "http://localhost:3000",
+  "http://127.0.0.1:5173",
+  "http://127.0.0.1:3000",
 ]);
+
+// Allow stable and immutable Vercel deployments belonging to this exact admin
+// project/team. Preview URLs change per commit, so a static host list breaks
+// browser preflight with a misleading "network unavailable" message.
+function isAllowedOrigin(origin: string): boolean {
+  if (restrictedOrigins.has(origin)) return true;
+  // Includes the project's production domain, its stable Vercel alias and
+  // immutable preview URLs used by mobile/desktop sessions.
+  return /^https:\/\/outdoor-rental-platform(?:-[a-z0-9-]+)?(?:-din-media)?\.vercel\.app$/.test(origin);
+}
+
 function withRestrictedCors(response: Response, request: Request): Response {
   const headers = new Headers(response.headers);
   headers.delete("Access-Control-Allow-Origin");
   const origin = request.headers.get("Origin");
-  if (origin && restrictedOrigins.has(origin)) headers.set("Access-Control-Allow-Origin", origin);
+  if (origin && isAllowedOrigin(origin)) headers.set("Access-Control-Allow-Origin", origin);
   headers.set("Vary", "Origin");
   headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   headers.set("Access-Control-Allow-Headers", "authorization, apikey, content-type, x-client-info, x-request-id");
@@ -135,7 +148,7 @@ async function handleRequest(request: Request): Promise<Response> {
 
 Deno.serve(async (request: Request) => {
   const origin = request.headers.get("Origin");
-  if (origin && !restrictedOrigins.has(origin)) {
+  if (origin && !isAllowedOrigin(origin)) {
     return new Response(JSON.stringify({ error: "ORIGIN_NOT_ALLOWED" }), { status: 403, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "Vary": "Origin" } });
   }
   return withRestrictedCors(await handleRequest(request), request);

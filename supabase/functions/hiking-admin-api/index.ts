@@ -13,12 +13,25 @@ const restrictedOrigins = new Set([
   "https://rental-web-din-media.vercel.app",
   "http://localhost:5173",
   "http://localhost:3000",
+  "http://127.0.0.1:5173",
+  "http://127.0.0.1:3000",
 ]);
+
+// Allow stable and immutable Vercel deployments belonging to this exact admin
+// project/team. Preview URLs change per commit, so a static host list breaks
+// browser preflight with a misleading "network unavailable" message.
+function isAllowedOrigin(origin: string): boolean {
+  if (restrictedOrigins.has(origin)) return true;
+  // Includes the project's production domain, its stable Vercel alias and
+  // immutable preview URLs used by mobile/desktop sessions.
+  return /^https:\/\/outdoor-rental-platform(?:-[a-z0-9-]+)?(?:-din-media)?\.vercel\.app$/.test(origin);
+}
+
 function withRestrictedCors(response: Response, request: Request): Response {
   const headers = new Headers(response.headers);
   headers.delete("Access-Control-Allow-Origin");
   const origin = request.headers.get("Origin");
-  if (origin && restrictedOrigins.has(origin)) headers.set("Access-Control-Allow-Origin", origin);
+  if (origin && isAllowedOrigin(origin)) headers.set("Access-Control-Allow-Origin", origin);
   headers.set("Vary", "Origin");
   headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   headers.set("Access-Control-Allow-Headers", "authorization, apikey, content-type, x-client-info, x-request-id");
@@ -221,6 +234,100 @@ async function assertSourceHasNoPublishedDependents(service: ReturnType<typeof c
   if (count > 0) throw new HttpError(409,"SOURCE_HAS_PUBLISHED_DEPENDENTS_WITHDRAW_FIRST");
 }
 
+function weatherDistanceKm(lat1:number,lon1:number,lat2:number,lon2:number):number {
+  const radians=(value:number)=>value*Math.PI/180;
+  const dLat=radians(lat2-lat1);
+  const dLon=radians(lon2-lon1);
+  const a=Math.sin(dLat/2)**2+Math.cos(radians(lat1))*Math.cos(radians(lat2))*Math.sin(dLon/2)**2;
+  return 6371*2*Math.asin(Math.min(1,Math.sqrt(a)));
+}
+
+async function tryAutoMapWeatherArea(
+  service:ReturnType<typeof createClient>,
+  input:{targetType:"mountain"|"trail";targetId:string;latitude:number|null;longitude:number|null;adminId:string;purpose?:"basecamp"|"trail_head"|"nearby"},
+):Promise<Obj> {
+  const {targetType,targetId,latitude,longitude,adminId}=input;
+  const table=targetType==="mountain"?"hiking_mountain_weather_areas":"hiking_trail_weather_areas";
+  const targetColumn=targetType==="mountain"?"mountain_id":"trail_id";
+  if(latitude===null||longitude===null||!Number.isFinite(latitude)||!Number.isFinite(longitude)){
+    return {status:"needs_review",reason:"coordinates_missing"};
+  }
+
+  // Never overwrite an existing manual/verified primary mapping.
+  const {data:existing,error:existingError}=await service.from(table)
+    .select("weather_area_id,is_primary,verified_at").eq(targetColumn,targetId).eq("is_primary",true).maybeSingle();
+  if(!existingError&&existing){
+    return {status:"already_mapped",reason:"primary_mapping_exists",weather_area_id:existing.weather_area_id};
+  }
+  if(existingError){
+    await audit(service,adminId,"auto_weather_mapping_needs_review","weather_mapping",targetId,{reason:"existing_mapping_lookup_failed"});
+    return {status:"needs_review",reason:"existing_mapping_lookup_failed"};
+  }
+
+  const {data:areas,error}=await service.from("hiking_weather_areas")
+    .select("weather_area_id,adm4_code,village_name,district_name,regency_name,province_name,latitude,longitude,source_url,is_active")
+    .eq("is_active",true).not("latitude","is",null).not("longitude","is",null).limit(1000);
+  if(error){
+    await audit(service,adminId,"auto_weather_mapping_needs_review","weather_mapping",targetId,{reason:"weather_directory_unavailable"});
+    return {status:"needs_review",reason:"weather_directory_unavailable"};
+  }
+  const candidates=(areas??[]).map((area:Obj)=>({
+    area,
+    distanceKm:weatherDistanceKm(latitude,longitude,Number(area.latitude),Number(area.longitude)),
+  })).filter((candidate)=>Number.isFinite(candidate.distanceKm)).sort((a,b)=>a.distanceKm-b.distanceKm);
+  if(candidates.length<2){
+    await audit(service,adminId,"auto_weather_mapping_needs_review","weather_mapping",targetId,{reason:candidates.length?"only_one_weather_area_candidate":"weather_directory_empty"});
+    return {status:"needs_review",reason:candidates.length?"insufficient_candidates":"weather_directory_empty"};
+  }
+  const nearest=candidates[0];
+  const second=candidates[1];
+  const maxDistanceKm=targetType==="trail"?3:1.5;
+  const marginKm=second.distanceKm-nearest.distanceKm;
+  const sourceUrl=typeof nearest.area.source_url==="string"?nearest.area.source_url:"";
+  let sourceIsHttps=false;
+  try {
+    const parsed=new URL(sourceUrl);
+    sourceIsHttps=parsed.protocol==="https:"&&!parsed.username&&!parsed.password
+      && (parsed.hostname==="bmkg.go.id"||parsed.hostname.endsWith(".bmkg.go.id"));
+  } catch {}
+  const confident=nearest.distanceKm<=maxDistanceKm&&marginKm>=2&&sourceIsHttps;
+  if(!confident){
+    await audit(service,adminId,"auto_weather_mapping_needs_review","weather_mapping",targetId,{
+      reason:!sourceIsHttps?"weather_area_source_unverified":nearest.distanceKm>maxDistanceKm?"nearest_area_too_far":"nearest_area_ambiguous",
+      nearest_distance_km:Number(nearest.distanceKm.toFixed(3)),
+      second_distance_km:Number(second.distanceKm.toFixed(3)),
+    });
+    return {
+      status:"needs_review",
+      reason:!sourceIsHttps?"weather_area_source_unverified":nearest.distanceKm>maxDistanceKm?"nearest_area_too_far":"nearest_area_ambiguous",
+      nearest_distance_km:Number(nearest.distanceKm.toFixed(3)),
+    };
+  }
+
+  const {data:mapped,error:mappingError}=await service.rpc("hiking_admin_map_weather_area",{
+    p_target_type:targetType,
+    p_target_id:targetId,
+    p_weather_area_id:nearest.area.weather_area_id,
+    p_purpose:targetType==="mountain"?"nearby":(input.purpose??"basecamp"),
+    p_is_primary:true,
+    p_source_reference_url:sourceUrl,
+    p_actor_admin_id:adminId,
+  });
+  if(mappingError){
+    await audit(service,adminId,"auto_weather_mapping_needs_review","weather_mapping",targetId,{reason:"atomic_mapping_failed"});
+    return {status:"needs_review",reason:"atomic_mapping_failed"};
+  }
+  await audit(service,adminId,"auto_weather_area_mapped","weather_mapping",targetId,{
+    target_type:targetType,weather_area_id:nearest.area.weather_area_id,
+    distance_km:Number(nearest.distanceKm.toFixed(3)),
+  });
+  return {
+    status:"mapped",
+    distance_km:Number(nearest.distanceKm.toFixed(3)),
+    weather_area:mapped,
+  };
+}
+
 async function count(service: ReturnType<typeof createClient>, table: string, column = "id") {
   const { count, error } = await service.from(table).select(column, { count: "exact", head: true });
   if (error) throw new HttpError(500, "OVERVIEW_QUERY_FAILED");
@@ -307,13 +414,11 @@ async function readAdminResource(service: ReturnType<typeof createClient>, url: 
 
 async function handleRequest(request: Request): Promise<Response> {
   const origin = request.headers.get("Origin");
-  const allowedOrigins = new Set([
-    "https://akasha-outdoor.vercel.app",
-    "https://rental-web-din-media.vercel.app",
-    "http://localhost:5173",
-    "http://localhost:3000",
-  ]);
-  const headers = { ...corsHeaders, "Access-Control-Allow-Origin": origin && allowedOrigins.has(origin) ? origin : "https://akasha-outdoor.vercel.app", "Vary": "Origin" };
+  const headers = {
+    ...corsHeaders,
+    "Vary": "Origin",
+    ...(origin && isAllowedOrigin(origin) ? { "Access-Control-Allow-Origin": origin } : {}),
+  };
   if (request.method === "OPTIONS") return new Response("ok", { headers });
   if (request.method !== "GET" && request.method !== "POST") return json({ error: "METHOD_NOT_ALLOWED" }, 405);
 
@@ -418,15 +523,27 @@ async function handleRequest(request: Request): Promise<Response> {
 
       case "upsert_mountain": {
         const mountainId = uuid(body.mountain_id);
-        const code = text(body.code, 40, true)!.toUpperCase();
         const name = text(body.name, 180, true) as string;
+        const normalizedCode = name.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+          .toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 38);
+        const generatedCodeBase = normalizedCode.length >= 2 ? normalizedCode : "GUNUNG-BARU";
+        const submittedCode = text(body.code, 40);
+        let code = mountainId ? (submittedCode ?? generatedCodeBase).toUpperCase() : generatedCodeBase;
+        if (!mountainId) {
+          const {data:collision,error:collisionError}=await service.from("hiking_mountains")
+            .select("mountain_id").eq("code",code).maybeSingle();
+          if(collisionError) throw new HttpError(500,"MOUNTAIN_CODE_CHECK_FAILED");
+          if(collision) code=code.slice(0,34)+"-"+crypto.randomUUID().slice(0,4).toUpperCase();
+        }
         const isVolcanic = body.is_volcanic === true;
         const sourceId = uuid(body.primary_source_id);
         const referenceUrl = safeHttps(body.source_reference_url, "mountain_source");
         const aliases = Array.isArray(body.aliases) ? body.aliases.filter((x) => typeof x === "string").map((x) => String(x).trim().slice(0,100)).filter(Boolean).slice(0,30) : [];
         const volcanicStatusCheckedAt = isVolcanic ? isoDateTimeOrNull(body.volcanic_status_checked_at,"volcanic_status_checked_at") : null;
+        const normalizedSlug = name.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"").slice(0,100);
+        const generatedSlug = normalizedSlug || generatedCodeBase.toLowerCase();
         const payload = {
-          code, slug: slug(body.slug), name,
+          code, slug: text(body.slug,100) ? slug(body.slug) : slug(generatedSlug), name,
           aliases, description: text(body.description, 10000),
           elevation_m: integerOrNull(body.elevation_m, 0, 9000, "elevation_m"),
           province: text(body.province, 100), regency: text(body.regency, 120),
@@ -448,7 +565,17 @@ async function handleRequest(request: Request): Promise<Response> {
           : service.from("hiking_mountains").insert(payload).select("*").single();
         const { data, error } = await query;
         if (error) throw new HttpError(409, "MOUNTAIN_SAVE_FAILED");
-        result = data; targetId = data.mountain_id; break;
+        targetId = data.mountain_id;
+        let weatherMapping:Obj;
+        try {
+          weatherMapping = await tryAutoMapWeatherArea(service, {
+            targetType:"mountain", targetId:data.mountain_id,
+            latitude:payload.latitude, longitude:payload.longitude, adminId:admin.akun_admin_id,
+          });
+        } catch {
+          weatherMapping = {status:"needs_review",reason:"mapping_service_unavailable"};
+        }
+        result = { ...data, weather_mapping:weatherMapping }; break;
       }
 
       case "upsert_trail": {
@@ -493,7 +620,18 @@ async function handleRequest(request: Request): Promise<Response> {
           : service.from("hiking_trails").insert(payload).select("*").single();
         const { data, error } = await query;
         if (error) throw new HttpError(409, "TRAIL_SAVE_FAILED");
-        result = data; targetId = data.trail_id; break;
+        targetId = data.trail_id;
+        let weatherMapping:Obj;
+        try {
+          weatherMapping = await tryAutoMapWeatherArea(service, {
+            targetType:"trail", targetId:data.trail_id,
+            latitude:payload.basecamp_latitude, longitude:payload.basecamp_longitude,
+            adminId:admin.akun_admin_id,
+          });
+        } catch {
+          weatherMapping = {status:"needs_review",reason:"mapping_service_unavailable"};
+        }
+        result = { ...data, weather_mapping:weatherMapping }; break;
       }
 
       case "upsert_checkpoint": {
@@ -604,7 +742,7 @@ async function handleRequest(request: Request): Promise<Response> {
         const sourceUrl=safeHttps(body.source_reference_url,"trail_source",true);
         await ensureSourceAllowed(service,sourceId,sourceUrl);
         const {data:trail,error:readError}=await service.from("hiking_trails")
-          .select("trail_id,route_geojson,difficulty_grade,difficulty_grade_status,difficulty_grade_source_id,difficulty_grade_source_url").eq("trail_id",trailId).maybeSingle();
+          .select("trail_id,route_geojson,basecamp_latitude,basecamp_longitude,difficulty_grade,difficulty_grade_status,difficulty_grade_source_id,difficulty_grade_source_url").eq("trail_id",trailId).maybeSingle();
         if(readError) throw new HttpError(500,"TRAIL_LOOKUP_FAILED");
         if(!trail || !trail.route_geojson) throw new HttpError(409,"VERIFIED_ROUTE_REQUIRED");
         if(trail.difficulty_grade!==null) {
@@ -618,7 +756,31 @@ async function handleRequest(request: Request): Promise<Response> {
           verified_at:new Date().toISOString(),updated_at:new Date().toISOString(),
         }).eq("trail_id",trailId).select("trail_id,verified_at,route_source_id").single();
         if(error) throw new HttpError(409,"TRAIL_VERIFICATION_FAILED");
-        result=data; targetId=trailId; break;
+        targetId=trailId;
+        let mappingLatitude=numberOrNull(trail.basecamp_latitude,-90,90,"basecamp_latitude");
+        let mappingLongitude=numberOrNull(trail.basecamp_longitude,-180,180,"basecamp_longitude");
+        let mappingPurpose:"basecamp"|"trail_head"="basecamp";
+        if(mappingLatitude===null||mappingLongitude===null){
+          const geometry=isObj(trail.route_geojson)?trail.route_geojson:{};
+          const coordinates=Array.isArray(geometry.coordinates)?geometry.coordinates:[];
+          const firstSegment=Array.isArray(coordinates[0])?coordinates[0]:[];
+          const firstPoint=Array.isArray(firstSegment[0])?firstSegment[0]:[];
+          if(firstPoint.length>=2){
+            const routeLongitude=Number(firstPoint[0]);
+            const routeLatitude=Number(firstPoint[1]);
+            if(Number.isFinite(routeLongitude)&&Number.isFinite(routeLatitude)&&Math.abs(routeLongitude)<=180&&Math.abs(routeLatitude)<=90){
+              mappingLatitude=routeLatitude; mappingLongitude=routeLongitude; mappingPurpose="trail_head";
+            }
+          }
+        }
+        let weatherMapping:Obj;
+        try {
+          weatherMapping=await tryAutoMapWeatherArea(service,{
+            targetType:"trail",targetId:trailId,latitude:mappingLatitude,longitude:mappingLongitude,
+            adminId:admin.akun_admin_id,purpose:mappingPurpose,
+          });
+        } catch { weatherMapping={status:"needs_review",reason:"mapping_service_unavailable"}; }
+        result={...data,weather_mapping:weatherMapping}; break;
       }
 
       case "save_advisory": {
@@ -656,7 +818,7 @@ async function handleRequest(request: Request): Promise<Response> {
           .eq("mountain_id",mountainId).maybeSingle();
         if(readError) throw new HttpError(500,"MOUNTAIN_LOOKUP_FAILED");
         if(!mountain) throw new HttpError(404,"MOUNTAIN_NOT_FOUND");
-        if(!mountain.verified_at || !mountain.primary_source_id || !mountain.source_reference_url || !mountain.name || mountain.elevation_m===null || mountain.latitude===null || mountain.longitude===null) throw new HttpError(409,"MOUNTAIN_METADATA_INCOMPLETE");
+        if(!mountain.verified_at || !mountain.primary_source_id || !mountain.source_reference_url || !mountain.name || mountain.latitude===null || mountain.longitude===null) throw new HttpError(409,"MOUNTAIN_METADATA_INCOMPLETE");
         await ensureSourceAllowed(service,mountain.primary_source_id,mountain.source_reference_url);
         if(mountain.is_volcanic===true && mountain.volcanic_status!=="unknown") {
           const checkedAt=mountain.volcanic_status_checked_at ? Date.parse(String(mountain.volcanic_status_checked_at)) : NaN;
@@ -1013,7 +1175,7 @@ async function handleRequest(request: Request): Promise<Response> {
 
 Deno.serve(async (request: Request) => {
   const origin = request.headers.get("Origin");
-  if (origin && !restrictedOrigins.has(origin)) {
+  if (origin && !isAllowedOrigin(origin)) {
     return new Response(JSON.stringify({ error: "ORIGIN_NOT_ALLOWED" }), { status: 403, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "Vary": "Origin" } });
   }
   return withRestrictedCors(await handleRequest(request), request);
