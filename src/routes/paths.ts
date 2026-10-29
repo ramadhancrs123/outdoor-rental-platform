@@ -17,6 +17,7 @@ export const paths = {
   perawatan: "/perawatan",
   penyewa: "/penyewa",
   katalog: "/katalog",
+  pendakian: "/pendakian",
   katalogQuickItem: "/katalog/tambah",
   katalogEdit: "/katalog/edit",
   katalogManage: "/katalog/manage",

@@ -29,6 +29,8 @@ const InventoryLocations = lazyNamed(() => import("@/pages/inventaris/locations"
 const InventoryShow = lazyNamed(() => import("@/pages/inventaris/show"), "InventoryShow");
 const InventoryProductShow = lazyNamed(() => import("@/pages/inventaris/product"), "InventoryProductShow");
 
+const PendakianWorkspace = lazyNamed(() => import("@/pages/pendakian"), "PendakianWorkspace");
+
 const CatalogList = lazyNamed(() => import("@/pages/katalog/list"), "CatalogList");
 const CatalogManage = lazyNamed(() => import("@/pages/katalog/manage"), "CatalogManage");
 const CatalogQuickItem = lazyNamed(() => import("@/pages/katalog/quick-item"), "CatalogQuickItem");
@@ -232,6 +234,7 @@ export function AppRoutes() {
         <Route index element={<NavigateToResource resource="dashboard" />} />
         <Route path={paths.dashboard} element={<Dashboard />} />
 
+        <Route path={paths.pendakian} element={<PendakianWorkspace />} />
         <Route path={paths.pemberitahuan} element={<NotificationList />} />
         <Route path={paths.testimoni} element={<TestimoniList />} />
         <Route path={paths.laporan} element={<Reports />} />
