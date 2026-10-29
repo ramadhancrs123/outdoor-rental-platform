@@ -55,13 +55,16 @@ function expenseSourceLabel(sourceType: string | null, category: string) {
 
 export function ExpenseList() {
   useFinanceRealtime();
-  const queryClient = useQueryClient();
   const context = useQuery({ queryKey: ["keuangan", "context"], queryFn: getKeuanganContext, staleTime: 60_000 });
   const periodState = useFinancePeriod(context.data?.timezone ?? "Asia/Jakarta");
+  const pageSize = 20;
+  const periodKey = (context.data?.usahaId ?? "") + ":" + periodState.period.startDate + ":" + periodState.period.endDateExclusive;
+  const [pagination, setPagination] = useState<{ periodKey: string; page: number }>({ periodKey: "", page: 1 });
+  const currentPage = pagination.periodKey === periodKey ? pagination.page : 1;
   const query = useQuery({
-    queryKey: ["keuangan", "expenses-f3", context.data?.usahaId, periodState.period],
+    queryKey: ["keuangan", "expenses-f3", context.data?.usahaId, periodState.period.startDate, periodState.period.endDateExclusive, currentPage],
     queryFn: () =>
-      getFinanceExpensePage(context.data!.usahaId, periodState.period.startDate, periodState.period.endDateExclusive, 20, 0),
+      getFinanceExpensePage(context.data!.usahaId, periodState.period.startDate, periodState.period.endDateExclusive, pageSize, (currentPage - 1) * pageSize),
     enabled: Boolean(context.data?.usahaId) && periodState.period.valid !== false,
     staleTime: 30_000,
   });
@@ -105,21 +108,10 @@ export function ExpenseList() {
   }
 
   const data = query.data;
-  const currentPage = data ? Math.floor(data.offset / data.limit) + 1 : 1;
-  const totalPages = Math.max(1, Math.ceil((data?.total ?? 0) / (data?.limit ?? 20)));
+  const totalPages = Math.max(1, Math.ceil((data?.total ?? 0) / (data?.limit ?? pageSize)));
   const currentPeriodLabel = data ? formatFinancePeriodLabel(data.start_date, data.end_date_exclusive, data.timezone) : "Periode dipilih";
 
-  const changePage = async (page: number) => {
-    if (!data || !context.data) return;
-    const next = await getFinanceExpensePage(
-      context.data.usahaId,
-      data.start_date,
-      data.end_date_exclusive,
-      data.limit,
-      (page - 1) * data.limit,
-    );
-    queryClient.setQueryData(["keuangan", "expenses-f3", context.data.usahaId, periodState.period], next);
-  };
+  const changePage = (page: number) => setPagination({ periodKey, page });
 
   return (
     <FinanceShell variant="home" title="Pengeluaran">
@@ -295,8 +287,8 @@ export function ExpenseList() {
           <div className="flex items-center justify-between gap-3 rounded-2xl border border-border/60 bg-card px-3.5 py-3 text-[10px]">
             <span className="text-muted-foreground">Halaman {currentPage} dari {totalPages}</span>
             <div className="flex gap-1.5">
-              <Button variant="outline" size="sm" disabled={currentPage <= 1} className="h-9 rounded-xl px-3 text-[10px]" onClick={() => void changePage(currentPage - 1)}>Sebelumnya</Button>
-              <Button variant="outline" size="sm" disabled={currentPage >= totalPages} className="h-9 rounded-xl px-3 text-[10px]" onClick={() => void changePage(currentPage + 1)}>Berikutnya</Button>
+              <Button variant="outline" size="sm" disabled={currentPage <= 1 || query.isFetching} className="h-9 rounded-xl px-3 text-[10px]" onClick={() => changePage(currentPage - 1)}>Sebelumnya</Button>
+              <Button variant="outline" size="sm" disabled={currentPage >= totalPages || query.isFetching} className="h-9 rounded-xl px-3 text-[10px]" onClick={() => changePage(currentPage + 1)}>Berikutnya</Button>
             </div>
           </div>
         </>

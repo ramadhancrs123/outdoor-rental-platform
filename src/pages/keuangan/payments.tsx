@@ -82,18 +82,21 @@ function paymentDateLabel(value: string, timezone: string) {
 
 export function PaymentList() {
   useFinanceRealtime();
-  const queryClient = useQueryClient();
   const context = useQuery({ queryKey: ["keuangan", "context"], queryFn: getKeuanganContext, staleTime: 60_000 });
   const periodState = useFinancePeriod(context.data?.timezone ?? "Asia/Jakarta");
+  const pageSize = 20;
+  const periodKey = (context.data?.usahaId ?? "") + ":" + periodState.period.startDate + ":" + periodState.period.endDateExclusive;
+  const [pagination, setPagination] = useState<{ periodKey: string; page: number }>({ periodKey: "", page: 1 });
+  const currentPage = pagination.periodKey === periodKey ? pagination.page : 1;
   const query = useQuery({
-    queryKey: ["keuangan", "payments-f3", context.data?.usahaId, periodState.period],
+    queryKey: ["keuangan", "payments-f3", context.data?.usahaId, periodState.period.startDate, periodState.period.endDateExclusive, currentPage],
     queryFn: () =>
       getFinancePaymentPage(
         context.data!.usahaId,
         periodState.period.startDate,
         periodState.period.endDateExclusive,
-        20,
-        0,
+        pageSize,
+        (currentPage - 1) * pageSize,
       ),
     enabled: Boolean(context.data?.usahaId) && periodState.period.valid !== false,
     staleTime: 30_000,
@@ -122,8 +125,7 @@ export function PaymentList() {
   }
 
   const data = query.data;
-  const totalPages = Math.max(1, Math.ceil((data?.total ?? 0) / (data?.limit ?? 20)));
-  const currentPage = data ? Math.floor(data.offset / data.limit) + 1 : 1;
+  const totalPages = Math.max(1, Math.ceil((data?.total ?? 0) / (data?.limit ?? pageSize)));
 
   return (
     <FinanceShell variant="home" title="Pembayaran">
@@ -309,33 +311,13 @@ export function PaymentList() {
             <div className="flex gap-2">
               <Button
                 variant="outline"
-                disabled={currentPage <= 1}
-                onClick={async () => {
-                  if (!context.data || !data) return;
-                  const previous = await getFinancePaymentPage(
-                    context.data.usahaId,
-                    data.start_date,
-                    data.end_date_exclusive,
-                    data.limit,
-                    Math.max(0, data.offset - data.limit),
-                  );
-                  queryClient.setQueryData(["keuangan", "payments-f3", context.data.usahaId, periodState.period], previous);
-                }}
+                disabled={currentPage <= 1 || query.isFetching}
+                onClick={() => setPagination({ periodKey, page: currentPage - 1 })}
               >Sebelumnya</Button>
               <Button
                 variant="outline"
-                disabled={currentPage >= totalPages}
-                onClick={async () => {
-                  if (!context.data || !data) return;
-                  const next = await getFinancePaymentPage(
-                    context.data.usahaId,
-                    data.start_date,
-                    data.end_date_exclusive,
-                    data.limit,
-                    data.offset + data.limit,
-                  );
-                  queryClient.setQueryData(["keuangan", "payments-f3", context.data.usahaId, periodState.period], next);
-                }}
+                disabled={currentPage >= totalPages || query.isFetching}
+                onClick={() => setPagination({ periodKey, page: currentPage + 1 })}
               >Berikutnya</Button>
             </div>
           </div>
