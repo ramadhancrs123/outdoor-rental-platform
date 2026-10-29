@@ -10,6 +10,7 @@ import {
   FileBarChart,
   Home,
   MessageSquareQuote,
+  Mountain,
   Package,
   Receipt,
   ShoppingCart,
@@ -40,6 +41,10 @@ const sections = [
       ["Penyewaan", paths.penyewaan, TentTree],
       ["Perawatan", paths.perawatan, Wrench],
     ],
+  },
+  {
+    group: "Informasi Publik",
+    items: [["Pendakian", paths.pendakian, Mountain]],
   },
   {
     group: "Aset & Produk",
