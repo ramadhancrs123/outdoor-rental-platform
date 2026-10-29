@@ -27,3 +27,10 @@ export type ReportSourceTrace = {
   readOnly: true;
   note: string;
 };
+
+export type {
+  FinanceExportReport,
+  RentalExportItem,
+  RentalExportPayment,
+  RentalExportReport,
+} from "./export-service";

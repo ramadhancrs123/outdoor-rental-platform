@@ -221,12 +221,20 @@ export function RentalList() {
         />
       </div>
 
-      <Button asChild className="h-11 w-full rounded-xl sm:w-auto">
-        <Link to={paths.penyewaanWalkIn}>
-          <Plus />
-          Penyewaan Langsung
-        </Link>
-      </Button>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+        <Button asChild className="h-11 w-full rounded-xl sm:w-auto">
+          <Link to={paths.penyewaanWalkIn}>
+            <Plus />
+            Penyewaan Langsung
+          </Link>
+        </Button>
+        <Button asChild variant="outline" className="h-11 w-full rounded-xl sm:w-auto">
+          <Link to={paths.laporan + "?modul=penyewaan"}>
+            <CalendarClock className="size-4" />
+            Laporan Penyewaan
+          </Link>
+        </Button>
+      </div>
 
       <Card className="overflow-hidden rounded-2xl border-border/70 shadow-[0_1px_3px_rgba(0,0,0,0.05)]">
         <CardContent className="space-y-3 p-3 sm:p-4">

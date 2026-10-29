@@ -142,13 +142,13 @@ async function resolvePaymentSourceLabels(usahaId: string, rows: Array<FinancePa
   }));
 }
 
-async function resolveExpenseRelations(usahaId: string, rows: Array<FinanceExpense>) {
+export async function resolveExpenseRelations(usahaId: string, rows: Array<FinanceExpense>) {
   const transactionIds = Array.from(new Set(rows.map((row) => row.transaksi_keuangan_id)));
   const supplierIds = Array.from(new Set(rows.map((row) => row.pemasok_id).filter((id): id is string => Boolean(id))));
   const [transactions, suppliers] = await Promise.all([
     transactionIds.length
       ? supabase.from("transaksi_keuangan")
-          .select("transaksi_keuangan_id,nomor_transaksi,sumber_type,sumber_id")
+          .select("transaksi_keuangan_id,nomor_transaksi,sumber_type,sumber_id,tanggal_transaksi")
           .eq("usaha_id", usahaId)
           .in("transaksi_keuangan_id", transactionIds)
       : Promise.resolve({ data: [], error: null }),
@@ -165,6 +165,7 @@ async function resolveExpenseRelations(usahaId: string, rows: Array<FinanceExpen
         nomor: row.nomor_transaksi as string,
         sourceType: (row.sumber_type as string | null) ?? null,
         sourceId: (row.sumber_id as string | null) ?? null,
+        transactionDate: (row.tanggal_transaksi as string | null) ?? null,
       },
     ]),
   );
@@ -176,6 +177,7 @@ async function resolveExpenseRelations(usahaId: string, rows: Array<FinanceExpen
       nomor_transaksi: transaction?.nomor ?? null,
       source_type: transaction?.sourceType ?? null,
       source_id: transaction?.sourceId ?? null,
+      transaction_date: transaction?.transactionDate ?? null,
       pemasok_nama: row.pemasok_id ? supplierMap.get(row.pemasok_id) ?? null : null,
     };
   });

@@ -90,6 +90,8 @@ export type FinanceExpense = {
   updated_at: string;
   nomor_transaksi: string | null;
   pemasok_nama: string | null;
+  transaction_status?: string;
+  transaction_date?: string | null;
 };
 
 export type FinanceSummaryCounts = {
