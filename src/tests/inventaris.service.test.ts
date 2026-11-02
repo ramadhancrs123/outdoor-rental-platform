@@ -17,6 +17,7 @@ vi.mock("@/app/providers/supabase/client", () => ({
 import {
   findInventoryUnitCandidates,
   listInventoryLocations,
+  listInventoryPackageAvailability,
   getInventoryStateCapabilities,
   markInventoryUnitInspectionPending,
   markInventoryUnitReady,
@@ -412,6 +413,118 @@ describe("Inventaris trusted command service", () => {
       p_request_id: "request-handoff",
       p_expected_updated_at: "2026-09-28T02:00:00.000Z",
     });
+  });
+
+
+  test("package availability resolves variant-only components to their parent product before trusted stock lookup", async () => {
+    const dataByTable: Record<string, unknown[]> = {
+      paket_sewa: [{
+        paket_sewa_id: "package-camping-2",
+        nama: "Paket camping 2 orang",
+        deskripsi: null,
+        harga_dasar: null,
+        currency_code: "IDR",
+        status: "active",
+      }],
+      komponen_paket: [
+        {
+          komponen_paket_id: "component-tent",
+          paket_sewa_id: "package-camping-2",
+          barang_id: null,
+          varian_barang_id: "variant-tent",
+          jumlah: 1,
+        },
+        {
+          komponen_paket_id: "component-pole",
+          paket_sewa_id: "package-camping-2",
+          barang_id: null,
+          varian_barang_id: "variant-pole",
+          jumlah: 2,
+        },
+      ],
+      tarif_sewa: [{
+        tarif_sewa_id: "tariff-package",
+        usaha_id: "usaha-1",
+        barang_id: null,
+        varian_barang_id: null,
+        paket_sewa_id: "package-camping-2",
+        nama: "Harian",
+        durasi_unit: "hari",
+        durasi_nilai: 1,
+        nominal: 80000,
+        currency_code: "IDR",
+        berlaku_mulai: "2026-01-01T00:00:00.000Z",
+        berlaku_sampai: null,
+        status: "active",
+        updated_at: "2026-01-01T00:00:00.000Z",
+      }],
+      promosi_paket_sewa: [],
+      varian_barang: [
+        { varian_barang_id: "variant-tent", nama: "Biru / 3", barang_id: "barang-tent" },
+        { varian_barang_id: "variant-pole", nama: "Hitam / X", barang_id: "barang-pole" },
+      ],
+      barang: [
+        { barang_id: "barang-tent", nama: "Tenda dome" },
+        { barang_id: "barang-pole", nama: "Tracking pole" },
+      ],
+      unit_barang: [
+        { unit_barang_id: "unit-tent", barang_id: "barang-tent", varian_barang_id: "variant-tent", status: "ready" },
+        { unit_barang_id: "unit-pole-1", barang_id: "barang-pole", varian_barang_id: "variant-pole", status: "ready" },
+        { unit_barang_id: "unit-pole-2", barang_id: "barang-pole", varian_barang_id: "variant-pole", status: "ready" },
+      ],
+    };
+
+    fromMock.mockImplementation((table: string) => {
+      const data = dataByTable[table] ?? [];
+      const builder: Record<string, unknown> = {};
+      for (const method of ["select", "eq", "in", "lte", "or", "is", "order"]) {
+        builder[method] = vi.fn(() => builder);
+      }
+      builder.then = (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) =>
+        Promise.resolve({ data, error: null }).then(resolve, reject);
+      return builder;
+    });
+
+    rpcMock.mockImplementation(async (_name: string, args: Record<string, unknown>) => {
+      const variantId = args.p_varian_barang_id;
+      const unitIds = variantId === "variant-tent" ? ["unit-tent"] : ["unit-pole-1", "unit-pole-2"];
+      return {
+        data: unitIds.map((unit_barang_id) => ({
+          unit_barang_id,
+          status: "ready",
+          eligibility: true,
+          conflict: false,
+        })),
+        error: null,
+      };
+    });
+
+    const result = await listInventoryPackageAvailability("usaha-1", {
+      startAt: "2026-11-10T01:00:00.000Z",
+      endAt: "2026-11-11T01:00:00.000Z",
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      paket_sewa_id: "package-camping-2",
+      status: "available",
+      available_package_quantity: 1,
+    });
+    expect(result[0].components).toEqual(expect.arrayContaining([
+      expect.objectContaining({ nama: "Tenda dome · Biru / 3", ready_quantity: 1, shortfall_quantity: 0 }),
+      expect.objectContaining({ nama: "Tracking pole · Hitam / X", ready_quantity: 2, shortfall_quantity: 0 }),
+    ]));
+    expect(rpcMock).toHaveBeenCalledTimes(2);
+    expect(rpcMock).toHaveBeenCalledWith("find_inventory_unit_candidates", expect.objectContaining({
+      p_usaha_id: "usaha-1",
+      p_barang_id: "barang-tent",
+      p_varian_barang_id: "variant-tent",
+    }));
+    expect(rpcMock).toHaveBeenCalledWith("find_inventory_unit_candidates", expect.objectContaining({
+      p_usaha_id: "usaha-1",
+      p_barang_id: "barang-pole",
+      p_varian_barang_id: "variant-pole",
+    }));
   });
 
 });

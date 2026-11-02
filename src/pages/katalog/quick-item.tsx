@@ -25,18 +25,19 @@ import {
 import { paths } from "@/routes/paths";
 
 type QuickItemPageState = "form" | "processing" | "success" | "error" | "unknown";
-type VariantDraft = { attributes: Record<string, string>; quantity: string; nominal: string };
+type VariantDraft = { attributes: Record<string, string>; quantity: string; nominal: string; note: string };
 
 const DIMENSIONS = [
   { key: "warna", label: "Warna" },
-  { key: "kapasitas", label: "Kapasitas" },
-  { key: "ukuran", label: "Ukuran" },
+  { key: "kapasitas", label: "Kapasitas/Ukuran" },
+  { key: "seri", label: "Seri" },
 ] as const;
 
 const createVariantDraft = (dimensions: string[], nominal = ""): VariantDraft => ({
   attributes: Object.fromEntries(dimensions.map((dimension) => [dimension, ""])),
   quantity: "1",
   nominal,
+  note: "",
 });
 
 const formatMoney = (value: number, currency: string) =>
@@ -71,6 +72,7 @@ export function CatalogQuickItem() {
   const [locationId, setLocationId] = useState<string | null>(null);
   const [variantMode, setVariantMode] = useState(false);
   const [dimensions, setDimensions] = useState<string[]>(["warna"]);
+  const [includeNote, setIncludeNote] = useState(false);
   const [variants, setVariants] = useState<VariantDraft[]>([createVariantDraft(["warna"], "65000")]);
   const [advancedMode, setAdvancedMode] = useState(false);
   const [unitDetails, setUnitDetails] = useState<Array<{ serialNumber: string; tanggalDiperoleh: string; catatanInternal: string }>>([]);
@@ -188,7 +190,10 @@ export function CatalogQuickItem() {
         variantDimensions: variantMode ? dimensions : [],
         variants: variantMode
           ? variants.map((row) => ({
-              attributes: row.attributes,
+              attributes: {
+                ...row.attributes,
+                ...(includeNote && row.note.trim() ? { catatan: row.note.trim() } : {}),
+              },
               quantity: Number(row.quantity),
               nominal: Number(row.nominal),
             }))
@@ -264,7 +269,7 @@ export function CatalogQuickItem() {
       return null;
     }
 
-    if (dimensions.length < 1 || dimensions.length > 2) return "Pilih satu atau dua dimensi pilihan.";
+    if (dimensions.length < 1 || dimensions.length > 3) return "Pilih minimal satu atribut pembeda: warna, kapasitas/ukuran, atau seri.";
     if (!variants.length) return "Tambahkan minimal satu pilihan.";
     if (
       variants.some(
@@ -304,10 +309,9 @@ export function CatalogQuickItem() {
   const toggleDimension = (key: string) => {
     setDimensions((current) => {
       if (current.includes(key)) {
-        if (current.length === 1) return current;
         return current.filter((item) => item !== key);
       }
-      if (current.length >= 2) return current;
+      if (current.length >= 3) return current;
       return [...current, key];
     });
   };
@@ -331,6 +335,7 @@ export function CatalogQuickItem() {
     setLocationId(locationSelection.selectedLocationId);
     setVariantMode(false);
     setDimensions(["warna"]);
+    setIncludeNote(false);
     setVariants([createVariantDraft(["warna"], "65000")]);
     setAdvancedMode(false);
     setUnitDetails([]);
@@ -662,7 +667,7 @@ export function CatalogQuickItem() {
         <CardHeader className="flex flex-row items-start justify-between gap-3 p-4 pb-2 sm:p-6 sm:pb-3">
           <div>
             <CardTitle className="text-base sm:text-lg">Variasi Barang</CardTitle>
-            <p className="mt-1 text-xs leading-5 font-normal text-muted-foreground sm:text-sm">Kelola variasi yang bisa disewa (warna, ukuran, kapasitas).</p>
+            <p className="mt-1 text-xs leading-5 font-normal text-muted-foreground sm:text-sm">Pilih pembeda dan informasi yang diperlukan untuk setiap pilihan barang.</p>
           </div>
             <div className="flex rounded-xl border bg-muted/30 p-1">
               <Button type="button" size="sm" variant={!variantMode ? "secondary" : "ghost"} className="rounded-lg" onClick={() => setVariantMode(false)}>Tidak</Button>
@@ -673,7 +678,7 @@ export function CatalogQuickItem() {
         {variantMode ? (
           <CardContent className="space-y-3 p-4 pt-1 sm:space-y-5 sm:p-6 sm:pt-2">
             <div className="space-y-2">
-              <p className="text-sm font-medium">Dimensi pilihan</p>
+              <p className="text-sm font-medium">Atribut pilihan</p>
               <div className="flex flex-wrap gap-2">
                 {DIMENSIONS.map((dimension) => (
                   <Button
@@ -687,7 +692,19 @@ export function CatalogQuickItem() {
                     {dimension.label}
                   </Button>
                 ))}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={includeNote ? "default" : "outline"}
+                  className="rounded-full"
+                  onClick={() => setIncludeNote((current) => !current)}
+                >
+                  Catatan
+                </Button>
               </div>
+              <p className="text-[11px] leading-5 text-muted-foreground">
+                Pilih minimal satu pembeda: warna, kapasitas/ukuran, atau seri. Catatan bersifat opsional.
+              </p>
             </div>
 
 
@@ -770,12 +787,29 @@ export function CatalogQuickItem() {
                       />
                     </label>
                   </div>
+                  {includeNote ? (
+                    <label className="mt-3 grid gap-1">
+                      <span className="text-[10px] font-semibold text-muted-foreground">Catatan</span>
+                      <Textarea
+                        rows={2}
+                        value={row.note}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          setVariants((current) => current.map((item, rowIndex) =>
+                            rowIndex === index ? { ...item, note: value } : item,
+                          ));
+                        }}
+                        placeholder="Catatan tambahan untuk pilihan ini (opsional)"
+                        className="min-h-16 rounded-lg text-sm"
+                      />
+                    </label>
+                  ) : null}
                 </div>
               ))}
             </div>
 
             <div className="hidden overflow-x-auto rounded-2xl border sm:block">
-              <table className="w-full min-w-[620px] text-sm">
+              <table className="w-full min-w-[760px] text-sm">
                 <thead className="border-b bg-muted/30 text-left">
                   <tr>
                     {dimensions.map((dimension) => (
@@ -785,6 +819,7 @@ export function CatalogQuickItem() {
                     ))}
                     <th className="px-3 py-3 font-medium">Jumlah</th>
                     <th className="px-3 py-3 font-medium">Harga Sewa</th>
+                    {includeNote ? <th className="min-w-52 px-3 py-3 font-medium">Catatan</th> : null}
                     <th className="w-12 px-2 py-3" />
                   </tr>
                 </thead>
@@ -840,6 +875,22 @@ export function CatalogQuickItem() {
                           className="h-10 rounded-lg"
                         />
                       </td>
+                      {includeNote ? (
+                        <td className="p-2">
+                          <Textarea
+                            rows={2}
+                            value={row.note}
+                            onChange={(event) => {
+                              const value = event.target.value;
+                              setVariants((current) => current.map((item, rowIndex) =>
+                                rowIndex === index ? { ...item, note: value } : item,
+                              ));
+                            }}
+                            placeholder="Opsional"
+                            className="min-h-16 min-w-48 rounded-lg"
+                          />
+                        </td>
+                      ) : null}
                       <td className="p-2 text-right">
                         <Button
                           type="button"

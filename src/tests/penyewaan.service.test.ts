@@ -14,9 +14,12 @@ import {
   assignRentalUnit,
   completeRentalHandover,
   createDirectRental,
+  createDirectRentalAndActivate,
   createRentalFromReservation,
+  getBlockedAssignableUnitIds,
   previewDirectRentalAvailability,
   getRentalCapabilities,
+  reconcileDirectRentalActivation,
   reconcileDirectRentalCreation,
   reconcileRentalAssignment,
   reconcileRentalCreation,
@@ -30,6 +33,7 @@ describe("Penyewaan trusted command service", () => {
     expect(capabilities.mutation).toBe(true);
     expect(capabilities.reason).toMatch(/Penyewaan mendukung pembuatan langsung/i);
     expect(capabilities.commands).toContain("create_direct_rental");
+    expect(capabilities.commands).toContain("create_and_activate_direct_rental");
   });
 
   test("create rental maps reservation conversion contract", async () => {
@@ -121,6 +125,88 @@ describe("Penyewaan trusted command service", () => {
       p_idempotency_key: "walkin-create-test",
       p_request_id: "request-walkin-test",
     }));
+  });
+
+  test("direct rental action uses one atomic create-and-activate RPC", async () => {
+    rpcMock.mockResolvedValue({
+      data: {
+        penyewaan_id: "rental-active-1",
+        nomor_penyewaan: "RNT-2026-020",
+        status: "active",
+        actual_pickup_at: "2026-11-02T01:00:00.000Z",
+        total_amount: 90000,
+        currency_code: "IDR",
+      },
+      error: null,
+    });
+
+    await expect(createDirectRentalAndActivate("usaha-1", {
+      penyewa_id: "renter-1",
+      jadwal_mulai: "2026-11-02T01:00:00.000Z",
+      jadwal_kembali: "2026-11-03T01:00:00.000Z",
+      lines: [{
+        barang_id: "barang-1",
+        tarif_sewa_id: "tariff-1",
+        duration_periods: 1,
+        jumlah: 1,
+        unit_price: 90000,
+        subtotal: 90000,
+        currency_code: "IDR",
+      }],
+      catatan: "walk-in langsung",
+    }, {
+      idempotencyKey: "walkin-atomic-test",
+      requestId: "request-atomic-test",
+    })).resolves.toMatchObject({
+      penyewaan_id: "rental-active-1",
+      status: "active",
+      actual_pickup_at: "2026-11-02T01:00:00.000Z",
+    });
+
+    expect(rpcMock).toHaveBeenCalledTimes(1);
+    expect(rpcMock).toHaveBeenCalledWith("command_create_and_activate_direct_rental", expect.objectContaining({
+      p_usaha_id: "usaha-1",
+      p_penyewa_id: "renter-1",
+      p_jadwal_mulai: "2026-11-02T01:00:00.000Z",
+      p_jadwal_kembali: "2026-11-03T01:00:00.000Z",
+      p_lines: [expect.objectContaining({
+        barang_id: "barang-1",
+        varian_barang_id: null,
+        jumlah: 1,
+        unit_price: 90000,
+        subtotal: 90000,
+      })],
+      p_idempotency_key: "walkin-atomic-test",
+      p_request_id: "request-atomic-test",
+    }));
+  });
+
+  test("candidate filtering excludes units assigned to this rental and physically occupied rentals", () => {
+    const blocked = getBlockedAssignableUnitIds(
+      [
+        { unit_barang_id: "already-current", detail_penyewaan_id: "detail-current" },
+        { unit_barang_id: "active-other", detail_penyewaan_id: "detail-active" },
+        { unit_barang_id: "overlap-draft", detail_penyewaan_id: "detail-draft" },
+        { unit_barang_id: "future-draft", detail_penyewaan_id: "detail-future" },
+        { unit_barang_id: "completed-old", detail_penyewaan_id: "detail-completed" },
+      ],
+      ["detail-current", "detail-current-other"],
+      [
+        { detail_penyewaan_id: "detail-active", penyewaan_id: "rental-active" },
+        { detail_penyewaan_id: "detail-draft", penyewaan_id: "rental-draft" },
+        { detail_penyewaan_id: "detail-future", penyewaan_id: "rental-future" },
+        { detail_penyewaan_id: "detail-completed", penyewaan_id: "rental-completed" },
+      ],
+      [
+        { penyewaan_id: "rental-active", status: "active", jadwal_mulai: "2026-01-01T00:00:00Z", jadwal_kembali: "2026-01-02T00:00:00Z" },
+        { penyewaan_id: "rental-draft", status: "draft", jadwal_mulai: "2026-11-02T12:00:00Z", jadwal_kembali: "2026-11-03T12:00:00Z" },
+        { penyewaan_id: "rental-future", status: "draft", jadwal_mulai: "2026-11-04T12:00:00Z", jadwal_kembali: "2026-11-05T12:00:00Z" },
+        { penyewaan_id: "rental-completed", status: "completed", jadwal_mulai: "2026-11-02T12:00:00Z", jadwal_kembali: "2026-11-03T12:00:00Z" },
+      ],
+      { jadwal_mulai: "2026-11-02T10:00:00Z", jadwal_kembali: "2026-11-03T10:00:00Z" },
+    );
+
+    expect([...blocked].sort()).toEqual(["active-other", "already-current", "overlap-draft"].sort());
   });
 
   test("create direct rental sends exactly one catalog target for a variant", async () => {
@@ -231,25 +317,48 @@ describe("Penyewaan trusted command service", () => {
     }));
   });
 
-  test("availability preview only claims current physical readiness", async () => {
-    fromMock.mockReturnValue({
-      select: vi.fn(() => ({
-        eq: vi.fn(() => ({
-          eq: vi.fn(() => ({
-            eq: vi.fn(() => Promise.resolve({ count: 2, error: null })),
-          })),
-        })),
-      })),
+  test("availability preview counts only server-eligible units in the requested rental period", async () => {
+    rpcMock.mockResolvedValue({
+      data: [
+        { unit_barang_id: "unit-ready-1", status: "ready", eligibility: true, conflict: false },
+        { unit_barang_id: "unit-ready-2", status: "ready", eligibility: false, conflict: true },
+        { unit_barang_id: "unit-ready-3", status: "ready", eligibility: true, conflict: false },
+        { unit_barang_id: "unit-rented", status: "rented", eligibility: false, conflict: false },
+      ],
+      error: null,
     });
 
     await expect(previewDirectRentalAvailability("usaha-1", {
       barangId: "barang-1",
       requestedUnits: 2,
+      startAt: "2026-11-02T01:00:00.000Z",
+      endAt: "2026-11-03T01:00:00.000Z",
     })).resolves.toEqual({
       readyPhysicalUnits: 2,
       requestedUnits: 2,
       physicalCheck: "pass",
     });
+
+    expect(rpcMock).toHaveBeenCalledWith("find_inventory_unit_candidates", {
+      p_usaha_id: "usaha-1",
+      p_barang_id: "barang-1",
+      p_varian_barang_id: null,
+      p_start_at: "2026-11-02T01:00:00.000Z",
+      p_end_at: "2026-11-03T01:00:00.000Z",
+      p_preferred_unit_id: null,
+      p_exclude_penyewaan_id: null,
+      p_limit: 100,
+    });
+  });
+
+  test("availability preview rejects an invalid rental window before querying stock", async () => {
+    await expect(previewDirectRentalAvailability("usaha-1", {
+      barangId: "barang-1",
+      requestedUnits: 1,
+      startAt: "2026-11-03T01:00:00.000Z",
+      endAt: "2026-11-02T01:00:00.000Z",
+    })).rejects.toThrow(/Periode rental harus valid/i);
+    expect(rpcMock).not.toHaveBeenCalled();
   });
 
   test("assignment and handover commands use separate trusted boundaries", async () => {
@@ -349,6 +458,23 @@ describe("Penyewaan trusted command service", () => {
     expect(rpcMock).toHaveBeenNthCalledWith(4, "command_reconcile_direct_rental_creation", {
       p_usaha_id: "usaha-1",
       p_idempotency_key: "walkin-key",
+    });
+  });
+
+  test("atomic direct-rental reconciliation queries the combined command state", async () => {
+    rpcMock.mockResolvedValue({
+      data: { state: "committed", response: { penyewaan_id: "rental-active-1", status: "active" } },
+      error: null,
+    });
+
+    await expect(reconcileDirectRentalActivation("usaha-1", "walkin-atomic-key")).resolves.toEqual({
+      state: "committed",
+      response: { penyewaan_id: "rental-active-1", status: "active" },
+    });
+
+    expect(rpcMock).toHaveBeenCalledWith("command_reconcile_direct_rental_activation", {
+      p_usaha_id: "usaha-1",
+      p_idempotency_key: "walkin-atomic-key",
     });
   });
 

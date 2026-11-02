@@ -78,11 +78,23 @@ export function InventoryPackageAvailabilityView({
             <CardHeader className="space-y-2 p-3 pb-2">
               <div className="min-w-0">
                 <CardTitle className="truncate text-sm">{pkg.nama}</CardTitle>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {pkg.harga_dasar == null
-                    ? "Harga belum ditentukan"
-                    : pkg.harga_dasar.toLocaleString("id-ID") + " " + pkg.currency_code}
-                </p>
+                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                  {pkg.is_promo ? (
+                    <>
+                      <Badge variant="secondary" className="rounded-full px-2 py-0">Promo</Badge>
+                      {pkg.harga_normal != null ? (
+                        <span className="text-muted-foreground line-through">
+                          {pkg.harga_normal.toLocaleString("id-ID")} {pkg.currency_code}
+                        </span>
+                      ) : null}
+                    </>
+                  ) : null}
+                  <span className={pkg.is_promo ? "font-semibold text-emerald-700 dark:text-emerald-300" : "text-muted-foreground"}>
+                    {pkg.harga_efektif == null
+                      ? "Harga belum ditentukan"
+                      : pkg.harga_efektif.toLocaleString("id-ID") + " " + pkg.currency_code}
+                  </span>
+                </div>
               </div>
 
               {pkg.status === "available" ? (

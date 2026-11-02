@@ -104,6 +104,10 @@ export function RentalOperationalWorkspace({ usahaId, penyewaanId, enabled, rent
 
   const mutation = useMutation({
     mutationFn: async (unit: OperationalReturnUnitState) => {
+      if (unit.return) throw new Error("Unit ini sudah tercatat diterima pada pengembalian.");
+      if (unit.unit_status !== "rented") {
+        throw new Error(`Unit belum tercatat keluar dari inventaris (status sekarang: ${unit.unit_status}). Sistem hanya menerima unit dengan status sedang disewa.`);
+      }
       const selected = condition[unit.unit_barang_id];
       if (!selected) throw new Error("Pilih kondisi unit sebelum menerima pengembalian.");
       commandRef.current = { key: createClientId(), requestId: createClientId(), unitId: unit.unit_barang_id };
@@ -234,11 +238,15 @@ export function RentalOperationalWorkspace({ usahaId, penyewaanId, enabled, rent
                 <div className="min-w-0">
                   <p className="text-[12px] font-bold">{unitIdentity(unit)}</p>
                   <p className="mt-0.5 text-[9px] text-muted-foreground">
-                    {unit.return ? `Diterima ${formatRentalDateTime(unit.return.diterima_at)}` : "Masih berada pada penyewa"}
+                    {unit.return
+                      ? `Diterima ${formatRentalDateTime(unit.return.diterima_at)}`
+                      : unit.unit_status === "rented"
+                        ? "Belum diterima dari penyewa"
+                        : `Perlu verifikasi · status inventaris ${unit.unit_status}`}
                   </p>
                 </div>
-                <Badge variant={unit.return ? (unit.readiness_state === "ready" ? "outline" : "secondary") : "secondary"} className="shrink-0 rounded-full text-[9px]">
-                  {unit.return ? readinessLabel(unit.readiness_state) : "Belum kembali"}
+                <Badge variant={unit.return ? (unit.readiness_state === "ready" ? "outline" : "secondary") : unit.unit_status === "rented" ? "secondary" : "destructive"} className="shrink-0 rounded-full text-[9px]">
+                  {unit.return ? readinessLabel(unit.readiness_state) : unit.unit_status === "rented" ? "Belum kembali" : `Status ${unit.unit_status}`}
                 </Badge>
               </div>
 
@@ -270,7 +278,7 @@ export function RentalOperationalWorkspace({ usahaId, penyewaanId, enabled, rent
                     <p className="mt-1 text-[9px] leading-4 text-muted-foreground">Unit belum memenuhi readiness dan memerlukan tinjauan lanjutan.</p>
                   )}
                 </div>
-              ) : canProcess ? (
+              ) : canProcess && unit.unit_status === "rented" ? (
                 <div className="mt-3 space-y-3 rounded-xl border border-dashed p-3">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
@@ -331,6 +339,14 @@ export function RentalOperationalWorkspace({ usahaId, penyewaanId, enabled, rent
                     {!isThisMutation ? <Check /> : null}
                   </Button>
                 </div>
+              ) : canProcess ? (
+                <Alert className="mt-3" variant="destructive">
+                  <ShieldAlert className="size-3.5" />
+                  <AlertTitle className="text-[10px]">Penerimaan unit diblokir</AlertTitle>
+                  <AlertDescription className="text-[9px] leading-4">
+                    Unit belum tercatat keluar melalui serah-terima yang sah. Status inventaris saat ini <strong>{unit.unit_status}</strong>; sistem hanya menerima pengembalian untuk unit berstatus <strong>rented</strong>. Verifikasi penetapan dan serah-terima sebelum melanjutkan.
+                  </AlertDescription>
+                </Alert>
               ) : null}
 
               {unit.return?.catatan ? <p className="mt-2 text-[9px] text-muted-foreground">Catatan: {unit.return.catatan}</p> : null}

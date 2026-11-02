@@ -214,6 +214,7 @@ export type RentalDetail = Omit<RentalListItem, "lines"> & {
 
 export type RentalMutationCommand =
   | "create_direct_rental"
+  | "create_and_activate_direct_rental"
   | "create_rental_from_reservation"
   | "assign_rental_unit"
   | "complete_rental_handover";

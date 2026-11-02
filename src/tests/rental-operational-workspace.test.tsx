@@ -106,6 +106,25 @@ describe("Rental operational workspace", () => {
     expect(screen.queryByText(/Sistem tidak menganggap unit normal/)).not.toBeInTheDocument();
   });
 
+  it("blocks receiving a unit that is not in rented inventory state", async () => {
+    operationalMock.getOperationalReturnWorkspace.mockResolvedValue({
+      ...baseWorkspace,
+      units: [],
+      operational_units: [{ ...unit("unit-ready", "PERLENGKAPAN-TRACKING-POLE-001"), unit_status: "ready" }],
+    });
+
+    renderWorkspace();
+    await screen.findByText("PERLENGKAPAN-TRACKING-POLE-001 · Tenda Dome 4P");
+
+    expect(screen.getByText("Penerimaan unit diblokir")).toBeInTheDocument();
+    const blockedAlert = screen.getByRole("alert");
+    expect(blockedAlert.textContent?.toLowerCase()).toContain("sistem hanya menerima pengembalian");
+    expect(blockedAlert.textContent?.toLowerCase()).toContain("rented");
+    expect(screen.queryByRole("button", { name: /Pilih kondisi/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Terima Unit \+ Proses Kondisi/ })).not.toBeInTheDocument();
+    expect(operationalMock.processOperationalUnitReturn).not.toHaveBeenCalled();
+  });
+
   it("processes a normal unit as ready and a damaged unit as maintenance independently", async () => {
     let state = {
       ...baseWorkspace,

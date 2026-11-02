@@ -109,6 +109,8 @@ export type InventoryVariant = {
   barang_id: string;
   nama: string;
   kode_internal: string | null;
+  deskripsi: string | null;
+  atribut_pembeda: Record<string, unknown> | null;
   status: string;
 };
 
@@ -295,6 +297,9 @@ export type InventoryPackageAvailability = {
   nama: string;
   deskripsi: string | null;
   harga_dasar: number | null;
+  harga_normal: number | null;
+  harga_efektif: number | null;
+  is_promo: boolean;
   currency_code: string;
   available_package_quantity: number;
   status: "available" | "insufficient";

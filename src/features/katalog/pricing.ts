@@ -1,4 +1,38 @@
-import type { CatalogTariff } from "./types";
+import type { CatalogPackagePromo, CatalogTariff } from "./types";
+
+export type PackagePriceResolution = {
+  normalPrice: number | null;
+  effectivePrice: number | null;
+  isPromo: boolean;
+  promo: CatalogPackagePromo | null;
+};
+
+export function resolvePackagePrice(
+  tariff: Pick<CatalogTariff, "tarif_sewa_id" | "nominal"> | null | undefined,
+  promo: CatalogPackagePromo | null | undefined,
+): PackagePriceResolution {
+  if (!tariff) {
+    return { normalPrice: null, effectivePrice: null, isPromo: false, promo: null };
+  }
+
+  const normalPrice = Number(tariff.nominal);
+  const isPromo = Boolean(
+    promo &&
+    promo.status === "active" &&
+    promo.ended_at === null &&
+    promo.tarif_sewa_id === tariff.tarif_sewa_id &&
+    Number.isFinite(Number(promo.harga_promo)) &&
+    Number(promo.harga_promo) >= 0 &&
+    Number(promo.harga_promo) < normalPrice,
+  );
+
+  return {
+    normalPrice,
+    effectivePrice: isPromo ? Number(promo!.harga_promo) : normalPrice,
+    isPromo,
+    promo: isPromo ? promo! : null,
+  };
+}
 
 const DURATION_UNIT_MS: Record<string, number> = {
   jam: 60 * 60 * 1000,

@@ -51,6 +51,44 @@ function stepState(mode: CreateMode, formStep: CreateFormStep) {
   return 3;
 }
 
+function inventoryVariantAttributeEntries(attributes: Record<string, unknown> | null | undefined) {
+  if (!attributes) return [] as Array<{ label: string; value: string }>;
+
+  const readValue = (key: string) => {
+    const value = attributes[key];
+    return typeof value === "string" || typeof value === "number"
+      ? String(value).trim()
+      : "";
+  };
+
+  const entries: Array<{ label: string; value: string }> = [];
+  const color = readValue("warna");
+  const capacity = readValue("kapasitas") || readValue("ukuran");
+  const liters = readValue("kapasitas_liter");
+  const series = readValue("seri");
+
+  if (color) entries.push({ label: "Warna", value: color });
+  if (capacity) entries.push({ label: "Kapasitas/Ukuran", value: capacity });
+  else if (liters) entries.push({ label: "Kapasitas/Ukuran", value: /liter$/i.test(liters) ? liters : liters + " liter" });
+  if (series) entries.push({ label: "Seri", value: series });
+
+  const knownKeys = new Set(["warna", "kapasitas", "ukuran", "kapasitas_liter", "seri", "catatan"]);
+  for (const [key, rawValue] of Object.entries(attributes)) {
+    if (knownKeys.has(key) || (typeof rawValue !== "string" && typeof rawValue !== "number")) continue;
+    const value = String(rawValue).trim();
+    if (!value) continue;
+    const label = key
+      .replace(/_/g, " ")
+      .split(" ")
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ");
+    entries.push({ label, value });
+  }
+
+  return entries;
+}
+
 export function InventoryCreate() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -123,6 +161,7 @@ export function InventoryCreate() {
   const readyToReview = Boolean(
     context.data?.usahaId &&
     form.barangId &&
+    (selectedVariants.length === 0 || Boolean(form.varianBarangId)) &&
     validJumlahUnit &&
     (sourceMode === "manual" || Boolean(form.sumberPembelianDetailId)) &&
     capabilities.mutation,
@@ -419,7 +458,13 @@ export function InventoryCreate() {
                     setSourceMode("manual");
                     setSelectedPurchaseId(null);
                     setJumlahUnit("1");
-                    setForm((current) => ({ ...current, barangId: value, varianBarangId: null, sumberPembelianDetailId: null }));
+                    const productVariants = (variants.data ?? []).filter((variant) => variant.barang_id === value);
+                    setForm((current) => ({
+                      ...current,
+                      barangId: value,
+                      varianBarangId: productVariants.length === 1 ? productVariants[0].varian_barang_id : null,
+                      sumberPembelianDetailId: null,
+                    }));
                   }}
                 >
                   <SelectTrigger id="inventory-product" className="h-11 w-full rounded-xl">
@@ -435,30 +480,75 @@ export function InventoryCreate() {
 
               <div className={formStep === 1 ? "space-y-1.5 sm:col-span-2" : "hidden"}>
                 <label htmlFor="inventory-variant" className="text-xs font-semibold">
-                  Varian <span className="font-normal text-muted-foreground">(opsional)</span>
+                  Varian{" "}
+                  <span className="font-normal text-muted-foreground">
+                    {selectedVariants.length > 0 ? "(wajib dipilih)" : "(barang tanpa varian)"}
+                  </span>
                 </label>
                 <Select
-                  value={form.varianBarangId ?? "none"}
+                  value={form.varianBarangId ?? (selectedVariants.length > 0 ? "" : "none")}
                   onValueChange={(value) => {
                     setSourceMode("manual");
                     setSelectedPurchaseId(null);
                     setJumlahUnit("1");
                     setForm((current) => ({ ...current, varianBarangId: value === "none" ? null : value, sumberPembelianDetailId: null }));
                   }}
-                  disabled={!form.barangId}
+                  disabled={!form.barangId || selectedVariants.length === 0}
                 >
                   <SelectTrigger id="inventory-variant" className="h-11 w-full rounded-xl">
-                    <SelectValue placeholder={form.barangId ? "Tanpa varian" : "Pilih barang dulu"} />
+                    <SelectValue placeholder={
+                      !form.barangId
+                        ? "Pilih barang dulu"
+                        : selectedVariants.length > 0
+                          ? "Pilih seri / varian yang sesuai"
+                          : "Barang ini tidak memiliki varian"
+                    } />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="none">Tanpa varian</SelectItem>
+                    {selectedVariants.length === 0 ? <SelectItem value="none">Tanpa varian</SelectItem> : null}
                     {selectedVariants.map((variant) => (
                       <SelectItem key={variant.varian_barang_id} value={variant.varian_barang_id}>
-                        {variant.nama}{variant.kode_internal ? " · " + variant.kode_internal : ""}
+                        <span className="flex min-w-0 flex-col">
+                          <span>{variant.nama}{variant.kode_internal ? " · " + variant.kode_internal : ""}</span>
+                          {inventoryVariantAttributeEntries(variant.atribut_pembeda).length > 0 ? (
+                            <span className="max-w-[70vw] truncate text-[11px] text-muted-foreground">
+                              {inventoryVariantAttributeEntries(variant.atribut_pembeda)
+                                .map((attribute) => attribute.label + ": " + attribute.value)
+                                .join(" · ")}
+                            </span>
+                          ) : null}
+                        </span>
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+                {selectedVariants.length > 0 && !form.varianBarangId ? (
+                  <p className="text-[11px] leading-5 text-amber-700 dark:text-amber-400">
+                    Pilih varian sesuai barang fisik agar unit tidak tercatat pada seri atau kualitas yang keliru.
+                  </p>
+                ) : null}
+                {selectedVariant ? (
+                  <div className="rounded-xl border bg-muted/20 p-3">
+                    <p className="text-xs font-semibold">Spesifikasi varian terpilih</p>
+                    {inventoryVariantAttributeEntries(selectedVariant.atribut_pembeda).length > 0 ? (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {inventoryVariantAttributeEntries(selectedVariant.atribut_pembeda).map((attribute) => (
+                          <Badge key={attribute.label} variant="outline" className="rounded-full">
+                            {attribute.label}: {attribute.value}
+                          </Badge>
+                        ))}
+                      </div>
+                    ) : null}
+                    {typeof selectedVariant.atribut_pembeda?.catatan === "string" && selectedVariant.atribut_pembeda.catatan.trim() ? (
+                      <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                        Catatan varian: {selectedVariant.atribut_pembeda.catatan}
+                      </p>
+                    ) : null}
+                    {selectedVariant.deskripsi?.trim() ? (
+                      <p className="mt-1 text-xs leading-5 text-muted-foreground">{selectedVariant.deskripsi}</p>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
 
               <div className={formStep === 1 ? "space-y-3 sm:col-span-2" : "hidden"}>
@@ -673,6 +763,24 @@ export function InventoryCreate() {
                 <div className="rounded-2xl border bg-muted/20 p-4">
                   <p className="text-xs text-muted-foreground">Varian</p>
                   <p className="mt-1 font-semibold">{selectedVariant?.nama ?? "Tanpa varian"}</p>
+                  {selectedVariant ? (
+                    <>
+                      {inventoryVariantAttributeEntries(selectedVariant.atribut_pembeda).length > 0 ? (
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {inventoryVariantAttributeEntries(selectedVariant.atribut_pembeda).map((attribute) => (
+                            <Badge key={attribute.label} variant="outline" className="rounded-full">
+                              {attribute.label}: {attribute.value}
+                            </Badge>
+                          ))}
+                        </div>
+                      ) : null}
+                      {typeof selectedVariant.atribut_pembeda?.catatan === "string" && selectedVariant.atribut_pembeda.catatan.trim() ? (
+                        <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                          Catatan varian: {selectedVariant.atribut_pembeda.catatan}
+                        </p>
+                      ) : null}
+                    </>
+                  ) : null}
                 </div>
                 <div className="rounded-2xl border bg-primary/[0.03] p-4">
                   <p className="text-xs text-muted-foreground">Jumlah unit</p>

@@ -552,6 +552,39 @@ export async function getRental(usahaId: string, id: string): Promise<RentalDeta
   };
 }
 
+export function getBlockedAssignableUnitIds(
+  assignmentRows: Array<{ unit_barang_id: string; detail_penyewaan_id: string }>,
+  rentalDetailIds: string[],
+  competingDetails: Array<{ detail_penyewaan_id: string; penyewaan_id: string }>,
+  competingRentals: Array<{ penyewaan_id: string; status: string; jadwal_mulai: string; jadwal_kembali: string }>,
+  currentRental: { jadwal_mulai: string; jadwal_kembali: string },
+): Set<string> {
+  const competingRentalById = new Map(competingRentals.map((row) => [row.penyewaan_id, row]));
+  const competingRentalByDetailId = new Map(competingDetails.map((row) => [row.detail_penyewaan_id, row.penyewaan_id]));
+  const blockedUnitIds = new Set<string>();
+
+  for (const assignment of assignmentRows) {
+    if (rentalDetailIds.includes(assignment.detail_penyewaan_id)) {
+      blockedUnitIds.add(assignment.unit_barang_id);
+      continue;
+    }
+
+    const competingRentalId = competingRentalByDetailId.get(assignment.detail_penyewaan_id);
+    const competingRental = competingRentalId ? competingRentalById.get(competingRentalId) : null;
+    if (!competingRental) continue;
+
+    const physicallyOccupied = competingRental.status === "active" || competingRental.status === "return_in_progress";
+    const overlappingPreparation =
+      (competingRental.status === "draft" || competingRental.status === "ready_for_pickup")
+      && competingRental.jadwal_mulai < currentRental.jadwal_kembali
+      && competingRental.jadwal_kembali > currentRental.jadwal_mulai;
+
+    if (physicallyOccupied || overlappingPreparation) blockedUnitIds.add(assignment.unit_barang_id);
+  }
+
+  return blockedUnitIds;
+}
+
 export async function listAssignableUnits(
   usahaId: string,
   detailPenyewaanId: string,
@@ -662,27 +695,26 @@ export async function listAssignableUnits(
     : { data: [], error: null };
   if (competingRentals.error) throw competingRentals.error;
 
-  const overlappingRentalIds = new Set(
-    (competingRentals.data ?? [])
-      .filter((row) => {
-        const status = row.status as string;
-        const operational = !["completed", "cancelled"].includes(status);
-        return operational
-          && (row.jadwal_mulai as string) < (currentRental.jadwal_kembali as string)
-          && (row.jadwal_kembali as string) > (currentRental.jadwal_mulai as string);
-      })
-      .map((row) => row.penyewaan_id as string),
-  );
-
-  const blockedUnitIds = new Set(
-    (assignmentRows ?? [])
-      .filter((row) => {
-        const competingDetail = competingDetails.data?.find(
-          (detailRow) => detailRow.detail_penyewaan_id === row.detail_penyewaan_id,
-        );
-        return competingDetail ? overlappingRentalIds.has(competingDetail.penyewaan_id as string) : false;
-      })
-      .map((row) => row.unit_barang_id as string),
+  const blockedUnitIds = getBlockedAssignableUnitIds(
+    (assignmentRows ?? []).map((row) => ({
+      unit_barang_id: row.unit_barang_id as string,
+      detail_penyewaan_id: row.detail_penyewaan_id as string,
+    })),
+    rentalDetailIds,
+    (competingDetails.data ?? []).map((row) => ({
+      detail_penyewaan_id: row.detail_penyewaan_id as string,
+      penyewaan_id: row.penyewaan_id as string,
+    })),
+    (competingRentals.data ?? []).map((row) => ({
+      penyewaan_id: row.penyewaan_id as string,
+      status: row.status as string,
+      jadwal_mulai: row.jadwal_mulai as string,
+      jadwal_kembali: row.jadwal_kembali as string,
+    })),
+    {
+      jadwal_mulai: currentRental.jadwal_mulai as string,
+      jadwal_kembali: currentRental.jadwal_kembali as string,
+    },
   );
 
   return (data ?? [])
@@ -705,6 +737,7 @@ export function getRentalCapabilities(): RentalCapabilities {
     mutation: true,
     commands: [
       "create_direct_rental",
+      "create_and_activate_direct_rental",
       "create_rental_from_reservation",
       "assign_rental_unit",
       "complete_rental_handover",
@@ -919,26 +952,24 @@ export async function reconcileRentalHandover(
 }
 
 
-export async function createDirectRental(
+function buildDirectRentalCommandParams(
   usahaId: string,
   input: CreateDirectRentalInput,
-  options: RentalCommandOptions = {},
-): Promise<RentalCommandResult> {
-  const lines = input.lines.map((line) => {
-    const subtotal = Math.round(line.subtotal * 100) / 100;
-    return {
-      barang_id: line.varian_barang_id ? null : (line.barang_id ?? null),
-      varian_barang_id: line.varian_barang_id ?? null,
-      paket_sewa_id: line.paket_sewa_id ?? null,
-      jumlah: line.jumlah,
-      unit_price: line.unit_price,
-      currency_code: line.currency_code ?? "IDR",
-      subtotal,
-      tarif_sewa_id: line.tarif_sewa_id,
-      duration_periods: line.duration_periods,
-      catatan: line.catatan?.trim() || null,
-    };
-  });
+  options: RentalCommandOptions,
+) {
+  const lines = input.lines.map((line) => ({
+    barang_id: line.varian_barang_id ? null : (line.barang_id ?? null),
+    varian_barang_id: line.varian_barang_id ?? null,
+    paket_sewa_id: line.paket_sewa_id ?? null,
+    jumlah: line.jumlah,
+    unit_price: line.unit_price,
+    currency_code: line.currency_code ?? "IDR",
+    subtotal: Math.round(line.subtotal * 100) / 100,
+    tarif_sewa_id: line.tarif_sewa_id,
+    duration_periods: line.duration_periods,
+    catatan: line.catatan?.trim() || null,
+  }));
+
   if (!input.penyewa_id) throw new Error("Penyewa wajib dipilih.");
   if (!lines.length) throw new Error("Minimal satu detail rental wajib dipilih.");
   const start = new Date(input.jadwal_mulai);
@@ -946,7 +977,8 @@ export async function createDirectRental(
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) {
     throw new Error("Jadwal rental tidak valid.");
   }
-  const { data, error } = await supabase.rpc("command_create_direct_rental", {
+
+  return {
     p_usaha_id: usahaId,
     p_penyewa_id: input.penyewa_id,
     p_jadwal_mulai: input.jadwal_mulai,
@@ -955,8 +987,43 @@ export async function createDirectRental(
     p_catatan: input.catatan?.trim() || null,
     p_idempotency_key: options.idempotencyKey ?? `create-direct-rental-${createClientId()}`,
     p_request_id: options.requestId ?? createClientId(),
-  });
+  };
+}
+
+export async function createDirectRental(
+  usahaId: string,
+  input: CreateDirectRentalInput,
+  options: RentalCommandOptions = {},
+): Promise<RentalCommandResult> {
+  const { data, error } = await supabase.rpc(
+    "command_create_direct_rental",
+    buildDirectRentalCommandParams(usahaId, input, options),
+  );
   return assertRentalRpcResult(data as RentalCommandResult | null, error, "Pembuatan rental langsung");
+}
+
+/** Creates the rental, assigns eligible units, and records handover in one database transaction. */
+export async function createDirectRentalAndActivate(
+  usahaId: string,
+  input: CreateDirectRentalInput,
+  options: RentalCommandOptions = {},
+): Promise<RentalCommandResult> {
+  const { data, error } = await supabase.rpc(
+    "command_create_and_activate_direct_rental",
+    buildDirectRentalCommandParams(usahaId, input, options),
+  );
+  return assertRentalRpcResult(data as RentalCommandResult | null, error, "Pembuatan dan aktivasi rental langsung");
+}
+
+export async function reconcileDirectRentalActivation(
+  usahaId: string,
+  idempotencyKey: string,
+): Promise<RentalReconciliationResult> {
+  const { data, error } = await supabase.rpc("command_reconcile_direct_rental_activation", {
+    p_usaha_id: usahaId,
+    p_idempotency_key: idempotencyKey,
+  });
+  return assertRentalRpcResult(data as RentalReconciliationResult | null, error, "Rekonsiliasi aktivasi rental langsung");
 }
 
 export async function listRentalsByRenter(
@@ -1039,21 +1106,37 @@ export type DirectRentalAvailabilityPreview = {
 
 export async function previewDirectRentalAvailability(
   usahaId: string,
-  input: { barangId: string; varianBarangId?: string | null; requestedUnits: number },
+  input: {
+    barangId: string;
+    varianBarangId?: string | null;
+    requestedUnits: number;
+    startAt: string;
+    endAt: string;
+  },
 ): Promise<DirectRentalAvailabilityPreview> {
-  let query = supabase
-    .from("unit_barang")
-    .select("unit_barang_id", { count: "exact", head: true })
-    .eq("usaha_id", usahaId)
-    .eq("status", "ready")
-    .eq("barang_id", input.barangId);
+  if (!input.barangId.trim()) throw new Error("Barang untuk pemeriksaan stok wajib ditentukan.");
+  if (!input.startAt || !input.endAt || new Date(input.endAt) <= new Date(input.startAt)) {
+    throw new Error("Periode rental harus valid untuk memeriksa benturan unit.");
+  }
 
-  if (input.varianBarangId) query = query.eq("varian_barang_id", input.varianBarangId);
-
-  const { count, error } = await query;
+  const { data, error } = await supabase.rpc("find_inventory_unit_candidates", {
+    p_usaha_id: usahaId,
+    p_barang_id: input.barangId,
+    p_varian_barang_id: input.varianBarangId ?? null,
+    p_start_at: input.startAt,
+    p_end_at: input.endAt,
+    p_preferred_unit_id: null,
+    p_exclude_penyewaan_id: null,
+    p_limit: 100,
+  });
   if (error) throw error;
 
-  const readyPhysicalUnits = count ?? 0;
+  const readyPhysicalUnits = ((data ?? []) as Array<{
+    status?: string;
+    eligibility?: boolean;
+    conflict?: boolean;
+  }>).filter((unit) => unit.status === "ready" && unit.eligibility === true && unit.conflict !== true).length;
+
   return {
     readyPhysicalUnits,
     requestedUnits: input.requestedUnits,

@@ -1,7 +1,8 @@
 import { createClientId } from "@/lib/client-id";
 import { supabase } from "@/app/providers/supabase/client";
-import type { CatalogCategory, CatalogListFilters, CatalogPackageMedia, CatalogPackageReference, CatalogProduct, CatalogProductDetail, CatalogSummary, CatalogStockSummary, CatalogTariff, CatalogVariant, CatalogVariantOption } from "./types";
+import type { CatalogCategory, CatalogListFilters, CatalogPackageMedia, CatalogPackagePromo, CatalogPackageReference, CatalogProduct, CatalogProductDetail, CatalogSummary, CatalogStockSummary, CatalogTariff, CatalogVariant, CatalogVariantOption } from "./types";
 import { CATALOG_PRODUCT_MEDIA_BUCKET } from "./types";
+import { resolvePackagePrice } from "./pricing";
 import { isActiveCatalogTariff } from "./utils";
 
 type MembershipRow = { usaha_id: string; status: string };
@@ -776,6 +777,39 @@ export async function updateCatalogPackage(
   );
 }
 
+export type SetCatalogPackagePromoInput = {
+  paketSewaId: string;
+  tarifSewaId: string;
+  enabled: boolean;
+  hargaPromo?: number | null;
+  expectedUpdatedAt?: string | null;
+};
+
+export async function setCatalogPackagePromo(
+  usahaId: string,
+  input: SetCatalogPackagePromoInput,
+  options: CatalogCommandOptions = {},
+) {
+  const idempotencyKey = commandKey("set-paket-promo", options);
+  return executeCatalogCommand(
+    usahaId,
+    "set_paket_promo",
+    "command_set_paket_promo",
+    {
+      p_usaha_id: usahaId,
+      p_paket_sewa_id: input.paketSewaId,
+      p_tarif_sewa_id: input.tarifSewaId,
+      p_enabled: input.enabled,
+      p_harga_promo: input.enabled ? input.hargaPromo ?? null : null,
+      p_expected_updated_at: input.expectedUpdatedAt ?? null,
+      p_idempotency_key: idempotencyKey,
+      p_request_id: options.requestId ?? createClientId(),
+    },
+    input.enabled ? "Pengaktifan promo paket" : "Penonaktifan promo paket",
+    idempotencyKey,
+  );
+}
+
 export async function setCatalogPackageState(
   usahaId: string,
   paketSewaId: string,
@@ -1151,7 +1185,7 @@ export async function listCatalogPackages(usahaId: string): Promise<import("./ty
 
   const now = new Date();
   const nowIso = now.toISOString();
-  const [tariffResult, mediaResult] = await Promise.all([
+  const [tariffResult, mediaResult, promoResult] = await Promise.all([
     supabase
       .from("tarif_sewa")
       .select("tarif_sewa_id,usaha_id,barang_id,varian_barang_id,paket_sewa_id,nama,durasi_unit,durasi_nilai,nominal,currency_code,berlaku_mulai,berlaku_sampai,status,updated_at")
@@ -1169,14 +1203,28 @@ export async function listCatalogPackages(usahaId: string): Promise<import("./ty
       .eq("status", "valid")
       .eq("is_cover", true)
       .order("urutan", { ascending: true }),
+    supabase
+      .from("promosi_paket_sewa")
+      .select("promosi_paket_id,usaha_id,paket_sewa_id,tarif_sewa_id,harga_normal,harga_promo,status,started_at,ended_at,updated_at")
+      .eq("usaha_id", usahaId)
+      .in("paket_sewa_id", packageIds)
+      .eq("status", "active")
+      .lte("started_at", nowIso)
+      .is("ended_at", null),
   ]);
   if (tariffResult.error) throw tariffResult.error;
   if (mediaResult.error) throw mediaResult.error;
+  if (promoResult.error) throw promoResult.error;
 
   const activeTariffByPackage = new Map<string, CatalogTariff>();
   for (const tariff of (tariffResult.data ?? []) as CatalogTariff[]) {
     if (!tariff.paket_sewa_id || activeTariffByPackage.has(tariff.paket_sewa_id)) continue;
     if (isActiveCatalogTariff(tariff, now)) activeTariffByPackage.set(tariff.paket_sewa_id, tariff);
+  }
+
+  const promoByTariff = new Map<string, CatalogPackagePromo>();
+  for (const promo of (promoResult.data ?? []) as CatalogPackagePromo[]) {
+    if (!promoByTariff.has(promo.tarif_sewa_id)) promoByTariff.set(promo.tarif_sewa_id, promo);
   }
 
   const coverByPackage = new Map<string, CatalogPackageMedia>();
@@ -1186,9 +1234,13 @@ export async function listCatalogPackages(usahaId: string): Promise<import("./ty
 
   return packages.map((pkg) => {
     const cover = coverByPackage.get(pkg.paket_sewa_id);
+    const activeTariff = activeTariffByPackage.get(pkg.paket_sewa_id) ?? null;
+    const activePromo = activeTariff ? promoByTariff.get(activeTariff.tarif_sewa_id) ?? null : null;
+    const resolvedPrice = resolvePackagePrice(activeTariff, activePromo);
     return {
       ...pkg,
-      active_tariff: activeTariffByPackage.get(pkg.paket_sewa_id) ?? null,
+      active_tariff: activeTariff,
+      active_promo: resolvedPrice.promo,
       cover_url: cover ? getCatalogMediaUrl(cover.storage_bucket, cover.storage_path) : null,
     };
   });
@@ -1214,7 +1266,7 @@ export async function getCatalogPackageDetails(
   tariffs: import("./types").CatalogTariff[];
   media: CatalogPackageMedia[];
 }> {
-  const [packageResult, componentsResult, tariffsResult, mediaResult] = await Promise.all([
+  const [packageResult, componentsResult, tariffsResult, mediaResult, promoResult] = await Promise.all([
     supabase
       .from("paket_sewa")
       .select("paket_sewa_id,usaha_id,nama,slug,deskripsi,harga_dasar,currency_code,status,is_public,metadata,updated_at")
@@ -1240,16 +1292,39 @@ export async function getCatalogPackageDetails(
       .eq("paket_sewa_id", paketSewaId)
       .eq("status", "valid")
       .order("urutan", { ascending: true }),
+    supabase
+      .from("promosi_paket_sewa")
+      .select("promosi_paket_id,usaha_id,paket_sewa_id,tarif_sewa_id,harga_normal,harga_promo,status,started_at,ended_at,updated_at")
+      .eq("usaha_id", usahaId)
+      .eq("paket_sewa_id", paketSewaId)
+      .eq("status", "active")
+      .lte("started_at", new Date().toISOString())
+      .is("ended_at", null),
   ]);
   if (packageResult.error) throw packageResult.error;
   if (!packageResult.data) throw new Error("Paket sewa tidak ditemukan dalam Usaha aktif.");
   if (componentsResult.error) throw componentsResult.error;
   if (tariffsResult.error) throw tariffsResult.error;
   if (mediaResult.error) throw mediaResult.error;
+  if (promoResult.error) throw promoResult.error;
+
+  const tariffs = (tariffsResult.data ?? []) as CatalogTariff[];
+  const activeTariff = tariffs.find((tariff) => isActiveCatalogTariff(tariff)) ?? null;
+  const promoRows = (promoResult.data ?? []) as CatalogPackagePromo[];
+  const activePromo = activeTariff
+    ? promoRows.find((promo) => promo.tarif_sewa_id === activeTariff.tarif_sewa_id) ?? null
+    : null;
+  const activePackagePromo = resolvePackagePrice(activeTariff, activePromo).promo;
+  const packageRow = {
+    ...(packageResult.data as import("./types").CatalogPackage),
+    active_tariff: activeTariff,
+    active_promo: activePackagePromo,
+  };
+
   return {
-    package: packageResult.data as import("./types").CatalogPackage,
+    package: packageRow,
     components: (componentsResult.data ?? []) as unknown as import("./types").CatalogPackageComponentDetail[],
-    tariffs: (tariffsResult.data ?? []) as import("./types").CatalogTariff[],
+    tariffs,
     media: (mediaResult.data ?? []) as CatalogPackageMedia[],
   };
 }

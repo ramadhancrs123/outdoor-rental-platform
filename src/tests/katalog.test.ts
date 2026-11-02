@@ -8,6 +8,7 @@ import {
   formatTariffDuration,
   formatTariffPeriods,
   isActiveCatalogTariff,
+  resolvePackagePrice,
 } from "@/features/katalog";
 import type { CatalogTariff } from "@/features/katalog";
 
@@ -73,6 +74,76 @@ describe("active tariff effective period", () => {
 
   it("keeps an active tariff with no end date valid after its start", () => {
     expect(isActiveCatalogTariff({ ...base, berlaku_sampai: null }, now)).toBe(true);
+  });
+});
+
+describe("package promotional price resolution", () => {
+  const tariff = {
+    tarif_sewa_id: "package-tariff-1",
+    usaha_id: "usaha-1",
+    barang_id: null,
+    varian_barang_id: null,
+    paket_sewa_id: "package-1",
+    nama: "Harian",
+    durasi_unit: "hari",
+    durasi_nilai: 1,
+    nominal: 80000,
+    currency_code: "IDR",
+    berlaku_mulai: "2026-09-01T00:00:00Z",
+    berlaku_sampai: null,
+    status: "active",
+    updated_at: "2026-09-26T12:00:00Z",
+  } satisfies CatalogTariff;
+
+  const promo = {
+    promosi_paket_id: "promo-1",
+    usaha_id: "usaha-1",
+    paket_sewa_id: "package-1",
+    tarif_sewa_id: "package-tariff-1",
+    harga_normal: 80000,
+    harga_promo: 65000,
+    status: "active",
+    started_at: "2026-09-26T10:00:00Z",
+    ended_at: null,
+    updated_at: "2026-09-26T11:00:00Z",
+  };
+
+  it("uses the promo as the effective price while preserving the regular tariff", () => {
+    expect(resolvePackagePrice(tariff, promo)).toEqual({
+      normalPrice: 80000,
+      effectivePrice: 65000,
+      isPromo: true,
+      promo,
+    });
+  });
+
+  it("keeps the regular tariff when no active promo exists", () => {
+    expect(resolvePackagePrice(tariff, null)).toEqual({
+      normalPrice: 80000,
+      effectivePrice: 80000,
+      isPromo: false,
+      promo: null,
+    });
+  });
+
+  it("ignores a promo belonging to another tariff", () => {
+    expect(resolvePackagePrice(tariff, { ...promo, tarif_sewa_id: "other-tariff" })).toMatchObject({
+      normalPrice: 80000,
+      effectivePrice: 80000,
+      isPromo: false,
+      promo: null,
+    });
+  });
+
+  it("ignores an ended promo or a promo that is not lower than normal price", () => {
+    expect(resolvePackagePrice(tariff, { ...promo, status: "ended", ended_at: "2026-09-27T00:00:00Z" })).toMatchObject({
+      effectivePrice: 80000,
+      isPromo: false,
+    });
+    expect(resolvePackagePrice(tariff, { ...promo, harga_promo: 80000 })).toMatchObject({
+      effectivePrice: 80000,
+      isPromo: false,
+    });
   });
 });
 

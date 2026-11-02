@@ -32,10 +32,12 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   createDirectRental,
+  createDirectRentalAndActivate,
   createRentalFromReservation,
   getOperationalRentalWorkspace,
   getRental,
   getPenyewaanContext,
+  reconcileDirectRentalActivation,
   reconcileDirectRentalCreation,
   reconcileRentalCreation,
   type DirectRentalLineInput,
@@ -58,6 +60,7 @@ import {
   type CatalogProduct,
   calculateRentalLineSubtotal,
   calculateTariffPeriods,
+  resolvePackagePrice,
 } from "@/features/katalog";
 import { isActiveCatalogTariff, formatCatalogMoney } from "@/features/katalog/utils";
 import { listInventoryPackageAvailability, listInventoryReadyUnitCovers, type InventoryPackageAvailability } from "@/features/inventaris";
@@ -246,9 +249,15 @@ export function RentalWalkIn() {
   });
 
   const packageAvailability = useQuery<InventoryPackageAvailability[]>({
-    queryKey: ["penyewaan", "walk-in", "package-availability", context.data?.usahaId],
-    queryFn: () => listInventoryPackageAvailability(context.data!.usahaId),
-    enabled: Boolean(context.data?.usahaId && !rentalId && !isReservationFlow),
+    queryKey: ["penyewaan", "walk-in", "package-availability", context.data?.usahaId, startAt, endAt],
+    queryFn: () => listInventoryPackageAvailability(context.data!.usahaId, {
+      startAt: localDateTimeToUtcIso(startAt, context.data!.timezone),
+      endAt: localDateTimeToUtcIso(endAt, context.data!.timezone),
+    }),
+    enabled: Boolean(
+      context.data?.usahaId && !rentalId && !isReservationFlow && startAt && endAt
+      && new Date(endAt).getTime() > new Date(startAt).getTime(),
+    ),
     staleTime: 10_000,
   });
 
@@ -460,11 +469,6 @@ export function RentalWalkIn() {
     )?.varian_barang_id ?? "";
   const effectiveVariantId = selectedVariantId || pricedVariantId;
 
-  const selectedReadyStock =
-    effectiveVariantId
-      ? readyStock.data?.byVariant[effectiveVariantId] ?? 0
-      : readyStock.data?.byProduct[itemDialogId] ?? 0;
-
   const periodPreview =
     startAt && endAt && context.data
       ? (() => {
@@ -503,6 +507,8 @@ export function RentalWalkIn() {
       itemDialogId,
       effectiveVariantId,
       selectedQuantityNumber,
+      startAt,
+      endAt,
     ],
     queryFn: async () => {
       const { previewDirectRentalAvailability } = await import("@/features/penyewaan");
@@ -510,16 +516,21 @@ export function RentalWalkIn() {
         barangId: itemDialogId,
         varianBarangId: effectiveVariantId || null,
         requestedUnits: selectedQuantityNumber,
+        startAt: localDateTimeToUtcIso(startAt, context.data!.timezone),
+        endAt: localDateTimeToUtcIso(endAt, context.data!.timezone),
       });
     },
     enabled:
-      Boolean(context.data?.usahaId && itemDialogId) &&
-      Number.isInteger(selectedQuantityNumber) &&
-      selectedQuantityNumber > 0 &&
-      !rentalId &&
-      !isReservationFlow,
+      Boolean(context.data?.usahaId && itemDialogId && startAt && endAt)
+      && new Date(endAt).getTime() > new Date(startAt).getTime()
+      && Number.isInteger(selectedQuantityNumber)
+      && selectedQuantityNumber > 0
+      && !rentalId
+      && !isReservationFlow,
     staleTime: 10_000,
   });
+
+  const selectedReadyStock = availabilityPreview.data?.readyPhysicalUnits ?? 0;
 
   const selectedPackageAvailability = useMemo(
     () =>
@@ -535,6 +546,11 @@ export function RentalWalkIn() {
     return active.find((tariff) => tariff.paket_sewa_id === selectedPackage.paket_sewa_id) ?? active[0] ?? null;
   }, [packageDetail.data, rentalTariffAt, selectedPackage]);
 
+  const packagePrice = useMemo(
+    () => resolvePackagePrice(packageTariff, packageDetail.data?.package.active_promo),
+    [packageTariff, packageDetail.data?.package.active_promo],
+  );
+
   const packageBillingPeriods =
     packageTariff && canMoveFromPeriod
       ? calculateTariffPeriods(startAt, endAt, packageTariff)
@@ -545,6 +561,8 @@ export function RentalWalkIn() {
     Number.isInteger(selectedQuantityNumber) &&
     selectedQuantityNumber > 0 &&
     billingPeriods > 0 &&
+    availabilityPreview.isSuccess &&
+    availabilityPreview.data.physicalCheck === "pass" &&
     selectedQuantityNumber <= selectedReadyStock;
 
   const canAddPackage =
@@ -715,25 +733,31 @@ export function RentalWalkIn() {
       }
       if (!draftLines.length) throw new Error("Tambahkan minimal satu barang atau paket.");
       setRentalCommandState("processing");
-      return createDirectRental(
-        context.data.usahaId,
-        {
-          penyewa_id: selectedRenterId,
-          jadwal_mulai: localDateTimeToUtcIso(startAt, context.data.timezone),
-          jadwal_kembali: localDateTimeToUtcIso(endAt, context.data.timezone),
-          catatan: null,
-          lines: draftLines.map((line) => line.input),
-        },
-        { idempotencyKey: rentalCommandKey, requestId: createClientId() },
-      );
+      const directInput = {
+        penyewa_id: selectedRenterId,
+        jadwal_mulai: localDateTimeToUtcIso(startAt, context.data.timezone),
+        jadwal_kembali: localDateTimeToUtcIso(endAt, context.data.timezone),
+        catatan: null,
+        lines: draftLines.map((line) => line.input),
+      };
+      const commandOptions = { idempotencyKey: rentalCommandKey, requestId: createClientId() };
+      return directAfterCreateRef.current
+        ? createDirectRentalAndActivate(context.data.usahaId, directInput, commandOptions)
+        : createDirectRental(context.data.usahaId, directInput, commandOptions);
     },
     onSuccess: async (result) => {
       const id = result.penyewaan_id;
       if (!id) throw new Error("Rental berhasil dibuat tetapi ID penyewaan tidak dikembalikan.");
+      const directActivationCommitted = directAfterCreateRef.current && !isReservationFlow;
       setRentalId(id);
       await queryClient.invalidateQueries({ queryKey: ["penyewaan"] });
 
-      if (directAfterCreateRef.current) {
+      if (directActivationCommitted) {
+        directAfterCreateRef.current = false;
+        setRentalCommandState("idle");
+        setOperationalFeedback("Penyewaan langsung aktif. Penetapan unit dan serah-terima tersimpan dalam satu transaksi.");
+        await queryClient.invalidateQueries({ queryKey: ["penyewaan", "operational-workspace", context.data?.usahaId, id] });
+      } else if (directAfterCreateRef.current) {
         directAfterCreateRef.current = false;
         await activateImmediatelyAfterCreate(id);
       } else {
@@ -747,15 +771,23 @@ export function RentalWalkIn() {
         return;
       }
       if (isUnknownOutcome(error)) {
+        const directActivationRequested = directAfterCreateRef.current && !isReservationFlow;
         try {
-          const reconciliation = isReservationFlow
-            ? await reconcileRentalCreation(context.data.usahaId, rentalCommandIdempotencyKey)
-            : await reconcileDirectRentalCreation(context.data.usahaId, rentalCommandKey);
+          const reconciliation = directActivationRequested
+            ? await reconcileDirectRentalActivation(context.data.usahaId, rentalCommandKey)
+            : isReservationFlow
+              ? await reconcileRentalCreation(context.data.usahaId, rentalCommandIdempotencyKey)
+              : await reconcileDirectRentalCreation(context.data.usahaId, rentalCommandKey);
           if (reconciliation.state === "committed" && reconciliation.response?.penyewaan_id) {
             const id = reconciliation.response.penyewaan_id;
             setRentalId(id);
-            if (directAfterCreateRef.current) {
-              directAfterCreateRef.current = false;
+            directAfterCreateRef.current = false;
+            if (directActivationRequested) {
+              setRentalCommandState("idle");
+              setOperationalFeedback("Penyewaan langsung sudah aktif. Status server berhasil diverifikasi tanpa mengulang serah-terima.");
+              await queryClient.invalidateQueries({ queryKey: ["penyewaan"] });
+              await queryClient.invalidateQueries({ queryKey: ["penyewaan", "operational-workspace", context.data.usahaId, id] });
+            } else if (isReservationFlow) {
               await activateImmediatelyAfterCreate(id);
             } else {
               setRentalCommandState("idle");
@@ -763,12 +795,14 @@ export function RentalWalkIn() {
             return;
           }
           if (reconciliation.state === "not_found") {
+            directAfterCreateRef.current = false;
             setRentalCommandKey(createClientId());
-            setRentalCommandState("unknown");
+            setRentalCommandState("error");
+            setOperationalFeedback("Server memastikan transaksi sewa langsung tidak tersimpan. Periksa ketersediaan unit sebelum mencoba kembali.");
             return;
           }
         } catch {
-          // Keep explicit unknown state.
+          // Keep explicit unknown state when the server cannot confirm the outcome.
         }
         directAfterCreateRef.current = false;
         setRentalCommandState("unknown");
@@ -776,6 +810,9 @@ export function RentalWalkIn() {
       }
       directAfterCreateRef.current = false;
       setRentalCommandState(isBusinessConflict(error) ? "conflict" : "error");
+      if (isBusinessConflict(error)) {
+        setOperationalFeedback(commandMessage(error, "Stok fisik tidak mencukupi atau unit sedang digunakan penyewaan lain."));
+      }
     },
   });
 
@@ -1007,8 +1044,12 @@ export function RentalWalkIn() {
       tarif_sewa_id: packageTariff.tarif_sewa_id,
       duration_periods: packageBillingPeriods,
       jumlah: quantity,
-      unit_price: Number(packageTariff.nominal),
-      subtotal: calculateRentalLineSubtotal(quantity, Number(packageTariff.nominal), packageBillingPeriods),
+      unit_price: Number(packagePrice.effectivePrice ?? packageTariff.nominal),
+      subtotal: calculateRentalLineSubtotal(
+        quantity,
+        Number(packagePrice.effectivePrice ?? packageTariff.nominal),
+        packageBillingPeriods,
+      ),
       currency_code: "IDR",
       catatan: selectedPackageNote.trim() || null,
     };
@@ -1999,6 +2040,22 @@ export function RentalWalkIn() {
                       .map((pkg) => {
                         const availability = packageAvailability.data?.find((item) => item.paket_sewa_id === pkg.paket_sewa_id);
                         const isSelected = catalogDialog.open && catalogDialog.mode === "package" && catalogDialog.id === pkg.paket_sewa_id;
+                        const availabilityLabel = !canMoveFromPeriod
+                          ? "Atur periode rental"
+                          : packageAvailability.isPending
+                            ? "Memeriksa stok…"
+                            : packageAvailability.isError
+                              ? "Stok belum dapat diverifikasi"
+                              : availability?.status === "available"
+                                ? "Ready " + (availability.available_package_quantity ?? 0)
+                                : availability
+                                  ? packageAvailabilityHint(availability) ?? "Belum siap"
+                                  : "Data stok tidak tersedia";
+                        const availabilityTone = availability?.status === "available"
+                          ? "text-emerald-600"
+                          : !canMoveFromPeriod || packageAvailability.isPending
+                            ? "text-muted-foreground"
+                            : "text-amber-700";
                         return (
                           <button
                             key={pkg.paket_sewa_id}
@@ -2015,18 +2072,36 @@ export function RentalWalkIn() {
                             <div className="space-y-1.5 p-2.5">
                               <p className="truncate text-[11px] font-bold">{pkg.nama}</p>
                               <p className="truncate text-[9px] text-muted-foreground">Paket rental</p>
-                              <div className="flex items-center justify-between gap-2">
+                              <div className="mt-1 flex min-w-0 flex-col items-start gap-1">
                                 <span className={cn(
-                                  "text-[9px] font-semibold",
-                                  availability?.status === "available" ? "text-emerald-600" : "text-amber-700",
+                                  "max-w-full break-words text-[9px] font-semibold leading-tight",
+                                  availabilityTone,
                                 )}>
-                                  {availability?.status === "available"
-                                    ? "Ready " + (availability.available_package_quantity ?? 0)
-                                    : packageAvailabilityHint(availability) ?? "Belum siap"}
+                                  {availabilityLabel}
                                 </span>
-                                <span className="text-[9px] font-semibold text-primary">
-                                  {pkg.active_tariff ? formatCatalogMoney(pkg.active_tariff.nominal, pkg.active_tariff.currency_code) : "Tarif —"}
-                                </span>
+                                {(() => {
+                                  const price = resolvePackagePrice(pkg.active_tariff ?? null, pkg.active_promo);
+                                  return (
+                                    <div className="flex min-w-0 max-w-full flex-col items-start gap-0.5">
+                                      {price.isPromo ? (
+                                        <div className="flex flex-wrap items-center gap-1">
+                                          <Badge variant="secondary" className="h-4 rounded-full px-1.5 py-0 text-[8px] leading-none">Promo</Badge>
+                                          <span className="break-words text-[8px] font-medium leading-tight text-muted-foreground line-through">
+                                            {formatCatalogMoney(price.normalPrice, pkg.active_tariff?.currency_code)}
+                                          </span>
+                                        </div>
+                                      ) : null}
+                                      <span className={cn(
+                                        "max-w-full break-words text-[10px] font-bold leading-tight",
+                                        price.isPromo ? "text-emerald-700 dark:text-emerald-300" : "text-primary",
+                                      )}>
+                                        {pkg.active_tariff
+                                          ? formatCatalogMoney(price.effectivePrice, pkg.active_tariff.currency_code)
+                                          : "Tarif belum ditentukan"}
+                                      </span>
+                                    </div>
+                                  );
+                                })()}
                               </div>
                             </div>
                           </button>
@@ -2098,7 +2173,19 @@ export function RentalWalkIn() {
                         <div className="flex items-center justify-between gap-2">
                           <div className="min-w-0">
                             <p className="truncate text-[12px] font-bold">{selectedPackage?.nama ?? "Paket"}</p>
-                            <p className="mt-0.5 text-[9px] text-muted-foreground">{selectedPackageAvailability?.available_package_quantity ?? 0} paket siap</p>
+                            <p className="mt-0.5 text-[9px] text-muted-foreground">
+                              {!canMoveFromPeriod
+                                ? "Atur periode rental untuk cek stok"
+                                : packageAvailability.isPending
+                                  ? "Memeriksa ketersediaan paket…"
+                                  : packageAvailability.isError
+                                    ? "Stok belum dapat diverifikasi"
+                                    : selectedPackageAvailability?.status === "available"
+                                      ? (selectedPackageAvailability.available_package_quantity ?? 0) + " paket siap"
+                                      : selectedPackageAvailability
+                                        ? packageAvailabilityHint(selectedPackageAvailability) ?? "Belum siap"
+                                        : "Data stok tidak tersedia"}
+                            </p>
                           </div>
                           <Button type="button" variant="ghost" size="icon" className="size-8 rounded-lg" onClick={() => closeCatalogDialog()} aria-label="Tutup detail paket">
                             <ChevronDown className="size-4" />
@@ -2171,10 +2258,17 @@ export function RentalWalkIn() {
                     </p>
                   </div>
 
-                  {availabilityPreview.data && availabilityPreview.data.readyPhysicalUnits < selectedQuantityNumber ? (
+                  {availabilityPreview.isPending ? (
+                    <p className="text-[9px] text-muted-foreground">Memeriksa unit siap dan benturan jadwal…</p>
+                  ) : availabilityPreview.error ? (
                     <Alert variant="destructive" className="rounded-xl">
-                      <AlertTitle>Ready stock tidak cukup</AlertTitle>
-                      <AlertDescription>Ready {availabilityPreview.data.readyPhysicalUnits} unit, sementara diminta {selectedQuantityNumber}.</AlertDescription>
+                      <AlertTitle>Ketersediaan belum dapat diverifikasi</AlertTitle>
+                      <AlertDescription>Item tidak bisa ditambahkan sebelum status unit dan jadwal berhasil diperiksa.</AlertDescription>
+                    </Alert>
+                  ) : availabilityPreview.data && availabilityPreview.data.readyPhysicalUnits < selectedQuantityNumber ? (
+                    <Alert variant="destructive" className="rounded-xl">
+                      <AlertTitle>Unit tersedia tidak cukup</AlertTitle>
+                      <AlertDescription>{availabilityPreview.data.readyPhysicalUnits} unit siap dan tidak berbenturan pada jadwal ini, sementara diminta {selectedQuantityNumber}.</AlertDescription>
                     </Alert>
                   ) : null}
 
@@ -2200,7 +2294,19 @@ export function RentalWalkIn() {
                           </p>
                         ) : null}
                       </div>
-                      <Badge variant="secondary" className="rounded-full text-[9px]">{selectedPackageAvailability?.available_package_quantity ?? 0} siap</Badge>
+                      <Badge variant="secondary" className="rounded-full text-[9px]">
+                        {!canMoveFromPeriod
+                          ? "Periode belum diatur"
+                          : packageAvailability.isPending
+                            ? "Memeriksa stok"
+                            : packageAvailability.isError
+                              ? "Gagal cek stok"
+                              : selectedPackageAvailability?.status === "available"
+                                ? (selectedPackageAvailability.available_package_quantity ?? 0) + " siap"
+                                : selectedPackageAvailability
+                                  ? packageAvailabilityHint(selectedPackageAvailability) ?? "Belum siap"
+                                  : "Data stok tidak tersedia"}
+                      </Badge>
                     </div>
                     <div className="mt-2 space-y-1.5">
                       {(packageDetail.data?.components ?? []).map((component) => (
@@ -2224,10 +2330,24 @@ export function RentalWalkIn() {
                   <div className="rounded-xl bg-primary/5 p-3">
                     <p className="text-[9px] font-semibold text-primary">Perhitungan tarif</p>
                     <p className="mt-1 text-[11px] font-bold">
-                      {selectedPackageQuantityNumber} paket × {packageBillingPeriods || 0} periode × {packageTariff ? formatCatalogMoney(packageTariff.nominal, packageTariff.currency_code) : "Rp0"}
+                      {selectedPackageQuantityNumber} paket × {packageBillingPeriods || 0} periode × {packageTariff ? formatCatalogMoney(packagePrice.effectivePrice, packageTariff.currency_code) : "Rp0"}
                     </p>
+                    {packagePrice.isPromo && packagePrice.normalPrice != null && packageTariff ? (
+                      <p className="mt-1 text-[10px] text-muted-foreground line-through">
+                        Harga normal {formatCatalogMoney(packagePrice.normalPrice, packageTariff.currency_code)} / periode
+                      </p>
+                    ) : null}
                     <p className="mt-1 text-[14px] font-black">
-                      {packageTariff && packageBillingPeriods ? formatCatalogMoney(calculateRentalLineSubtotal(selectedPackageQuantityNumber, Number(packageTariff.nominal), packageBillingPeriods), "IDR") : "—"}
+                      {packageTariff && packageBillingPeriods
+                        ? formatCatalogMoney(
+                            calculateRentalLineSubtotal(
+                              selectedPackageQuantityNumber,
+                              Number(packagePrice.effectivePrice ?? packageTariff.nominal),
+                              packageBillingPeriods,
+                            ),
+                            "IDR",
+                          )
+                        : "—"}
                     </p>
                   </div>
 

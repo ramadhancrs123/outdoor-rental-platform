@@ -122,7 +122,10 @@ function QuickHandoverAction({
           message: `Unit ${result.unitCode} berhasil ditetapkan otomatis. Lanjutkan serah-terima saat unit benar-benar diserahkan.`,
         });
         await onChanged();
-        await queryClient.invalidateQueries({ queryKey: ["penyewaan", "list"] });
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["penyewaan", "quick-handover-units", context.usahaId, target.detail_penyewaan_id] }),
+          queryClient.invalidateQueries({ queryKey: ["penyewaan", "list"] }),
+        ]);
         return;
       }
 
@@ -169,6 +172,8 @@ function QuickHandoverAction({
             kind: "success",
             message: "Unit sudah berhasil disiapkan. Tekan Serahkan Barang untuk menyelesaikan serah-terima.",
           });
+          await onChanged();
+          await queryClient.invalidateQueries({ queryKey: ["penyewaan", "quick-handover-units", context.usahaId, target.detail_penyewaan_id] });
           return;
         }
 
@@ -308,6 +313,7 @@ function AssignmentTargetRow({
   rental: RentalDetail;
   onChanged: () => Promise<unknown>;
 }) {
+  const queryClient = useQueryClient();
   const [selectedUnit, setSelectedUnit] = useState("");
   const [note, setNote] = useState("");
   const commandRef = useRef<{ key: string; requestId: string } | null>(null);
@@ -348,6 +354,7 @@ function AssignmentTargetRow({
         message: "Unit berhasil ditetapkan. Server sudah menyimpan fakta assignment dan auditnya.",
       });
       await onChanged();
+      await queryClient.invalidateQueries({ queryKey: ["penyewaan", "assignable-units", context.usahaId] });
     },
     onError: async (error) => {
       const key = commandRef.current?.key;
@@ -362,6 +369,7 @@ function AssignmentTargetRow({
           setSelectedUnit("");
           setFeedback({ kind: "success", message: "Request sempat tidak mendapat respons, tetapi server sudah melakukan assignment. Tidak ada retry otomatis." });
           await onChanged();
+          await queryClient.invalidateQueries({ queryKey: ["penyewaan", "assignable-units", context.usahaId] });
           return;
         }
         if (reconciliation.state === "not_found") {

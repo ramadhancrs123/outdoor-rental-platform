@@ -119,6 +119,19 @@ export type CatalogPackageMedia = {
   status: string;
 };
 
+export type CatalogPackagePromo = {
+  promosi_paket_id: string;
+  usaha_id: string;
+  paket_sewa_id: string;
+  tarif_sewa_id: string;
+  harga_normal: number;
+  harga_promo: number;
+  status: "active" | "ended" | string;
+  started_at: string;
+  ended_at: string | null;
+  updated_at: string;
+};
+
 export type CatalogPackage = {
   paket_sewa_id: string;
   usaha_id: string;
@@ -127,6 +140,7 @@ export type CatalogPackage = {
   deskripsi: string | null;
   harga_dasar: number | null;
   active_tariff?: CatalogTariff | null;
+  active_promo?: CatalogPackagePromo | null;
   currency_code: string;
   status: string;
   is_public: boolean;

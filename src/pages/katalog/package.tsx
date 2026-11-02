@@ -1,5 +1,5 @@
 import { createClientId } from "@/lib/client-id";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Check, ChevronDown, ImagePlus, Loader2, Minus, MoreVertical, PackageOpen, Plus, Search, ShoppingBag, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
@@ -23,6 +23,7 @@ import {
   listCatalogVariants,
   removeCatalogPackageComponent,
   removeCatalogPackageMedia,
+  setCatalogPackagePromo,
   setCatalogPackageState,
   updateCatalogPackage,
   updateCatalogTariff,
@@ -79,6 +80,7 @@ function productImage(product: CatalogProduct | null | undefined) {
 export function CatalogPackagePage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const editMode = Boolean(id);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const pendingMediaRef = useRef<PendingMedia[]>([]);
@@ -127,6 +129,7 @@ export function CatalogPackagePage() {
   const [basePrice, setBasePrice] = useState("");
   const [showPublic, setShowPublic] = useState(false);
   const [promo, setPromo] = useState(false);
+  const [promoPrice, setPromoPrice] = useState("");
   const [newComponents, setNewComponents] = useState<ComponentDraft[]>([]);
   const [removedComponentIds, setRemovedComponentIds] = useState<string[]>([]);
   const [pendingMedia, setPendingMedia] = useState<PendingMedia[]>([]);
@@ -220,21 +223,26 @@ export function CatalogPackagePage() {
 
   useEffect(() => {
     if (!pkg) return;
-    const metadata = pkg.metadata ?? {};
     setName(pkg.nama);
     setDescription(pkg.deskripsi ?? "");
-    setBasePrice(pkg.harga_dasar == null ? "" : String(pkg.harga_dasar));
+    const currentTariff = activeTariffs[0] ?? null;
+    const currentPromo = pkg.active_promo ?? null;
+    setBasePrice(
+      currentTariff
+        ? String(currentTariff.nominal)
+        : pkg.harga_dasar == null
+          ? ""
+          : String(pkg.harga_dasar),
+    );
     setShowPublic(pkg.status === "active" && pkg.is_public);
-    setPromo(metadata.promo_label_enabled === true);
+    setPromo(Boolean(currentPromo));
+    setPromoPrice(currentPromo ? String(currentPromo.harga_promo) : "");
     if (activeTariffs[0]) {
       setTariffForm({
         name: activeTariffs[0].nama,
         durationValue: String(activeTariffs[0].durasi_nilai),
         durationUnit: activeTariffs[0].durasi_unit,
       });
-      if (pkg.harga_dasar == null) {
-        setBasePrice(String(activeTariffs[0].nominal));
-      }
     }
   }, [activeTariffs, pkg]);
 
@@ -513,6 +521,22 @@ export function CatalogPackagePage() {
       setSaveError("Tarif aktif paket harus memiliki nominal.");
       return;
     }
+    const promoAmount = promoPrice.trim() === "" ? null : Number(promoPrice);
+    if (promo && tariffAmount === null) {
+      setSaveError("Isi harga sewa normal sebelum mengaktifkan promo.");
+      return;
+    }
+    if (
+      promo &&
+      (promoAmount === null ||
+        !Number.isFinite(promoAmount) ||
+        promoAmount < 0 ||
+        promoAmount >= (tariffAmount ?? 0) ||
+        Math.round(promoAmount * 100) !== promoAmount * 100)
+    ) {
+      setSaveError("Harga promo harus berupa angka, maksimal dua desimal, dan lebih rendah dari harga normal.");
+      return;
+    }
     if (
       newComponents.some(
         (item) => !item.targetId || !Number.isFinite(Number(item.qty)) || Number(item.qty) <= 0,
@@ -549,11 +573,26 @@ export function CatalogPackagePage() {
       : showPublic
         ? "active"
         : "draft";
-    const metadata = {
-      ...(pkg?.metadata ?? {}),
-      promo_label_enabled: promo,
-    };
+    const metadata = pkg?.metadata ?? {};
+    const currentTariff = activeTariffs[0] ?? null;
+    const currentPromo = pkg?.active_promo ?? null;
+    const tariffName = tariffForm.name.trim() || currentTariff?.nama || "Harian";
+    const normalizedDurationUnit = tariffForm.durationUnit.trim();
+    const tariffChanged = Boolean(
+      tariffAmount !== null &&
+      currentTariff &&
+      (
+        Number(currentTariff.nominal) !== tariffAmount ||
+        currentTariff.nama !== tariffName ||
+        currentTariff.durasi_nilai !== tariffDuration ||
+        currentTariff.durasi_unit !== normalizedDurationUnit
+      )
+    );
+    const promoMustBeDisabledBeforeTariffUpdate = Boolean(
+      currentPromo && (!promo || tariffChanged)
+    );
     let packageId = id ?? "";
+    let effectiveTariffId: string | null = currentTariff?.tarif_sewa_id ?? null;
 
     try {
       const payload = {
@@ -596,36 +635,74 @@ export function CatalogPackagePage() {
         }
       }
 
-      if (tariffAmount !== null) {
-        const currentTariff = activeTariffs[0];
-        if (currentTariff) {
-          await updateCatalogTariff(
-            context.data.usahaId,
-            {
-              tarifSewaId: currentTariff.tarif_sewa_id,
-              nama: tariffForm.name.trim() || currentTariff.nama,
-              durasiNilai: tariffDuration,
-              durasiUnit: tariffForm.durationUnit.trim(),
-              nominal: tariffAmount,
-              berlakuMulai: currentTariff.berlaku_mulai,
-              berlakuSampai: currentTariff.berlaku_sampai,
-              expectedUpdatedAt: currentTariff.updated_at,
-            },
-            { idempotencyKey: "update-package-tariff-" + currentTariff.tarif_sewa_id + "-" + createClientId() },
-          );
-        } else {
-          await createCatalogTariff(
+      if (promoMustBeDisabledBeforeTariffUpdate && currentPromo && currentTariff) {
+        await setCatalogPackagePromo(
+          context.data.usahaId,
+          {
+            paketSewaId: packageId,
+            tarifSewaId: currentTariff.tarif_sewa_id,
+            enabled: false,
+            expectedUpdatedAt: currentPromo.updated_at,
+          },
+          { idempotencyKey: "disable-package-promo-" + currentPromo.promosi_paket_id + "-" + createClientId() },
+        );
+      }
+
+      if (tariffAmount !== null && currentTariff && tariffChanged) {
+        await updateCatalogTariff(
+          context.data.usahaId,
+          {
+            tarifSewaId: currentTariff.tarif_sewa_id,
+            nama: tariffName,
+            durasiNilai: tariffDuration,
+            durasiUnit: normalizedDurationUnit,
+            nominal: tariffAmount,
+            berlakuMulai: currentTariff.berlaku_mulai,
+            berlakuSampai: currentTariff.berlaku_sampai,
+            expectedUpdatedAt: currentTariff.updated_at,
+          },
+          { idempotencyKey: "update-package-tariff-" + currentTariff.tarif_sewa_id + "-" + createClientId() },
+        );
+      } else if (tariffAmount !== null && !currentTariff) {
+        const createdTariff = await createCatalogTariff(
+          context.data.usahaId,
+          {
+            paketSewaId: packageId,
+            nama: tariffName,
+            durasiNilai: tariffDuration,
+            durasiUnit: normalizedDurationUnit,
+            nominal: tariffAmount,
+            currencyCode: pkg?.currency_code ?? "IDR",
+            status: "active",
+          },
+          { idempotencyKey: "create-package-tariff-" + packageId + "-" + createClientId() },
+        );
+        effectiveTariffId = typeof createdTariff.tarif_sewa_id === "string"
+          ? createdTariff.tarif_sewa_id
+          : null;
+        if (!effectiveTariffId) {
+          throw new Error("Tarif paket dibuat tetapi ID tarif tidak dikembalikan server. Muat ulang sebelum mengatur promo.");
+        }
+      }
+
+      if (promo && tariffAmount !== null && effectiveTariffId) {
+        const shouldWritePromo = !currentPromo || promoMustBeDisabledBeforeTariffUpdate ||
+          Number(currentPromo.harga_promo) !== promoAmount;
+        if (shouldWritePromo) {
+          await setCatalogPackagePromo(
             context.data.usahaId,
             {
               paketSewaId: packageId,
-              nama: tariffForm.name.trim() || "Harian",
-              durasiNilai: tariffDuration,
-              durasiUnit: tariffForm.durationUnit.trim(),
-              nominal: tariffAmount,
-              currencyCode: pkg?.currency_code ?? "IDR",
-              status: "active",
+              tarifSewaId: effectiveTariffId,
+              enabled: true,
+              hargaPromo: promoAmount,
+              expectedUpdatedAt: currentPromo && !promoMustBeDisabledBeforeTariffUpdate
+                ? currentPromo.updated_at
+                : null,
             },
-            { idempotencyKey: "create-package-tariff-" + packageId + "-" + createClientId() },
+            {
+              idempotencyKey: "enable-package-promo-" + effectiveTariffId + "-" + createClientId(),
+            },
           );
         }
       }
@@ -681,6 +758,15 @@ export function CatalogPackagePage() {
       setRemovedMediaIds([]);
       setPartialState(false);
 
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["katalog", "packages"] }),
+        queryClient.invalidateQueries({ queryKey: ["katalog", "package-detail"] }),
+        queryClient.invalidateQueries({ queryKey: ["inventaris", "packages"] }),
+        queryClient.invalidateQueries({ queryKey: ["penyewaan", "walk-in", "packages"] }),
+        queryClient.invalidateQueries({ queryKey: ["penyewaan", "walk-in", "package-detail"] }),
+        queryClient.invalidateQueries({ queryKey: ["penyewaan", "walk-in", "package-availability"] }),
+      ]);
+
       navigate(paths.katalog + "?view=packages", { replace: true });
       toast.success(editMode ? "Paket berhasil disimpan." : "Paket berhasil dibuat.");
     } catch (error) {
@@ -725,7 +811,10 @@ export function CatalogPackagePage() {
   }
 
   const tariffSummary = activeTariffs[0] ?? null;
-  const effectivePrice = basePrice !== "" ? Number(basePrice) : tariffSummary?.nominal ?? null;
+  const regularPreviewPrice = basePrice !== "" ? Number(basePrice) : tariffSummary?.nominal ?? null;
+  const effectivePrice = promo
+    ? (promoPrice.trim() === "" ? null : Number(promoPrice))
+    : regularPreviewPrice;
   const visibleNewComponents = newComponents.filter((item) => item.targetId);
 
   return (
@@ -932,7 +1021,7 @@ export function CatalogPackagePage() {
 
           <div className="grid gap-3">
             <label className="grid gap-1.5 text-xs font-semibold">
-              Harga sewa
+              {promo ? "Harga sewa normal" : "Harga sewa"}
               <div className="flex items-center rounded-xl border bg-background focus-within:ring-2 focus-within:ring-primary/20">
                 <span className="px-3 text-sm font-semibold text-muted-foreground">Rp</span>
                 <Input
@@ -1024,11 +1113,30 @@ export function CatalogPackagePage() {
                 </div>
                 <div className="mt-3 flex items-center justify-between gap-3">
                   <div>
-                    <p className="text-sm font-medium">Tandai sebagai promo</p>
-                    <p className="text-[11px] text-muted-foreground">Label presentasi saja.</p>
+                    <p className="text-sm font-medium">Aktifkan harga promo</p>
+                    <p className="text-[11px] text-muted-foreground">Harga ini digunakan untuk transaksi paket; tarif normal tetap tersimpan.</p>
                   </div>
                   <Switch checked={promo} onCheckedChange={setPromo} />
                 </div>
+                {promo ? (
+                  <label className="mt-3 grid gap-1.5 text-xs font-semibold">
+                    Harga promo
+                    <div className="flex items-center rounded-xl border bg-background focus-within:ring-2 focus-within:ring-primary/20">
+                      <span className="px-3 text-sm font-semibold text-muted-foreground">Rp</span>
+                      <Input
+                        className="h-11 min-w-0 flex-1 border-0 px-0 text-base font-bold shadow-none focus-visible:ring-0"
+                        inputMode="decimal"
+                        value={promoPrice}
+                        onChange={(event) => setPromoPrice(event.target.value)}
+                        placeholder="450000"
+                        aria-label="Harga Promo Paket"
+                      />
+                    </div>
+                    <span className="text-[10px] font-normal text-muted-foreground">
+                      Harus lebih rendah daripada harga sewa normal.
+                    </span>
+                  </label>
+                ) : null}
               </div>
 
               <div className="flex items-center justify-between gap-3 border-b pb-3">

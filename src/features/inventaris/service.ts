@@ -30,6 +30,8 @@ import type {
   RegisterInventoryUnitInput,
 } from "./types";
 import { sanitizeInventorySearch } from "./utils";
+import { resolvePackagePrice } from "@/features/katalog/pricing";
+import type { CatalogPackagePromo, CatalogTariff } from "@/features/katalog/types";
 
 type MembershipRow = { usaha_id: string; status: string; revoked_at: string | null };
 
@@ -323,7 +325,7 @@ export async function listInventoryProducts(usahaId: string): Promise<InventoryC
 export async function listInventoryVariants(usahaId: string): Promise<InventoryVariant[]> {
   const { data, error } = await supabase
     .from("varian_barang")
-    .select("varian_barang_id,barang_id,nama,kode_internal,status")
+    .select("varian_barang_id,barang_id,nama,kode_internal,deskripsi,atribut_pembeda,status")
     .eq("usaha_id", usahaId)
     .eq("status", "active")
     .order("nama", { ascending: true });
@@ -811,7 +813,11 @@ export async function markInventoryUnitInspectionPending(
 
 export async function listInventoryPackageAvailability(
   usahaId: string,
+  period?: { startAt: string; endAt: string },
 ): Promise<InventoryPackageAvailability[]> {
+  if (period && (!period.startAt || !period.endAt || new Date(period.endAt) <= new Date(period.startAt))) {
+    throw new Error("Periode rental untuk pemeriksaan ketersediaan paket tidak valid.");
+  }
   const [packagesResult, componentsResult] = await Promise.all([
     supabase
       .from("paket_sewa")
@@ -843,13 +849,47 @@ export async function listInventoryPackageAvailability(
     jumlah: number | string;
   }>;
 
+  if (!packages.length) return [];
+
+  const packageIds = packages.map((pkg) => pkg.paket_sewa_id);
+  const nowIso = new Date().toISOString();
+  const [tariffsResult, promosResult] = await Promise.all([
+    supabase
+      .from("tarif_sewa")
+      .select("tarif_sewa_id,usaha_id,barang_id,varian_barang_id,paket_sewa_id,nama,durasi_unit,durasi_nilai,nominal,currency_code,berlaku_mulai,berlaku_sampai,status,updated_at")
+      .eq("usaha_id", usahaId)
+      .in("paket_sewa_id", packageIds)
+      .eq("status", "active")
+      .lte("berlaku_mulai", nowIso)
+      .or("berlaku_sampai.is.null,berlaku_sampai.gt." + nowIso)
+      .order("berlaku_mulai", { ascending: false }),
+    supabase
+      .from("promosi_paket_sewa")
+      .select("promosi_paket_id,usaha_id,paket_sewa_id,tarif_sewa_id,harga_normal,harga_promo,status,started_at,ended_at,updated_at")
+      .eq("usaha_id", usahaId)
+      .in("paket_sewa_id", packageIds)
+      .eq("status", "active")
+      .lte("started_at", nowIso)
+      .is("ended_at", null),
+  ]);
+  if (tariffsResult.error) throw tariffsResult.error;
+  if (promosResult.error) throw promosResult.error;
+
+  const tariffByPackage = new Map<string, CatalogTariff>();
+  for (const tariff of (tariffsResult.data ?? []) as CatalogTariff[]) {
+    if (tariff.paket_sewa_id && !tariffByPackage.has(tariff.paket_sewa_id)) {
+      tariffByPackage.set(tariff.paket_sewa_id, tariff);
+    }
+  }
+  const promoByTariff = new Map<string, CatalogPackagePromo>();
+  for (const promo of (promosResult.data ?? []) as CatalogPackagePromo[]) {
+    if (!promoByTariff.has(promo.tarif_sewa_id)) promoByTariff.set(promo.tarif_sewa_id, promo);
+  }
+
   const barangIds = Array.from(new Set(components.map((row) => row.barang_id).filter(Boolean) as string[]));
   const variantIds = Array.from(new Set(components.map((row) => row.varian_barang_id).filter(Boolean) as string[]));
 
-  const [productsResult, variantsResult, unitsResult] = await Promise.all([
-    barangIds.length
-      ? supabase.from("barang").select("barang_id,nama").eq("usaha_id", usahaId).in("barang_id", barangIds)
-      : Promise.resolve({ data: [], error: null }),
+  const [variantsResult, unitsResult] = await Promise.all([
     variantIds.length
       ? supabase.from("varian_barang").select("varian_barang_id,nama,barang_id").eq("usaha_id", usahaId).in("varian_barang_id", variantIds)
       : Promise.resolve({ data: [], error: null }),
@@ -858,12 +898,25 @@ export async function listInventoryPackageAvailability(
       .select("unit_barang_id,barang_id,varian_barang_id,status")
       .eq("usaha_id", usahaId),
   ]);
-  if (productsResult.error) throw productsResult.error;
   if (variantsResult.error) throw variantsResult.error;
   if (unitsResult.error) throw unitsResult.error;
 
-  const productNames = new Map((productsResult.data ?? []).map((row) => [row.barang_id as string, row.nama as string]));
+  // Package components may intentionally store only varian_barang_id. Resolve
+  // the owning product before asking the trusted candidate RPC for availability.
   const variantRows = (variantsResult.data ?? []) as Array<{ varian_barang_id: string; nama: string; barang_id: string }>;
+  const variantById = new Map(variantRows.map((row) => [row.varian_barang_id, row]));
+  const resolvedBarangIds = Array.from(new Set([
+    ...barangIds,
+    ...components
+      .map((component) => component.barang_id ?? variantById.get(component.varian_barang_id ?? "")?.barang_id ?? null)
+      .filter(Boolean) as string[],
+  ]));
+  const productsResult = resolvedBarangIds.length
+    ? await supabase.from("barang").select("barang_id,nama").eq("usaha_id", usahaId).in("barang_id", resolvedBarangIds)
+    : { data: [], error: null };
+  if (productsResult.error) throw productsResult.error;
+
+  const productNames = new Map((productsResult.data ?? []).map((row) => [row.barang_id as string, row.nama as string]));
   const variantNames = new Map(variantRows.map((row) => [row.varian_barang_id, row.nama]));
   const units = (unitsResult.data ?? []) as Array<{
     unit_barang_id: string;
@@ -872,22 +925,56 @@ export async function listInventoryPackageAvailability(
     status: string;
   }>;
 
+  const availabilityStart = period?.startAt ?? nowIso;
+  const availabilityEnd = period?.endAt ?? new Date(Date.parse(nowIso) + 1).toISOString();
+  const componentKeys = Array.from(new Map(
+    components.map((component) => {
+      const key = `${component.barang_id ?? ""}:${component.varian_barang_id ?? ""}`;
+      const resolvedBarangId = component.barang_id ?? variantById.get(component.varian_barang_id ?? "")?.barang_id ?? null;
+      return [key, { key, barangId: resolvedBarangId, variantId: component.varian_barang_id }] as const;
+    }),
+  ).values());
+
+  const candidateResults = await Promise.all(componentKeys.map(async (component) => {
+    if (!component.barangId) return { key: component.key, eligibleUnitIds: new Set<string>() };
+    const { data, error } = await supabase.rpc("find_inventory_unit_candidates", {
+      p_usaha_id: usahaId,
+      p_barang_id: component.barangId,
+      p_varian_barang_id: component.variantId,
+      p_start_at: availabilityStart,
+      p_end_at: availabilityEnd,
+      p_preferred_unit_id: null,
+      p_exclude_penyewaan_id: null,
+      p_limit: 100,
+    });
+    if (error) throw error;
+    const eligibleUnitIds = new Set(
+      ((data ?? []) as Array<{ unit_barang_id: string; status: string; eligibility: boolean; conflict: boolean }>)
+        .filter((candidate) => candidate.status === "ready" && candidate.eligibility && !candidate.conflict)
+        .map((candidate) => candidate.unit_barang_id),
+    );
+    return { key: component.key, eligibleUnitIds };
+  }));
+  const eligibleUnitIdsByComponent = new Map(candidateResults.map((result) => [result.key, result.eligibleUnitIds]));
+
   const componentAvailability = components.map((component) => {
     const required = Number(component.jumlah);
+    const componentKey = `${component.barang_id ?? ""}:${component.varian_barang_id ?? ""}`;
     const matching = units.filter((unit) =>
       component.varian_barang_id
         ? unit.varian_barang_id === component.varian_barang_id
         : unit.barang_id === component.barang_id,
     );
-    const ready = matching.filter((unit) => unit.status === "ready").length;
+    const ready = (eligibleUnitIdsByComponent.get(componentKey)?.size ?? 0);
     const rented = matching.filter((unit) => unit.status === "rented").length;
     const maintenance = matching.filter((unit) => unit.status === "maintenance").length;
     const inspectionPending = matching.filter((unit) => unit.status === "inspection_pending").length;
     const blocked = matching.filter((unit) => ["damaged", "lost", "inactive"].includes(unit.status)).length;
     const shortfall = Math.max(0, required - ready);
+    const resolvedBarangId = component.barang_id ?? variantById.get(component.varian_barang_id ?? "")?.barang_id ?? null;
     const name = component.varian_barang_id
-      ? (productNames.get(component.barang_id ?? "") ?? "Barang") + " · " + (variantNames.get(component.varian_barang_id) ?? "Varian")
-      : productNames.get(component.barang_id ?? "") ?? "Barang";
+      ? (productNames.get(resolvedBarangId ?? "") ?? "Barang") + " · " + (variantNames.get(component.varian_barang_id) ?? "Varian")
+      : productNames.get(resolvedBarangId ?? "") ?? "Barang";
 
     return {
       ...component,
@@ -911,8 +998,14 @@ export async function listInventoryPackageAvailability(
       .filter((component) => component.shortfall_quantity > 0)
       .sort((a, b) => b.shortfall_quantity - a.shortfall_quantity)[0];
 
+    const tariff = tariffByPackage.get(pkg.paket_sewa_id) ?? null;
+    const promo = tariff ? promoByTariff.get(tariff.tarif_sewa_id) ?? null : null;
+    const price = resolvePackagePrice(tariff, promo);
     return {
       ...pkg,
+      harga_normal: price.normalPrice,
+      harga_efektif: price.effectivePrice,
+      is_promo: price.isPromo,
       available_package_quantity: Number.isFinite(available) ? available : 0,
       status: available > 0 ? "available" : "insufficient",
       limiting_component_name: limiting?.nama ?? null,
@@ -984,7 +1077,7 @@ export async function getInventoryProductDetail(
       .maybeSingle(),
     supabase
       .from("varian_barang")
-      .select("varian_barang_id,barang_id,usaha_id,nama,kode_internal,status")
+      .select("varian_barang_id,barang_id,usaha_id,nama,kode_internal,deskripsi,atribut_pembeda,status")
       .eq("usaha_id", usahaId)
       .eq("barang_id", productId)
       .order("nama", { ascending: true }),

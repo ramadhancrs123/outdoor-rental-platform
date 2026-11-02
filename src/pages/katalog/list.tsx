@@ -38,7 +38,9 @@ import {
   listCatalogProductCovers,
   listCatalogProducts,
   listCatalogReadyStock,
+  setCatalogPackagePromo,
   setCatalogPackageState,
+  resolvePackagePrice,
 } from "@/features/katalog";
 import { DEFAULT_CATALOG_FILTERS, type CatalogListFilters, type CatalogProduct } from "@/features/katalog/types";
 import { catalogErrorMessage, catalogStatusLabel, formatCatalogMoney, formatTariffDuration } from "@/features/katalog/utils";
@@ -146,6 +148,7 @@ export const CatalogList = () => {
   );
   const [selectedPackageId, setSelectedPackageId] = useState<string | null>(null);
   const [filterOpen, setFilterOpen] = useState(false);
+  const [promoPriceDraft, setPromoPriceDraft] = useState("");
   const queryClient = useQueryClient();
 
   const context = useQuery({
@@ -226,11 +229,89 @@ export const CatalogList = () => {
     onError: (error) => toast.error(catalogErrorMessage(error)),
   });
 
+  const packagePromo = useMutation({
+    mutationFn: ({ enabled, hargaPromo }: { enabled: boolean; hargaPromo?: number }) => {
+      const target = packageDetails.data?.package;
+      const tariff = target?.active_tariff ?? null;
+      if (!context.data || !target || !tariff) {
+        throw new Error("Tarif aktif paket belum tersedia. Atur tarif normal melalui Ubah Paket terlebih dahulu.");
+      }
+
+      if (enabled) {
+        if (
+          hargaPromo === undefined ||
+          !Number.isFinite(hargaPromo) ||
+          hargaPromo < 0 ||
+          Math.round(hargaPromo * 100) !== hargaPromo * 100 ||
+          Number(tariff.nominal) <= 0 ||
+          hargaPromo >= Number(tariff.nominal)
+        ) {
+          throw new Error("Harga promo harus valid, maksimal dua desimal, dan lebih rendah dari harga normal.");
+        }
+      }
+
+      return setCatalogPackagePromo(
+        context.data.usahaId,
+        {
+          paketSewaId: target.paket_sewa_id,
+          tarifSewaId: tariff.tarif_sewa_id,
+          enabled,
+          hargaPromo: enabled ? hargaPromo : null,
+          expectedUpdatedAt: target.active_promo?.updated_at ?? null,
+        },
+        { idempotencyKey: "catalog-package-promo-" + (enabled ? "enable-" : "disable-") + createClientId() },
+      );
+    },
+    onSuccess: async (_, variables) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["katalog", "packages"] }),
+        queryClient.invalidateQueries({ queryKey: ["katalog", "package-detail"] }),
+      ]);
+      setPromoPriceDraft(variables.enabled && variables.hargaPromo !== undefined ? String(variables.hargaPromo) : "");
+      toast.success(variables.enabled ? "Promo paket berhasil disimpan." : "Promo paket dinonaktifkan.");
+    },
+    onError: (error) => toast.error(catalogErrorMessage(error, "Promo paket gagal diperbarui.")),
+  });
+
   useEffect(() => {
     if (catalogView === "packages" && !selectedPackageId && packages.data?.[0]) {
       setSelectedPackageId(packages.data[0].paket_sewa_id);
     }
   }, [catalogView, packages.data, selectedPackageId]);
+
+  useEffect(() => {
+    const promo = packageDetails.data?.package.active_promo ?? null;
+    setPromoPriceDraft(promo ? String(promo.harga_promo) : "");
+  }, [selectedPackageId, packageDetails.data?.package.active_promo]);
+
+  const selectedPackage = packageDetails.data?.package ?? null;
+  const selectedPackageTariff = selectedPackage?.active_tariff ?? null;
+  const selectedPackagePromo = selectedPackage?.active_promo ?? null;
+  const parsedPromoPrice = promoPriceDraft.trim() === "" ? null : Number(promoPriceDraft);
+  const promoPriceIsValid = Boolean(
+    selectedPackageTariff &&
+    parsedPromoPrice !== null &&
+    Number.isFinite(parsedPromoPrice) &&
+    parsedPromoPrice >= 0 &&
+    Math.round(parsedPromoPrice * 100) === parsedPromoPrice * 100 &&
+    Number(selectedPackageTariff.nominal) > 0 &&
+    parsedPromoPrice < Number(selectedPackageTariff.nominal),
+  );
+  const promoPriceValidationMessage = !selectedPackageTariff
+    ? "Atur tarif normal paket terlebih dahulu."
+    : promoPriceDraft.trim() === ""
+      ? "Masukkan harga promo."
+      : !Number.isFinite(parsedPromoPrice)
+        ? "Harga promo harus berupa angka yang valid."
+        : parsedPromoPrice !== null && parsedPromoPrice < 0
+          ? "Harga promo tidak boleh negatif."
+          : Number(selectedPackageTariff.nominal) <= 0
+            ? "Tarif normal harus lebih besar dari nol."
+            : parsedPromoPrice !== null && parsedPromoPrice >= Number(selectedPackageTariff.nominal)
+              ? "Harga promo harus lebih rendah dari harga normal."
+              : parsedPromoPrice !== null && Math.round(parsedPromoPrice * 100) !== parsedPromoPrice * 100
+                ? "Gunakan maksimal dua angka di belakang koma."
+                : "";
 
   const totalPages = useMemo(
     () => Math.max(1, Math.ceil((products.data?.total ?? 0) / filters.pageSize)),
@@ -625,11 +706,11 @@ export const CatalogList = () => {
                 ) : packages.data?.length ? (
                   packages.data.map((item) => (
                     <button key={item.paket_sewa_id} type="button" onClick={() => setSelectedPackageId(item.paket_sewa_id)} className={[
-                      "w-full rounded-xl border p-4 text-left transition-colors",
+                      "w-full rounded-xl border p-3 text-left transition-colors",
                       selectedPackageId === item.paket_sewa_id ? "border-primary bg-primary/[0.04] ring-1 ring-primary/20" : "hover:bg-muted/40",
                     ].join(" ")}>
                       <div className="flex items-start gap-3">
-                        <div className="grid size-14 shrink-0 place-items-center overflow-hidden rounded-xl border bg-muted/40">
+                        <div className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-xl border bg-muted/40">
                           {item.cover_url ? <img src={item.cover_url} alt={item.nama} className="h-full w-full object-cover" loading="lazy" /> : <Boxes className="size-6 text-muted-foreground" aria-hidden="true" />}
                         </div>
                         <div className="min-w-0 flex-1">
@@ -637,9 +718,27 @@ export const CatalogList = () => {
                           <p className="mt-1 text-xs text-muted-foreground">{item.slug}</p>
                         </div>
                       </div>
-                      <div className="mt-3 flex flex-wrap gap-2">
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
                         <Badge variant="outline" className="rounded-full">{item.is_public ? "Publik" : "Internal"}</Badge>
-                        <Badge variant="secondary" className="rounded-full">{item.harga_dasar == null ? "Tanpa harga dasar" : formatCatalogMoney(item.harga_dasar, item.currency_code)}</Badge>
+                        {resolvePackagePrice(item.active_tariff ?? null, item.active_promo).isPromo ? (
+                          <Badge variant="secondary" className="rounded-full">Promo</Badge>
+                        ) : null}
+                        <span className="text-xs font-semibold">
+                          {resolvePackagePrice(item.active_tariff ?? null, item.active_promo).isPromo ? (
+                            <>
+                              <span className="mr-1.5 text-muted-foreground line-through">
+                                {formatCatalogMoney(resolvePackagePrice(item.active_tariff ?? null, item.active_promo).normalPrice, item.currency_code)}
+                              </span>
+                              <span className="text-emerald-700 dark:text-emerald-300">
+                                {formatCatalogMoney(resolvePackagePrice(item.active_tariff ?? null, item.active_promo).effectivePrice, item.currency_code)}
+                              </span>
+                            </>
+                          ) : (
+                            resolvePackagePrice(item.active_tariff ?? null, item.active_promo).effectivePrice == null
+                              ? "Tarif belum tersedia"
+                              : formatCatalogMoney(resolvePackagePrice(item.active_tariff ?? null, item.active_promo).effectivePrice, item.currency_code)
+                          )}
+                        </span>
                       </div>
                     </button>
                   ))
@@ -657,24 +756,138 @@ export const CatalogList = () => {
               ) : packageDetails.error ? (
                 <CardContent className="p-5"><Alert variant="destructive"><AlertTitle>Detail paket gagal dimuat</AlertTitle><AlertDescription className="space-y-3"><p>{errorMessage(packageDetails.error)}</p><Button variant="outline" size="sm" onClick={() => void packageDetails.refetch()}><RefreshCw />Coba lagi</Button></AlertDescription></Alert></CardContent>
               ) : packageDetails.data ? (
-                <CardContent className="space-y-5 p-5">
+                <CardContent className="space-y-4 p-4 sm:p-5">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="min-w-0"><p className="text-xs text-muted-foreground">Paket Sewa</p><h2 className="text-xl font-bold tracking-tight">{packageDetails.data.package.nama}</h2><p className="mt-1 break-words text-sm text-muted-foreground">{packageDetails.data.package.deskripsi || "Belum ada deskripsi paket."}</p></div>
+                    <div className="min-w-0"><p className="text-xs text-muted-foreground">Paket Sewa</p><h2 className="text-lg font-bold tracking-tight">{packageDetails.data.package.nama}</h2><p className="mt-1 break-words text-sm text-muted-foreground">{packageDetails.data.package.deskripsi || "Belum ada deskripsi paket."}</p></div>
                     <div className="flex flex-wrap items-center gap-2"><Badge variant={packageDetails.data.package.status === "active" ? "default" : "secondary"} className="rounded-full">{catalogStatusLabel(packageDetails.data.package.status)}</Badge><Badge variant="outline" className="rounded-full">{packageDetails.data.package.is_public ? "Publik" : "Internal"}</Badge>{packageDetails.data.package.status !== "active" ? <Button size="sm" className="rounded-xl" disabled={packageState.isPending} onClick={() => packageState.mutate({ status: "active", isPublic: packageDetails.data.package.is_public, updatedAt: packageDetails.data.package.updated_at })}>Aktifkan</Button> : <Button size="sm" variant="outline" className="rounded-xl" disabled={packageState.isPending} onClick={() => packageState.mutate({ status: "inactive", isPublic: false, updatedAt: packageDetails.data.package.updated_at })}>Nonaktifkan</Button>}</div>
                   </div>
 
-                  <section className="rounded-2xl border p-4">
-                    <div className="flex items-center justify-between gap-3"><div><p className="text-xs text-muted-foreground">Harga dasar</p><p className="text-2xl font-bold">{packageDetails.data.package.harga_dasar == null ? "Belum ditetapkan" : formatCatalogMoney(packageDetails.data.package.harga_dasar, packageDetails.data.package.currency_code)}</p></div><Button asChild variant="outline" className="rounded-xl"><Link to={paths.katalogPackage + "/" + packageDetails.data.package.paket_sewa_id}>Ubah Paket</Link></Button></div>
+                  <section className="rounded-2xl border p-3 sm:p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-xs text-muted-foreground">Harga paket</p>
+                        {resolvePackagePrice(packageDetails.data.package.active_tariff ?? null, packageDetails.data.package.active_promo).isPromo ? (
+                          <div className="mt-1 flex flex-wrap items-center gap-2">
+                            <p className="text-xl font-bold text-emerald-700 dark:text-emerald-300">
+                              {formatCatalogMoney(resolvePackagePrice(packageDetails.data.package.active_tariff ?? null, packageDetails.data.package.active_promo).effectivePrice, packageDetails.data.package.currency_code)}
+                            </p>
+                            <Badge variant="secondary" className="rounded-full">Promo</Badge>
+                          </div>
+                        ) : (
+                          <p className="mt-1 text-xl font-bold">
+                            {resolvePackagePrice(packageDetails.data.package.active_tariff ?? null, null).effectivePrice == null
+                              ? "Belum ditetapkan"
+                              : formatCatalogMoney(resolvePackagePrice(packageDetails.data.package.active_tariff ?? null, null).effectivePrice, packageDetails.data.package.currency_code)}
+                          </p>
+                        )}
+                      </div>
+                      <Button asChild variant="outline" className="rounded-xl"><Link to={paths.katalogPackage + "/" + packageDetails.data.package.paket_sewa_id}>Ubah Paket</Link></Button>
+                    </div>
+                  </section>
+
+                  <section className="rounded-2xl border border-border/70 bg-muted/[0.16] p-3.5 sm:p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex min-w-0 items-center gap-2.5">
+                        <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+                          <Tag className="size-4" aria-hidden="true" />
+                        </div>
+                        <div className="min-w-0">
+                          <h3 className="text-sm font-semibold">Promo Paket</h3>
+                          <p className="text-[11px] leading-4 text-muted-foreground">Atur harga khusus tanpa mengubah tarif normal.</p>
+                        </div>
+                      </div>
+                      <Badge variant={selectedPackagePromo ? "default" : "outline"} className="shrink-0 rounded-full">
+                        {selectedPackagePromo ? "Promo aktif" : "Belum aktif"}
+                      </Badge>
+                    </div>
+
+                    {selectedPackageTariff ? (
+                      <>
+                        <div className="mt-3 grid grid-cols-2 gap-2">
+                          <div className="rounded-xl border bg-background/80 px-3 py-2.5">
+                            <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Harga normal</p>
+                            <p className="mt-1 text-sm font-semibold">
+                              {formatCatalogMoney(selectedPackageTariff.nominal, selectedPackageTariff.currency_code)}
+                            </p>
+                            <p className="mt-0.5 text-[10px] text-muted-foreground">{formatTariffDuration(selectedPackageTariff)}</p>
+                          </div>
+                          <div className="rounded-xl border bg-background/80 px-3 py-2.5">
+                            <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Harga promo</p>
+                            <p className={selectedPackagePromo ? "mt-1 text-sm font-bold text-emerald-700 dark:text-emerald-300" : "mt-1 text-sm font-semibold text-muted-foreground"}>
+                              {selectedPackagePromo
+                                ? formatCatalogMoney(selectedPackagePromo.harga_promo, selectedPackageTariff.currency_code)
+                                : "Belum diatur"}
+                            </p>
+                            {selectedPackagePromo ? (
+                              <p className="mt-0.5 text-[10px] text-emerald-700 dark:text-emerald-300">
+                                Hemat {formatCatalogMoney(Number(selectedPackageTariff.nominal) - Number(selectedPackagePromo.harga_promo), selectedPackageTariff.currency_code)}
+                              </p>
+                            ) : null}
+                          </div>
+                        </div>
+
+                        <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-end">
+                          <label htmlFor="catalog-package-promo-price" className="grid min-w-0 gap-1.5">
+                            <span className="text-xs font-medium">Harga promo</span>
+                            <Input
+                              id="catalog-package-promo-price"
+                              type="number"
+                              min="0"
+                              max={Number(selectedPackageTariff.nominal) > 0 ? Number(selectedPackageTariff.nominal) - 0.01 : undefined}
+                              step="0.01"
+                              inputMode="decimal"
+                              value={promoPriceDraft}
+                              onChange={(event) => setPromoPriceDraft(event.target.value)}
+                              placeholder="Masukkan harga promo"
+                              disabled={packagePromo.isPending || Number(selectedPackageTariff.nominal) <= 0}
+                              className="h-10 rounded-xl bg-background"
+                            />
+                          </label>
+                          <Button
+                            type="button"
+                            size="sm"
+                            className="h-10 rounded-xl"
+                            disabled={!promoPriceIsValid || packagePromo.isPending}
+                            onClick={() => packagePromo.mutate({ enabled: true, hargaPromo: parsedPromoPrice ?? undefined })}
+                          >
+                            {packagePromo.isPending ? "Menyimpan…" : selectedPackagePromo ? "Perbarui promo" : "Aktifkan promo"}
+                          </Button>
+                          {selectedPackagePromo ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-10 rounded-xl"
+                              disabled={packagePromo.isPending}
+                              onClick={() => packagePromo.mutate({ enabled: false })}
+                            >
+                              Nonaktifkan
+                            </Button>
+                          ) : null}
+                        </div>
+                        {promoPriceValidationMessage ? (
+                          <p className="mt-1.5 text-[11px] leading-4 text-muted-foreground">{promoPriceValidationMessage}</p>
+                        ) : (
+                          <p className="mt-1.5 text-[11px] leading-4 text-muted-foreground">
+                            Harga promo harus lebih rendah dari tarif normal. Perubahan berlaku untuk transaksi baru.
+                          </p>
+                        )}
+                      </>
+                    ) : (
+                      <div className="mt-3 rounded-xl border border-dashed bg-background/60 px-3 py-3 text-xs leading-5 text-muted-foreground">
+                        Promo belum dapat diatur karena paket belum memiliki tarif aktif. Tambahkan tarif normal melalui <Link className="font-semibold text-primary hover:underline" to={paths.katalogPackage + "/" + packageDetails.data.package.paket_sewa_id}>Ubah Paket</Link> terlebih dahulu.
+                      </div>
+                    )}
                   </section>
 
                   <section>
-                    <div className="mb-3 flex items-center justify-between gap-3"><h3 className="font-semibold">Komponen Paket ({packageDetails.data.components.length})</h3></div>
-                    {packageDetails.data.components.length === 0 ? <div className="rounded-2xl border border-dashed p-5 text-sm text-muted-foreground">Belum ada komponen. Paket belum mendefinisikan barang/varian yang termasuk.</div> : <div className="grid gap-2 sm:grid-cols-2">{packageDetails.data.components.map((component) => <div key={component.komponen_paket_id} className="rounded-xl border p-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="font-medium">{component.barang?.nama ?? component.varian?.nama ?? "Komponen tidak tersedia"}</p><p className="mt-1 text-xs text-muted-foreground">{component.varian ? "Varian · " + component.varian.nama : "Barang"}</p></div><Badge variant="secondary" className="shrink-0 rounded-full">× {component.jumlah}</Badge></div>{component.catatan ? <p className="mt-2 text-xs leading-5 text-muted-foreground">{component.catatan}</p> : null}</div>)}</div>}
+                    <div className="mb-2 flex items-center justify-between gap-3"><h3 className="font-semibold">Komponen Paket ({packageDetails.data.components.length})</h3></div>
+                    {packageDetails.data.components.length === 0 ? <div className="rounded-2xl border border-dashed p-4 text-sm text-muted-foreground">Belum ada komponen. Paket belum mendefinisikan barang/varian yang termasuk.</div> : <div className="grid gap-2 sm:grid-cols-2">{packageDetails.data.components.map((component) => <div key={component.komponen_paket_id} className="rounded-xl border p-2.5"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="font-medium">{component.barang?.nama ?? component.varian?.nama ?? "Komponen tidak tersedia"}</p><p className="mt-1 text-xs text-muted-foreground">{component.varian ? "Varian · " + component.varian.nama : "Barang"}</p></div><Badge variant="secondary" className="shrink-0 rounded-full">× {component.jumlah}</Badge></div>{component.catatan ? <p className="mt-2 text-xs leading-5 text-muted-foreground">{component.catatan}</p> : null}</div>)}</div>}
                   </section>
 
                   <section>
-                    <h3 className="mb-3 font-semibold">Tarif Paket ({packageDetails.data.tariffs.length})</h3>
-                    {packageDetails.data.tariffs.length === 0 ? <div className="rounded-2xl border border-dashed p-5 text-sm text-muted-foreground">Belum ada tarif yang terikat langsung ke paket.</div> : <div className="space-y-2">{packageDetails.data.tariffs.map((tariff) => <div key={tariff.tarif_sewa_id} className="flex flex-col gap-2 rounded-xl border p-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-medium">{tariff.nama}</p><p className="text-xs text-muted-foreground">{formatTariffDuration(tariff)} · {catalogStatusLabel(tariff.status)}</p></div><p className="font-semibold">{formatCatalogMoney(tariff.nominal, tariff.currency_code)}</p></div>)}</div>}
+                    <h3 className="mb-2 font-semibold">Tarif Paket ({packageDetails.data.tariffs.length})</h3>
+                    {packageDetails.data.tariffs.length === 0 ? <div className="rounded-2xl border border-dashed p-4 text-sm text-muted-foreground">Belum ada tarif yang terikat langsung ke paket.</div> : <div className="space-y-2">{packageDetails.data.tariffs.map((tariff) => <div key={tariff.tarif_sewa_id} className="flex flex-col gap-2 rounded-xl border p-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-medium">{tariff.nama}</p><p className="text-xs text-muted-foreground">{formatTariffDuration(tariff)} · {catalogStatusLabel(tariff.status)}</p></div><p className="font-semibold">{formatCatalogMoney(tariff.nominal, tariff.currency_code)}</p></div>)}</div>}
                   </section>
                 </CardContent>
               ) : null}

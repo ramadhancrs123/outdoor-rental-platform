@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 
 const rpcMock = vi.hoisted(() => vi.fn());
 
@@ -8,9 +8,12 @@ vi.mock("@/app/providers/supabase/client", () => ({
   },
 }));
 
-import { createCatalogProduct, createCatalogCategory, setCatalogProductStatus } from "@/features/katalog/service";
+import { createCatalogProduct, createCatalogCategory, setCatalogPackagePromo, setCatalogProductStatus } from "@/features/katalog/service";
 
 describe("Katalog trusted mutation service", () => {
+  beforeEach(() => {
+    rpcMock.mockReset();
+  });
   test("create product preserves tenant and idempotency command contract", async () => {
     rpcMock.mockResolvedValue({
       data: {
@@ -86,6 +89,78 @@ describe("Katalog trusted mutation service", () => {
       p_usaha_id: "usaha-1",
       p_command_name: "create_kategori_barang",
       p_idempotency_key: "catalog-category-test",
+    });
+  });
+
+  test("package promo uses the trusted RPC and preserves idempotency and optimistic concurrency", async () => {
+    rpcMock.mockResolvedValue({
+      data: {
+        usaha_id: "usaha-1",
+        paket_sewa_id: "package-1",
+        tarif_sewa_id: "tariff-1",
+        enabled: true,
+        promosi_paket_id: "promo-1",
+        harga_normal: 80000,
+        harga_promo: 65000,
+        updated_at: "2026-10-01T10:00:00Z",
+      },
+      error: null,
+    });
+
+    await expect(setCatalogPackagePromo("usaha-1", {
+      paketSewaId: "package-1",
+      tarifSewaId: "tariff-1",
+      enabled: true,
+      hargaPromo: 65000,
+      expectedUpdatedAt: "2026-10-01T09:00:00Z",
+    }, {
+      idempotencyKey: "catalog-package-promo-test",
+      requestId: "request-package-promo-test",
+    })).resolves.toMatchObject({
+      enabled: true,
+      promosi_paket_id: "promo-1",
+      harga_promo: 65000,
+    });
+
+    expect(rpcMock).toHaveBeenCalledWith("command_set_paket_promo", {
+      p_usaha_id: "usaha-1",
+      p_paket_sewa_id: "package-1",
+      p_tarif_sewa_id: "tariff-1",
+      p_enabled: true,
+      p_harga_promo: 65000,
+      p_expected_updated_at: "2026-10-01T09:00:00Z",
+      p_idempotency_key: "catalog-package-promo-test",
+      p_request_id: "request-package-promo-test",
+    });
+  });
+
+  test("package promo reconciles an uncertain response using the same command key", async () => {
+    rpcMock
+      .mockResolvedValueOnce({ data: null, error: new Error("network timeout") })
+      .mockResolvedValueOnce({
+        data: {
+          state: "committed",
+          response: {
+            enabled: false,
+            harga_normal: 80000,
+            harga_promo: null,
+          },
+        },
+        error: null,
+      });
+
+    await expect(setCatalogPackagePromo("usaha-1", {
+      paketSewaId: "package-1",
+      tarifSewaId: "tariff-1",
+      enabled: false,
+    }, {
+      idempotencyKey: "catalog-package-promo-disable-test",
+    })).resolves.toMatchObject({ enabled: false, harga_normal: 80000 });
+
+    expect(rpcMock).toHaveBeenNthCalledWith(2, "command_reconcile_catalog_mutation", {
+      p_usaha_id: "usaha-1",
+      p_command_name: "set_paket_promo",
+      p_idempotency_key: "catalog-package-promo-disable-test",
     });
   });
 
