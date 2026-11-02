@@ -35,6 +35,7 @@ import {
 import type { CreateCatalogProductInput, CreateCatalogVariantInput } from "@/features/katalog/service";
 import { catalogErrorMessage, catalogStatusLabel, catalogVariantCapacity, catalogVariantColor, formatCatalogMoney } from "@/features/katalog/utils";
 import { paths } from "@/routes/paths";
+import { VariantMediaManager } from "@/components/katalog/variant-media-manager";
 
 type UnknownCommand = { commandName: string; idempotencyKey: string; message: string };
 const commandKey = (prefix: string) => prefix + "-" + createClientId();
@@ -295,7 +296,7 @@ export function CatalogManage() {
         </TabsContent>
 
         <TabsContent value="variant" className="space-y-4">
-          <Card className="rounded-2xl shadow-sm"><CardHeader><CardTitle className="text-base">Tambah Varian</CardTitle><p className="text-sm text-muted-foreground">Varian berada di bawah satu Barang. Pilih relasi melalui nama, bukan ID.</p></CardHeader><CardContent className="grid gap-4 lg:grid-cols-4">
+          <Card className="rounded-2xl shadow-sm"><CardHeader><CardTitle className="text-base">Tambah Varian</CardTitle><p className="text-sm text-muted-foreground">Varian berada di bawah satu Barang. Setelah dibuat, unggah foto representatif dari kartu varian di bawah.</p></CardHeader><CardContent className="grid gap-4 lg:grid-cols-4">
             <label className="grid gap-2 text-sm font-medium">Barang induk<Select value={variant.productId} onValueChange={(value) => setVariant((v) => ({ ...v, productId: value }))}><SelectTrigger className="h-11 rounded-xl"><SelectValue placeholder="Pilih barang" /></SelectTrigger><SelectContent>{productOptions.map((p) => <SelectItem key={p.barang_id} value={p.barang_id}>{p.nama}</SelectItem>)}</SelectContent></Select></label>
             <label className="grid gap-2 text-sm font-medium">Nama varian<Input className="h-11 rounded-xl" value={variant.name} onChange={(e) => setVariant((v) => ({ ...v, name: e.target.value }))} /></label>
             <label className="grid gap-2 text-sm font-medium">Kode internal<Input className="h-11 rounded-xl" value={variant.code} onChange={(e) => setVariant((v) => ({ ...v, code: e.target.value }))} placeholder="Opsional" /></label>
@@ -304,7 +305,31 @@ export function CatalogManage() {
             <Button className="self-end h-11 rounded-xl" disabled={!variant.productId || !variant.name.trim() || busy} onClick={() => createVariant.mutate()}>{createVariant.isPending ? <Loader2 className="animate-spin" /> : <Plus />}Tambah Varian</Button>
             <label className="grid gap-2 text-sm font-medium lg:col-span-4">Deskripsi<Input className="h-11 rounded-xl" value={variant.description} onChange={(e) => setVariant((v) => ({ ...v, description: e.target.value }))} /></label>
           </CardContent></Card>
-          <Card className="rounded-2xl shadow-sm"><CardHeader><CardTitle className="text-base">Daftar Varian</CardTitle></CardHeader><CardContent className="space-y-2">{variantOptions.length === 0 ? <p className="text-sm text-muted-foreground">Belum ada varian.</p> : variantOptions.map((item) => <div key={item.varian_barang_id} className="flex flex-col gap-3 rounded-2xl border p-4 sm:flex-row sm:items-start sm:justify-between"><div className="min-w-0"><p className="font-semibold">{item.barang_nama} · {item.nama}</p><p className="text-xs text-muted-foreground">{item.kode_internal ?? "Tanpa kode internal"}</p><div className="mt-3 grid gap-2 text-sm sm:grid-cols-2"><div className="rounded-xl bg-muted/40 px-3 py-2"><span className="block text-[11px] uppercase tracking-wide text-muted-foreground">Warna</span><span className="font-medium">{catalogVariantColor(item.atribut_pembeda) || "—"}</span></div><div className="rounded-xl bg-muted/40 px-3 py-2"><span className="block text-[11px] uppercase tracking-wide text-muted-foreground">Kapasitas</span><span className="font-medium">{catalogVariantCapacity(item.atribut_pembeda) || "—"}</span></div></div>{item.atribut_pembeda ? <div className="mt-1 flex flex-wrap gap-1.5">{Object.entries(item.atribut_pembeda).filter(([key]) => key !== "warna" && key !== "kapasitas" && key !== "kapasitas_liter").map(([key, value]) => <Badge key={key} variant="outline" className="rounded-full">{key}: {String(value)}</Badge>)}</div> : null}</div><Badge variant={item.status === "active" ? "default" : "secondary"} className="shrink-0 rounded-full">{catalogStatusLabel(item.status)}</Badge></div>)}</CardContent></Card>
+          <Card className="rounded-2xl shadow-sm">
+            <CardHeader>
+              <CardTitle className="text-base">Daftar Varian</CardTitle>
+              <p className="text-sm text-muted-foreground">Foto dikelola sekali per varian dan dipakai bersama oleh unit fisiknya.</p>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {variantOptions.length === 0 ? <p className="text-sm text-muted-foreground">Belum ada varian.</p> : variantOptions.map((item) => (
+                <div key={item.varian_barang_id} className="space-y-3 rounded-2xl border p-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0">
+                      <p className="font-semibold">{item.barang_nama} · {item.nama}</p>
+                      <p className="text-xs text-muted-foreground">{item.kode_internal ?? "Tanpa kode internal"}</p>
+                      <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+                        <div className="rounded-xl bg-muted/40 px-3 py-2"><span className="block text-[11px] uppercase tracking-wide text-muted-foreground">Warna</span><span className="font-medium">{catalogVariantColor(item.atribut_pembeda) || "—"}</span></div>
+                        <div className="rounded-xl bg-muted/40 px-3 py-2"><span className="block text-[11px] uppercase tracking-wide text-muted-foreground">Kapasitas</span><span className="font-medium">{catalogVariantCapacity(item.atribut_pembeda) || "—"}</span></div>
+                      </div>
+                      {item.atribut_pembeda ? <div className="mt-1 flex flex-wrap gap-1.5">{Object.entries(item.atribut_pembeda).filter(([key]) => key !== "warna" && key !== "kapasitas" && key !== "kapasitas_liter").map(([key, value]) => <Badge key={key} variant="outline" className="rounded-full">{key}: {String(value)}</Badge>)}</div> : null}
+                    </div>
+                    <Badge variant={item.status === "active" ? "default" : "secondary"} className="shrink-0 rounded-full">{catalogStatusLabel(item.status)}</Badge>
+                  </div>
+                  {context.data?.usahaId ? <VariantMediaManager usahaId={context.data.usahaId} variantId={item.varian_barang_id} media={item.media ?? []} /> : null}
+                </div>
+              ))}
+            </CardContent>
+          </Card>
           <Alert><AlertTitle>Boundary varian</AlertTitle><AlertDescription>Perubahan varian tidak memindahkan unit fisik dan tidak menentukan ketersediaan.</AlertDescription></Alert>
         </TabsContent>
 

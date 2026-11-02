@@ -26,6 +26,7 @@ import type {
   InventoryUnitHistory,
   InventoryUnitMedia,
   InventoryVariant,
+  InventoryVariantMedia,
   InspectionPendingCommandInput,
   RegisterInventoryUnitInput,
 } from "./types";
@@ -237,7 +238,8 @@ export async function listInventoryUnits(usahaId: string, filters: InventoryList
 
   if (filters.status !== "all") query = query.eq("status", filters.status);
   if (filters.barangId !== "all") query = query.eq("barang_id", filters.barangId);
-  if (filters.varianBarangId !== "all") query = query.eq("varian_barang_id", filters.varianBarangId);
+  if (filters.varianBarangId === "none") query = query.is("varian_barang_id", null);
+  else if (filters.varianBarangId !== "all") query = query.eq("varian_barang_id", filters.varianBarangId);
   if (filters.locationId !== "all") query = query.eq("lokasi_id", filters.locationId);
 
   if (filters.availabilityContext === "ready_now") query = query.eq("status", "ready");
@@ -330,7 +332,26 @@ export async function listInventoryVariants(usahaId: string): Promise<InventoryV
     .eq("status", "active")
     .order("nama", { ascending: true });
   if (error) throw error;
-  return (data ?? []) as InventoryVariant[];
+  const variants = (data ?? []) as InventoryVariant[];
+  const ids = variants.map((variant) => variant.varian_barang_id);
+  const mediaResult = ids.length
+    ? await supabase.from("varian_barang_media")
+        .select("varian_barang_media_id,usaha_id,varian_barang_id,storage_bucket,storage_path,media_type,urutan,is_cover,status")
+        .eq("usaha_id", usahaId).in("varian_barang_id", ids).eq("status", "valid")
+        .order("is_cover", { ascending: false }).order("urutan", { ascending: true })
+    : { data: [], error: null } as const;
+  if (mediaResult.error) throw normalizeRpcError(mediaResult.error, "Foto varian Inventaris");
+
+  const mediaByVariant = new Map<string, InventoryVariantMedia[]>();
+  for (const row of (mediaResult.data ?? []) as InventoryVariantMedia[]) {
+    const list = mediaByVariant.get(row.varian_barang_id) ?? [];
+    list.push({ ...row, url: getPublicMediaUrl(row.storage_bucket, row.storage_path) });
+    mediaByVariant.set(row.varian_barang_id, list);
+  }
+  return variants.map((variant) => ({
+    ...variant,
+    media: mediaByVariant.get(variant.varian_barang_id) ?? [],
+  }));
 }
 
 function newInventoryCommandRequestId() {
@@ -1022,17 +1043,29 @@ function getPublicMediaUrl(storageBucket: string, storagePath: string) {
 }
 
 async function signUnitMediaRows(rows: Array<Omit<InventoryUnitMedia, "signed_url">>): Promise<InventoryUnitMedia[]> {
-  return Promise.all(
-    rows.map(async (row) => {
+  const grouped = new Map<string, Array<Omit<InventoryUnitMedia, "signed_url">>>();
+  for (const row of rows) {
+    const bucketRows = grouped.get(row.storage_bucket) ?? [];
+    bucketRows.push(row);
+    grouped.set(row.storage_bucket, bucketRows);
+  }
+
+  const signedRows = await Promise.all(
+    Array.from(grouped.entries()).map(async ([bucket, bucketRows]) => {
       const { data, error } = await supabase.storage
-        .from(row.storage_bucket)
-        .createSignedUrl(row.storage_path, SIGNED_MEDIA_TTL_SECONDS);
-      return {
+        .from(bucket)
+        .createSignedUrls(bucketRows.map((row) => row.storage_path), SIGNED_MEDIA_TTL_SECONDS);
+      const signedByPath = new Map(
+        (data ?? []).map((item) => [item.path, item.signedUrl]),
+      );
+      return bucketRows.map((row) => ({
         ...row,
-        signed_url: error ? null : data?.signedUrl ?? null,
-      };
+        signed_url: error ? null : signedByPath.get(row.storage_path) ?? null,
+      }));
     }),
   );
+
+  return signedRows.flat();
 }
 
 export async function listInventoryProductOverview(usahaId: string): Promise<InventoryProductOverview[]> {
@@ -1111,6 +1144,25 @@ export async function getInventoryProductDetail(
   const summary = summaryRows.find((row) => row.barang_id === productId);
   if (!summary) throw new Error("Ringkasan Inventaris barang tidak ditemukan.");
 
+  const variantIds = ((variantsResult.data ?? []) as InventoryVariant[]).map((variant) => variant.varian_barang_id);
+  const variantMediaResult = variantIds.length
+    ? await supabase.from("varian_barang_media")
+        .select("varian_barang_media_id,usaha_id,varian_barang_id,storage_bucket,storage_path,media_type,urutan,is_cover,status")
+        .eq("usaha_id", usahaId).in("varian_barang_id", variantIds).eq("status", "valid")
+        .order("is_cover", { ascending: false }).order("urutan", { ascending: true })
+    : { data: [], error: null } as const;
+  if (variantMediaResult.error) throw normalizeRpcError(variantMediaResult.error, "Foto varian Inventaris");
+  const variantMediaById = new Map<string, InventoryVariantMedia[]>();
+  for (const media of (variantMediaResult.data ?? []) as InventoryVariantMedia[]) {
+    const list = variantMediaById.get(media.varian_barang_id) ?? [];
+    list.push({ ...media, url: getPublicMediaUrl(media.storage_bucket, media.storage_path) });
+    variantMediaById.set(media.varian_barang_id, list);
+  }
+  const variantsWithMedia = ((variantsResult.data ?? []) as InventoryVariant[]).map((variant) => ({
+    ...variant,
+    media: variantMediaById.get(variant.varian_barang_id) ?? [],
+  }));
+
   const unitIdsResult = await supabase
     .from("unit_barang")
     .select("unit_barang_id,kode_unit")
@@ -1144,7 +1196,7 @@ export async function getInventoryProductDetail(
 
   return {
     product: productResult.data as unknown as InventoryProductDetail["product"],
-    variants: (variantsResult.data ?? []) as InventoryVariant[],
+    variants: variantsWithMedia,
     media: ((mediaResult.data ?? []) as Array<{
       barang_media_id: string;
       storage_bucket: string;
@@ -1172,6 +1224,26 @@ export async function listInventoryUnitMedia(
     .select("unit_media_id,usaha_id,unit_barang_id,storage_bucket,storage_path,media_type,urutan,is_cover,status,created_at,updated_at")
     .eq("usaha_id", usahaId)
     .eq("unit_barang_id", unitBarangId)
+    .eq("status", "valid")
+    .order("is_cover", { ascending: false })
+    .order("urutan", { ascending: true });
+
+  if (error) throw normalizeRpcError(error, "Foto unit");
+  return signUnitMediaRows((data ?? []) as Array<Omit<InventoryUnitMedia, "signed_url">>);
+}
+
+export async function listInventoryUnitMediaForUnits(
+  usahaId: string,
+  unitIds: string[],
+): Promise<InventoryUnitMedia[]> {
+  const ids = Array.from(new Set(unitIds.filter(Boolean)));
+  if (!ids.length) return [];
+
+  const { data, error } = await supabase
+    .from("unit_media")
+    .select("unit_media_id,usaha_id,unit_barang_id,storage_bucket,storage_path,media_type,urutan,is_cover,status,created_at,updated_at")
+    .eq("usaha_id", usahaId)
+    .in("unit_barang_id", ids)
     .eq("status", "valid")
     .order("is_cover", { ascending: false })
     .order("urutan", { ascending: true });

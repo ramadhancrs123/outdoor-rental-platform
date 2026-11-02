@@ -6,6 +6,8 @@ import {
   Boxes,
   CalendarClock,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   CircleAlert,
   Download,
   EllipsisVertical,
@@ -82,6 +84,9 @@ export function InventoryList() {
   const [productSearch, setProductSearch] = useState("");
   const [productCategory, setProductCategory] = useState("all");
   const [productStatusFilter, setProductStatusFilter] = useState<"all" | "ready" | "rented" | "attention">("all");
+  const [productVariantFilter, setProductVariantFilter] = useState("all");
+  const [productPage, setProductPage] = useState(1);
+  const [productPageSize, setProductPageSize] = useState(12);
   const [productSort, setProductSort] = useState<"latest" | "name" | "units">("latest");
   const [productLayout, setProductLayout] = useState<"grid" | "list">("grid");
   const [exporting, setExporting] = useState(false);
@@ -120,13 +125,13 @@ export function InventoryList() {
   const units = useQuery({
     queryKey: ["inventaris", "units", context.data?.usahaId, filters],
     queryFn: () => listInventoryUnits(context.data!.usahaId, filters),
-    enabled: Boolean(context.data?.usahaId),
+    enabled: Boolean(context.data?.usahaId && viewMode === "units"),
     placeholderData: (previous) => previous,
   });
   const packages = useQuery({
     queryKey: ["inventaris", "packages", context.data?.usahaId],
     queryFn: () => listInventoryPackageAvailability(context.data!.usahaId),
-    enabled: Boolean(context.data?.usahaId),
+    enabled: Boolean(context.data?.usahaId && viewMode === "packages"),
     staleTime: 10_000,
   });
 
@@ -135,6 +140,7 @@ export function InventoryList() {
     [filters.pageSize, units.data?.total],
   );
 
+  const productNameById = new Map((products.data ?? []).map((product) => [product.barang_id, product.nama]));
   const selectedVariants = (variants.data ?? []).filter(
     (variant) => filters.barangId === "all" || variant.barang_id === filters.barangId,
   );
@@ -157,7 +163,15 @@ export function InventoryList() {
             : productStatusFilter === "rented"
               ? product.rented_unit > 0
               : product.attention_unit > 0;
-      return matchesCategory && matchesSearch && matchesStatus;
+      const matchesVariant =
+        productVariantFilter === "all"
+          ? true
+          : productVariantFilter === "none"
+            ? product.variant_count === 0
+            : (variants.data ?? []).some(
+                (variant) => variant.varian_barang_id === productVariantFilter && variant.barang_id === product.barang_id,
+              );
+      return matchesCategory && matchesSearch && matchesStatus && matchesVariant;
     });
 
     return next.sort((a, b) => {
@@ -165,7 +179,14 @@ export function InventoryList() {
       if (productSort === "units") return b.total_unit - a.total_unit;
       return (b.latest_unit_updated_at ? Date.parse(b.latest_unit_updated_at) : 0) - (a.latest_unit_updated_at ? Date.parse(a.latest_unit_updated_at) : 0);
     });
-  }, [productCategory, productOverview.data, productSearch, productSort, productStatusFilter]);
+  }, [productCategory, productOverview.data, productSearch, productSort, productStatusFilter, productVariantFilter, variants.data]);
+
+  const totalProductPages = Math.max(1, Math.ceil(filteredProducts.length / productPageSize));
+  const safeProductPage = Math.min(productPage, totalProductPages);
+  const paginatedProducts = useMemo(
+    () => filteredProducts.slice((safeProductPage - 1) * productPageSize, safeProductPage * productPageSize),
+    [filteredProducts, productPageSize, safeProductPage],
+  );
 
   const filteredProductSummary = useMemo(
     () => ({
@@ -241,11 +262,11 @@ export function InventoryList() {
               <Search className="pointer-events-none absolute left-3.5 top-1/2 size-4.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
               <Input
                 value={productSearch}
-                onChange={(event) => setProductSearch(event.target.value)}
-                placeholder="Cari barang, kategori, atau kode unit..."
+                onChange={(event) => { setProductSearch(event.target.value); setProductPage(1); }}
+                placeholder="Cari nama barang atau kategori…"
                 className="h-12 rounded-2xl border-none bg-muted/45 pl-10 shadow-none"
                 autoComplete="off"
-                aria-label="Cari barang, kategori, atau kode unit"
+                aria-label="Cari nama barang atau kategori"
               />
             </div>
 
@@ -268,22 +289,22 @@ export function InventoryList() {
               ))}
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="outline" className="h-10 rounded-xl bg-muted/45 px-3.5">
+                  <Button variant="outline" className="h-10 rounded-xl bg-muted/45 px-2.5 sm:px-3.5">
                     <ArrowUpDown />
                     {productSort === "latest" ? "Terbaru" : productSort === "units" ? "Unit terbanyak" : "Nama A–Z"}
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start" className="min-w-44">
-                  <DropdownMenuItem onClick={() => setProductSort("latest")}>Terbaru</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setProductSort("units")}>Unit terbanyak</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setProductSort("name")}>Nama A–Z</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => { setProductSort("latest"); setProductPage(1); }}>Terbaru</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => { setProductSort("units"); setProductPage(1); }}>Unit terbanyak</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => { setProductSort("name"); setProductPage(1); }}>Nama A–Z</DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
 
-              <div className="ml-auto flex items-center rounded-xl bg-muted/45 p-1">
+              <div className="ml-auto flex shrink-0 items-center rounded-xl bg-muted/45 p-1">
                 <Button
                   type="button"
                   size="icon"
@@ -307,10 +328,11 @@ export function InventoryList() {
               </div>
 
               {capabilities.mutation ? (
-                <Button asChild className="h-10 rounded-xl px-4">
+                <Button asChild className="h-10 shrink-0 rounded-xl px-2.5 sm:px-4">
                   <Link to={paths.inventarisCreate}>
                     <PackagePlus />
-                    Daftarkan Unit
+                    <span className="sm:hidden">Tambah</span>
+                    <span className="hidden sm:inline">Daftarkan Unit</span>
                   </Link>
                 </Button>
               ) : null}
@@ -320,7 +342,7 @@ export function InventoryList() {
               <div className="-mx-1 flex items-center gap-2 overflow-x-auto px-1 pb-1" aria-label="Filter kategori barang">
                 <button
                   type="button"
-                  onClick={() => setProductCategory("all")}
+                  onClick={() => { setProductCategory("all"); setProductPage(1); }}
                   className={[
                     "h-10 shrink-0 rounded-xl px-4 text-sm font-semibold transition",
                     productCategory === "all"
@@ -334,7 +356,7 @@ export function InventoryList() {
                   <button
                     key={category}
                     type="button"
-                    onClick={() => setProductCategory(category)}
+                    onClick={() => { setProductCategory(category); setProductPage(1); }}
                     className={[
                       "h-10 shrink-0 rounded-xl bg-muted/55 px-4 text-sm font-medium transition hover:bg-muted",
                       productCategory === category ? "bg-primary text-primary-foreground shadow-sm hover:bg-primary" : "",
@@ -367,7 +389,7 @@ export function InventoryList() {
               <div className="space-y-5 px-5 py-5">
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Kategori</label>
-                  <Select value={productCategory} onValueChange={setProductCategory}>
+                  <Select value={productCategory} onValueChange={(value) => { setProductCategory(value); setProductPage(1); }}>
                     <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">Semua kategori</SelectItem>
@@ -377,7 +399,7 @@ export function InventoryList() {
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Kesiapan</label>
-                  <Select value={productStatusFilter} onValueChange={(value) => setProductStatusFilter(value as typeof productStatusFilter)}>
+                  <Select value={productStatusFilter} onValueChange={(value) => { setProductStatusFilter(value as typeof productStatusFilter); setProductPage(1); }}>
                     <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">Semua</SelectItem>
@@ -387,9 +409,24 @@ export function InventoryList() {
                     </SelectContent>
                   </Select>
                 </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Varian produk</label>
+                  <Select value={productVariantFilter} onValueChange={(value) => { setProductVariantFilter(value); setProductPage(1); }}>
+                    <SelectTrigger aria-label="Filter varian produk" className="h-11 rounded-xl"><SelectValue placeholder="Semua varian" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Semua varian</SelectItem>
+                      <SelectItem value="none">Tanpa varian</SelectItem>
+                      {(variants.data ?? []).map((variant) => (
+                        <SelectItem key={variant.varian_barang_id} value={variant.varian_barang_id}>
+                          {(productNameById.get(variant.barang_id) ?? "Barang") + " · " + variant.nama}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
               <SheetFooter className="border-t px-5 py-4">
-                <Button variant="outline" className="h-11 rounded-xl" onClick={() => { setProductCategory("all"); setProductStatusFilter("all"); setProductSearch(""); setProductFilterOpen(false); }}>
+                <Button variant="outline" className="h-11 rounded-xl" onClick={() => { setProductCategory("all"); setProductStatusFilter("all"); setProductVariantFilter("all"); setProductSearch(""); setProductPage(1); setProductFilterOpen(false); }}>
                   Reset
                 </Button>
                 <Button className="h-11 rounded-xl" onClick={() => setProductFilterOpen(false)}>Terapkan</Button>
@@ -447,12 +484,12 @@ export function InventoryList() {
                     <h2 className="font-semibold">Barang tidak ditemukan</h2>
                     <p className="mt-1 max-w-md text-sm leading-6 text-muted-foreground">Coba ubah kategori, pencarian, atau filter kesiapan.</p>
                   </div>
-                  <Button type="button" variant="outline" className="rounded-xl" onClick={() => { setProductCategory("all"); setProductStatusFilter("all"); setProductSearch(""); }}>Reset filter</Button>
+                  <Button type="button" variant="outline" className="rounded-xl" onClick={() => { setProductCategory("all"); setProductStatusFilter("all"); setProductVariantFilter("all"); setProductSearch(""); setProductPage(1); }}>Reset filter</Button>
                 </CardContent>
               </Card>
             ) : productLayout === "list" ? (
               <div className="space-y-2.5">
-                {filteredProducts.map((product) => (
+                {paginatedProducts.map((product) => (
                   <Card key={product.barang_id} className="overflow-hidden rounded-[22px] border-border/70 shadow-none">
                     <div className="flex min-w-0 items-center gap-3 p-3">
                       <Link to={paths.inventarisBarang + "/" + product.barang_id} className="size-20 shrink-0 overflow-hidden rounded-2xl bg-muted outline-none focus-visible:ring-2 focus-visible:ring-ring">
@@ -477,7 +514,7 @@ export function InventoryList() {
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-3">
-                {filteredProducts.map((product) => {
+                {paginatedProducts.map((product) => {
                   const displayState =
                     product.attention_unit > 0 && product.attention_unit >= Math.min(product.ready_unit || 1, product.rented_unit || product.attention_unit)
                       ? { label: "Perhatian", badge: "bg-rose-500 text-white" }
@@ -527,7 +564,30 @@ export function InventoryList() {
                 })}
               </div>
             )}
-          </section>        )
+            {filteredProducts.length > 0 ? (
+              <div className="flex flex-col gap-3 border-t border-border/70 pt-3 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-xs text-muted-foreground">
+                  Menampilkan {(safeProductPage - 1) * productPageSize + 1}–{Math.min(safeProductPage * productPageSize, filteredProducts.length)} dari {filteredProducts.length} barang
+                </p>
+                <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-2 sm:flex">
+                  <Select value={String(productPageSize)} onValueChange={(value) => { setProductPageSize(Number(value)); setProductPage(1); }}>
+                    <SelectTrigger aria-label="Jumlah barang per halaman" className="h-9 w-[88px] rounded-xl"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="12">12 / hlm</SelectItem>
+                      <SelectItem value="24">24 / hlm</SelectItem>
+                      <SelectItem value="48">48 / hlm</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <div className="flex min-w-0 items-center justify-end gap-1">
+                    <Button type="button" variant="outline" aria-label="Sebelumnya" className="h-9 min-w-8 rounded-xl px-2 sm:px-3" disabled={safeProductPage <= 1} onClick={() => setProductPage((page) => Math.max(1, page - 1))}><ChevronLeft className="size-4" /><span className="hidden sm:inline">Sebelumnya</span></Button>
+                    <span className="min-w-10 text-center text-xs tabular-nums text-muted-foreground">{safeProductPage}/{totalProductPages}</span>
+                    <Button type="button" variant="outline" aria-label="Berikutnya" className="h-9 min-w-8 rounded-xl px-2 sm:px-3" disabled={safeProductPage >= totalProductPages} onClick={() => setProductPage((page) => Math.min(totalProductPages, page + 1))}><span className="hidden sm:inline">Berikutnya</span><ChevronRight className="size-4" /></Button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+          </section>
+        )
       ) : null}
 
       {viewMode === "units" ? (
@@ -610,16 +670,16 @@ export function InventoryList() {
             <Select
               value={filters.varianBarangId}
               onValueChange={(value) => updateFilter("varianBarangId", value)}
-              disabled={filters.barangId === "all"}
             >
-              <SelectTrigger aria-label="Filter varian" className="h-10 w-full rounded-xl sm:w-48">
-                <SelectValue placeholder={filters.barangId === "all" ? "Pilih barang dulu" : "Varian"} />
+              <SelectTrigger aria-label="Filter varian" className="h-10 w-full rounded-xl sm:w-56">
+                <SelectValue placeholder="Semua varian" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Semua varian</SelectItem>
+                <SelectItem value="none">Tanpa varian</SelectItem>
                 {selectedVariants.map((variant) => (
                   <SelectItem key={variant.varian_barang_id} value={variant.varian_barang_id}>
-                    {variant.nama}
+                    {(filters.barangId === "all" ? (productNameById.get(variant.barang_id) ?? "Barang") + " · " : "") + variant.nama}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -727,16 +787,16 @@ export function InventoryList() {
               <Select
                 value={filters.varianBarangId}
                 onValueChange={(value) => updateFilter("varianBarangId", value)}
-                disabled={filters.barangId === "all"}
               >
                 <SelectTrigger aria-label="Varian" className="h-11 w-full rounded-xl">
-                  <SelectValue placeholder={filters.barangId === "all" ? "Pilih barang dulu" : "Pilih varian…"} />
+                  <SelectValue placeholder="Semua varian" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Semua varian</SelectItem>
+                  <SelectItem value="none">Tanpa varian</SelectItem>
                   {selectedVariants.map((variant) => (
                     <SelectItem key={variant.varian_barang_id} value={variant.varian_barang_id}>
-                      {variant.nama}
+                      {(filters.barangId === "all" ? (productNameById.get(variant.barang_id) ?? "Barang") + " · " : "") + variant.nama}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -945,11 +1005,19 @@ export function InventoryList() {
             </div>
           </Card>
 
-          <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-3 text-sm">
-            <span className="whitespace-nowrap text-muted-foreground">
-              {units.data!.total} unit · Halaman {filters.page} dari {totalPages}
+          <div className="flex flex-col gap-3 border-t pt-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+            <span className="text-xs text-muted-foreground">
+              Menampilkan {(filters.page - 1) * filters.pageSize + 1}–{Math.min(filters.page * filters.pageSize, units.data!.total)} dari {units.data!.total} unit · Halaman {filters.page}/{totalPages}
             </span>
-            <div className="flex shrink-0 gap-1.5">
+            <div className="flex items-center gap-2">
+              <Select value={String(filters.pageSize)} onValueChange={(value) => updateFilter("pageSize", Number(value))}>
+                <SelectTrigger aria-label="Jumlah unit per halaman" className="h-9 w-[92px] rounded-xl"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="10">10 / hlm</SelectItem>
+                  <SelectItem value="20">20 / hlm</SelectItem>
+                  <SelectItem value="50">50 / hlm</SelectItem>
+                </SelectContent>
+              </Select>
               <Button
                 variant="outline"
                 className="h-9 rounded-xl px-3 text-xs"

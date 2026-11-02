@@ -27,6 +27,19 @@ export type CatalogProduct = {
   total_unit_count?: number;
 };
 
+export type CatalogVariantMedia = {
+  varian_barang_media_id: string;
+  usaha_id: string;
+  varian_barang_id: string;
+  storage_bucket: string;
+  storage_path: string;
+  media_type: string;
+  urutan: number;
+  is_cover: boolean;
+  status: string;
+  url?: string;
+};
+
 export type CatalogVariant = {
   varian_barang_id: string;
   barang_id: string;
@@ -37,6 +50,7 @@ export type CatalogVariant = {
   atribut_pembeda: Record<string, unknown> | null;
   status: string;
   updated_at: string;
+  media?: CatalogVariantMedia[];
 };
 
 export type CatalogTariff = {

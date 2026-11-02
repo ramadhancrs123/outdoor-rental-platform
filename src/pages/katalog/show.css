@@ -1,0 +1,40 @@
+.catalog-detail-media-layout {
+  display: grid;
+  grid-template-columns: minmax(92px, 0.7fr) minmax(0, 1.6fr);
+  gap: 0.625rem;
+  align-items: stretch;
+}
+
+.catalog-detail-media-layout > [data-slot="card"] {
+  width: 100%;
+  min-width: 0;
+}
+
+.catalog-detail-gallery-frame {
+  aspect-ratio: 1;
+  min-height: 96px;
+  max-height: 152px;
+}
+
+@media (min-width: 640px) {
+  .catalog-detail-media-layout {
+    grid-template-columns: minmax(220px, 1.1fr) minmax(0, 0.9fr);
+    gap: 0.875rem;
+  }
+
+  .catalog-detail-gallery-frame {
+    aspect-ratio: 16 / 8;
+    max-height: 210px;
+  }
+}
+
+@media (min-width: 1024px) {
+  .catalog-detail-media-layout {
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  }
+
+  .catalog-detail-gallery-frame {
+    aspect-ratio: 16 / 9;
+    max-height: 245px;
+  }
+}

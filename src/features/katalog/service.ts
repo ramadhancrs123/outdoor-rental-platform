@@ -1,6 +1,6 @@
 import { createClientId } from "@/lib/client-id";
 import { supabase } from "@/app/providers/supabase/client";
-import type { CatalogCategory, CatalogListFilters, CatalogPackageMedia, CatalogPackagePromo, CatalogPackageReference, CatalogProduct, CatalogProductDetail, CatalogSummary, CatalogStockSummary, CatalogTariff, CatalogVariant, CatalogVariantOption } from "./types";
+import type { CatalogCategory, CatalogListFilters, CatalogPackageMedia, CatalogPackagePromo, CatalogPackageReference, CatalogProduct, CatalogProductDetail, CatalogSummary, CatalogStockSummary, CatalogTariff, CatalogVariant, CatalogVariantMedia, CatalogVariantOption } from "./types";
 import { CATALOG_PRODUCT_MEDIA_BUCKET } from "./types";
 import { resolvePackagePrice } from "./pricing";
 import { isActiveCatalogTariff } from "./utils";
@@ -64,7 +64,24 @@ export async function listCatalogVariants(usahaId: string): Promise<CatalogVaria
     .order("nama", { ascending: true });
   if (error) throw error;
 
-  return ((data ?? []) as unknown as Array<CatalogVariant & { barang?: { nama?: string | null } | null }>).map((variant) => ({
+  const rows = (data ?? []) as unknown as Array<CatalogVariant & { barang?: { nama?: string | null } | null }>;
+  const ids = rows.map((variant) => variant.varian_barang_id);
+  const mediaResult = ids.length
+    ? await supabase.from("varian_barang_media")
+        .select("varian_barang_media_id,usaha_id,varian_barang_id,storage_bucket,storage_path,media_type,urutan,is_cover,status")
+        .eq("usaha_id", usahaId).in("varian_barang_id", ids).eq("status", "valid")
+        .order("is_cover", { ascending: false }).order("urutan", { ascending: true })
+    : { data: [], error: null } as const;
+  if (mediaResult.error) throw mediaResult.error;
+
+  const mediaByVariant = new Map<string, CatalogVariantMedia[]>();
+  for (const row of (mediaResult.data ?? []) as CatalogVariantMedia[]) {
+    const list = mediaByVariant.get(row.varian_barang_id) ?? [];
+    list.push({ ...row, url: getCatalogMediaUrl(row.storage_bucket, row.storage_path) });
+    mediaByVariant.set(row.varian_barang_id, list);
+  }
+
+  return rows.map((variant) => ({
     varian_barang_id: variant.varian_barang_id,
     barang_id: variant.barang_id,
     usaha_id: variant.usaha_id,
@@ -74,6 +91,7 @@ export async function listCatalogVariants(usahaId: string): Promise<CatalogVaria
     atribut_pembeda: variant.atribut_pembeda,
     status: variant.status,
     updated_at: variant.updated_at,
+    media: mediaByVariant.get(variant.varian_barang_id) ?? [],
     barang_nama: variant.barang?.nama ?? "Barang",
   }));
 }
@@ -166,6 +184,95 @@ export async function uploadCatalogMediaFile(
   }
 }
 
+export async function uploadCatalogVariantMediaFile(
+  usahaId: string,
+  variantId: string,
+  file: File,
+  options: { isCover?: boolean; urutan?: number; idempotencyKey?: string } = {},
+): Promise<CatalogVariantMedia> {
+  if (!file.type.startsWith("image/")) throw new Error("Foto varian harus berupa gambar.");
+  if (file.size > 8 * 1024 * 1024) throw new Error("Ukuran gambar maksimal 8 MB.");
+
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-80) || "variant-image";
+  const mediaId = createClientId();
+  const storagePath = usahaId + "/varian/" + variantId + "/" + mediaId + "/" + safeName;
+  const { error: uploadError } = await supabase.storage
+    .from(CATALOG_PRODUCT_MEDIA_BUCKET)
+    .upload(storagePath, file, { upsert: false, contentType: file.type });
+  if (uploadError) throw uploadError;
+
+  const idempotencyKey = options.idempotencyKey ?? "add-katalog-variant-media-" + mediaId;
+  try {
+    const row = await executeCatalogCommand<CatalogVariantMedia>(
+      usahaId,
+      "add_varian_barang_media",
+      "command_add_varian_barang_media",
+      {
+        p_usaha_id: usahaId,
+        p_varian_barang_id: variantId,
+        p_storage_bucket: CATALOG_PRODUCT_MEDIA_BUCKET,
+        p_storage_path: storagePath,
+        p_media_type: file.type,
+        p_urutan: options.urutan ?? 1,
+        p_is_cover: options.isCover ?? true,
+        p_idempotency_key: idempotencyKey,
+        p_request_id: createClientId(),
+      },
+      "Penambahan foto varian",
+      idempotencyKey,
+    );
+    return { ...row, url: getCatalogMediaUrl(row.storage_bucket, row.storage_path) };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.startsWith("UNKNOWN_OUTCOME:")) throw new Error(message);
+    throw new Error("Upload berhasil tetapi pencatatan foto varian belum dapat dipastikan. Jangan upload ulang file yang sama sebelum memeriksa status. " + message);
+  }
+}
+
+export async function removeCatalogVariantMedia(
+  usahaId: string,
+  mediaId: string,
+  options: CatalogCommandOptions = {},
+) {
+  const idempotencyKey = commandKey("remove-katalog-variant-media", options);
+  return executeCatalogCommand(
+    usahaId,
+    "remove_varian_barang_media",
+    "command_remove_varian_barang_media",
+    {
+      p_usaha_id: usahaId,
+      p_varian_barang_media_id: mediaId,
+      p_idempotency_key: idempotencyKey,
+      p_request_id: options.requestId ?? createClientId(),
+    },
+    "Penghapusan foto varian",
+    idempotencyKey,
+  );
+}
+
+export async function setCatalogVariantMediaCover(
+  usahaId: string,
+  mediaId: string,
+  isCover: boolean,
+  options: CatalogCommandOptions = {},
+) {
+  const idempotencyKey = commandKey("set-katalog-variant-media-cover", options);
+  return executeCatalogCommand(
+    usahaId,
+    "set_varian_barang_media_cover",
+    "command_set_varian_barang_media_cover",
+    {
+      p_usaha_id: usahaId,
+      p_varian_barang_media_id: mediaId,
+      p_is_cover: isCover,
+      p_idempotency_key: idempotencyKey,
+      p_request_id: options.requestId ?? createClientId(),
+    },
+    "Perubahan foto utama varian",
+    idempotencyKey,
+  );
+}
+
 export async function listCatalogProducts(usahaId: string, filters: CatalogListFilters) {
   const start = (filters.page - 1) * filters.pageSize;
   const end = start + filters.pageSize - 1;
@@ -231,16 +338,30 @@ export async function getCatalogProduct(usahaId: string, productId: string): Pro
     ? supabase.from("tarif_sewa").select(tariffSelect).eq("usaha_id", usahaId).in("varian_barang_id", variantIds).order("berlaku_mulai", { ascending: false })
     : Promise.resolve({ data: [], error: null } as const);
 
-  const [productTariffsResult, variantTariffsResult, mediaResult, packageResult] = await Promise.all([
+  const [productTariffsResult, variantTariffsResult, mediaResult, variantMediaResult, packageResult] = await Promise.all([
     productTariffQuery,
     variantTariffQuery,
     supabase.from("barang_media").select("barang_media_id,usaha_id,barang_id,storage_bucket,storage_path,media_type,urutan,is_cover,status").eq("usaha_id", usahaId).eq("barang_id", productId).order("urutan", { ascending: true }),
+    variantIds.length
+      ? supabase.from("varian_barang_media").select("varian_barang_media_id,usaha_id,varian_barang_id,storage_bucket,storage_path,media_type,urutan,is_cover,status").eq("usaha_id", usahaId).in("varian_barang_id", variantIds).eq("status", "valid").order("is_cover", { ascending: false }).order("urutan", { ascending: true })
+      : Promise.resolve({ data: [], error: null } as const),
     supabase.from("komponen_paket").select("komponen_paket_id,paket_sewa_id,jumlah,paket:paket_sewa!komponen_paket_paket_sewa_id_fkey(paket_sewa_id,nama,status,is_public)").eq("usaha_id", usahaId).eq("barang_id", productId),
   ]);
   if (productTariffsResult.error) throw productTariffsResult.error;
   if (variantTariffsResult.error) throw variantTariffsResult.error;
   if (mediaResult.error) throw mediaResult.error;
+  if (variantMediaResult.error) throw variantMediaResult.error;
   if (packageResult.error) throw packageResult.error;
+  const variantMediaById = new Map<string, CatalogVariantMedia[]>();
+  for (const media of (variantMediaResult.data ?? []) as CatalogVariantMedia[]) {
+    const rows = variantMediaById.get(media.varian_barang_id) ?? [];
+    rows.push({ ...media, url: getCatalogMediaUrl(media.storage_bucket, media.storage_path) });
+    variantMediaById.set(media.varian_barang_id, rows);
+  }
+  const variantsWithMedia = variants.map((variant) => ({
+    ...variant,
+    media: variantMediaById.get(variant.varian_barang_id) ?? [],
+  }));
   const tariffs = [
     ...((productTariffsResult.data ?? []) as CatalogTariff[]),
     ...((variantTariffsResult.data ?? []) as CatalogTariff[]),
@@ -248,7 +369,7 @@ export async function getCatalogProduct(usahaId: string, productId: string): Pro
   return {
     ...(productResult.data as unknown as CatalogProduct),
     active_tariff: tariffs.find((tariff) => (tariff.barang_id === productId || (tariff.varian_barang_id !== null && variantIds.includes(tariff.varian_barang_id))) && isActiveCatalogTariff(tariff)) ?? null,
-    variants,
+    variants: variantsWithMedia,
     tariffs,
     media: (mediaResult.data ?? []) as CatalogProductDetail["media"],
     package_references: (packageResult.data ?? []) as unknown as CatalogPackageReference[],

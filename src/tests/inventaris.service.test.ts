@@ -17,6 +17,7 @@ vi.mock("@/app/providers/supabase/client", () => ({
 import {
   findInventoryUnitCandidates,
   listInventoryLocations,
+  listInventoryUnits,
   listInventoryPackageAvailability,
   getInventoryStateCapabilities,
   markInventoryUnitInspectionPending,
@@ -53,6 +54,40 @@ describe("Inventaris trusted command service", () => {
       "findInventoryUnitCandidates",
       "getInventoryOperationalContext",
     ]));
+  });
+
+
+
+  test("unit list applies the explicit no-variant filter as IS NULL", async () => {
+    const query = {
+      select: vi.fn(),
+      eq: vi.fn(),
+      is: vi.fn(),
+      in: vi.fn(),
+      or: vi.fn(),
+      order: vi.fn(),
+      range: vi.fn().mockResolvedValue({ data: [], error: null, count: 0 }),
+    };
+    for (const method of ["select", "eq", "is", "in", "or", "order"] as const) {
+      query[method].mockReturnValue(query);
+    }
+    fromMock.mockReturnValue(query);
+
+    await expect(listInventoryUnits("usaha-1", {
+      search: "",
+      status: "all",
+      barangId: "barang-1",
+      varianBarangId: "none",
+      locationId: "all",
+      availabilityContext: "all",
+      sort: "updated_desc",
+      page: 1,
+      pageSize: 10,
+    })).resolves.toMatchObject({ units: [], total: 0 });
+
+    expect(query.is).toHaveBeenCalledWith("varian_barang_id", null);
+    expect(query.eq).toHaveBeenCalledWith("barang_id", "barang-1");
+    expect(query.range).toHaveBeenCalledWith(0, 9);
   });
 
   test("location read refreshes an invalid auth session once after permission failure", async () => {

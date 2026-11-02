@@ -2,7 +2,7 @@ import { createClientId } from "@/lib/client-id";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, Check, CircleAlert, PackagePlus, Search, ShieldCheck } from "lucide-react";
 import { useRef, useState } from "react";
-import { Link, useNavigate } from "react-router";
+import { Link, useNavigate, useSearchParams } from "react-router";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -91,9 +91,14 @@ function inventoryVariantAttributeEntries(attributes: Record<string, unknown> | 
 
 export function InventoryCreate() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const commandRef = useRef<string | null>(null);
-  const [form, setForm] = useState<RegisterInventoryUnitInput>(initialForm);
+  const [form, setForm] = useState<RegisterInventoryUnitInput>(() => ({
+    ...initialForm,
+    barangId: searchParams.get("barangId") ?? "",
+    varianBarangId: searchParams.get("varianBarangId") ?? null,
+  }));
   const [mode, setMode] = useState<CreateMode>("form");
   const [formStep, setFormStep] = useState<CreateFormStep>(1);
   const [feedback, setFeedback] = useState("");
@@ -143,9 +148,9 @@ export function InventoryCreate() {
 
   const capabilities = getInventoryStateCapabilities();
   const selectedProduct = (products.data ?? []).find((product) => product.barang_id === form.barangId);
-  const selectedVariant = (variants.data ?? []).find((variant) => variant.varian_barang_id === form.varianBarangId);
-  const selectedLocation = (locations.data ?? []).find((location) => location.lokasi_id === form.lokasiId);
   const selectedVariants = (variants.data ?? []).filter((variant) => variant.barang_id === form.barangId);
+  const selectedVariant = selectedVariants.find((variant) => variant.varian_barang_id === form.varianBarangId);
+  const selectedLocation = (locations.data ?? []).find((location) => location.lokasi_id === form.lokasiId);
   const selectedPurchaseLine = selectedPurchase.data?.lines.find(
     (line) => line.detail_pembelian_id === form.sumberPembelianDetailId,
   );
@@ -530,6 +535,25 @@ export function InventoryCreate() {
                 {selectedVariant ? (
                   <div className="rounded-xl border bg-muted/20 p-3">
                     <p className="text-xs font-semibold">Spesifikasi varian terpilih</p>
+                    {selectedVariant.media?.length ? (
+                      <div className="mt-2 flex items-center gap-3 rounded-xl bg-background p-2">
+                        <img
+                          src={(selectedVariant.media.find((item) => item.is_cover) ?? selectedVariant.media[0]).url}
+                          alt={"Foto varian " + selectedVariant.nama}
+                          className="size-16 shrink-0 rounded-lg object-cover"
+                        />
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold">Foto representatif varian</p>
+                          <p className="mt-1 text-[11px] leading-4 text-muted-foreground">
+                            Foto ini digunakan bersama seluruh unit pada varian yang sama. Foto fisik asli dapat ditambahkan dari detail unit.
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="mt-2 text-[11px] leading-5 text-muted-foreground">
+                        Varian ini belum memiliki foto representatif. Unit tetap dapat didaftarkan; foto dapat ditambahkan dari Katalog.
+                      </p>
+                    )}
                     {inventoryVariantAttributeEntries(selectedVariant.atribut_pembeda).length > 0 ? (
                       <div className="mt-2 flex flex-wrap gap-1.5">
                         {inventoryVariantAttributeEntries(selectedVariant.atribut_pembeda).map((attribute) => (

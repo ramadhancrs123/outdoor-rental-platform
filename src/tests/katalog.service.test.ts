@@ -8,7 +8,7 @@ vi.mock("@/app/providers/supabase/client", () => ({
   },
 }));
 
-import { createCatalogProduct, createCatalogCategory, setCatalogPackagePromo, setCatalogProductStatus } from "@/features/katalog/service";
+import { createCatalogProduct, createCatalogCategory, removeCatalogVariantMedia, setCatalogVariantMediaCover, setCatalogPackagePromo, setCatalogProductStatus } from "@/features/katalog/service";
 
 describe("Katalog trusted mutation service", () => {
   beforeEach(() => {
@@ -161,6 +161,47 @@ describe("Katalog trusted mutation service", () => {
       p_usaha_id: "usaha-1",
       p_command_name: "set_paket_promo",
       p_idempotency_key: "catalog-package-promo-disable-test",
+    });
+  });
+
+  test("variant photo commands remain tenant-scoped and use trusted RPC contracts", async () => {
+    rpcMock
+      .mockResolvedValueOnce({
+        data: { removed: true, varian_barang_media_id: "variant-media-1" },
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        data: {
+          varian_barang_media_id: "variant-media-2",
+          usaha_id: "usaha-1",
+          varian_barang_id: "variant-1",
+          is_cover: true,
+        },
+        error: null,
+      });
+
+    await expect(removeCatalogVariantMedia("usaha-1", "variant-media-1", {
+      idempotencyKey: "remove-variant-photo",
+      requestId: "request-remove-variant-photo",
+    })).resolves.toMatchObject({ removed: true, varian_barang_media_id: "variant-media-1" });
+
+    await expect(setCatalogVariantMediaCover("usaha-1", "variant-media-2", true, {
+      idempotencyKey: "cover-variant-photo",
+      requestId: "request-cover-variant-photo",
+    })).resolves.toMatchObject({ is_cover: true, varian_barang_id: "variant-1" });
+
+    expect(rpcMock).toHaveBeenNthCalledWith(1, "command_remove_varian_barang_media", {
+      p_usaha_id: "usaha-1",
+      p_varian_barang_media_id: "variant-media-1",
+      p_idempotency_key: "remove-variant-photo",
+      p_request_id: "request-remove-variant-photo",
+    });
+    expect(rpcMock).toHaveBeenNthCalledWith(2, "command_set_varian_barang_media_cover", {
+      p_usaha_id: "usaha-1",
+      p_varian_barang_media_id: "variant-media-2",
+      p_is_cover: true,
+      p_idempotency_key: "cover-variant-photo",
+      p_request_id: "request-cover-variant-photo",
     });
   });
 

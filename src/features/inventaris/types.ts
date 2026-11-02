@@ -104,6 +104,19 @@ export type InventoryCatalogItem = {
   status: string;
 };
 
+export type InventoryVariantMedia = {
+  varian_barang_media_id: string;
+  usaha_id: string;
+  varian_barang_id: string;
+  storage_bucket: string;
+  storage_path: string;
+  media_type: string;
+  urutan: number;
+  is_cover: boolean;
+  status: string;
+  url: string;
+};
+
 export type InventoryVariant = {
   varian_barang_id: string;
   barang_id: string;
@@ -112,6 +125,7 @@ export type InventoryVariant = {
   deskripsi: string | null;
   atribut_pembeda: Record<string, unknown> | null;
   status: string;
+  media?: InventoryVariantMedia[];
 };
 
 export type RegisterInventoryUnitInput = {

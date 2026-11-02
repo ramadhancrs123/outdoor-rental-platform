@@ -40,6 +40,7 @@ import { CATALOG_PRODUCT_MEDIA_BUCKET } from "@/features/katalog/types";
 import type { CatalogMedia, CatalogTariff, CatalogVariant } from "@/features/katalog/types";
 import { catalogErrorMessage, catalogStatusLabel, catalogVariantCapacity, catalogVariantColor, formatCatalogMoney, formatTariffDuration } from "@/features/katalog/utils";
 import { paths } from "@/routes/paths";
+import { VariantMediaManager } from "@/components/katalog/variant-media-manager";
 
 type UncertainCommand = {
   commandName: string;
@@ -727,6 +728,15 @@ export function CatalogEdit() {
                     <Button size="sm" className="rounded-xl" disabled={busyKey === "variant-" + variant.varian_barang_id} onClick={() => variantSaveMutation.mutate(variant)}>{busyKey === "variant-" + variant.varian_barang_id ? <Loader2 className="animate-spin" /> : <Save />}Simpan Varian</Button>
                     <Button size="sm" variant="outline" className="rounded-xl" disabled={busyKey === "variant-status-" + variant.varian_barang_id} onClick={() => variantStatusMutation.mutate({ variant, status: variant.status === "active" ? "inactive" : "active" })}>{variant.status === "active" ? "Nonaktifkan" : "Aktifkan"}</Button>
                   </div>
+                  {context.data?.usahaId ? (
+                    <div className="lg:col-span-3">
+                      <VariantMediaManager
+                        usahaId={context.data.usahaId}
+                        variantId={variant.varian_barang_id}
+                        media={variant.media ?? []}
+                      />
+                    </div>
+                  ) : null}
                 </CardContent>
               </Card>
             );
