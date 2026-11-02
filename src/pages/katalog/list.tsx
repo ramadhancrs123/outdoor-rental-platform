@@ -648,7 +648,7 @@ export const CatalogList = () => {
                 </div>
                 <div className="flex flex-col gap-2 sm:flex-row">
                   {filtersActive ? <Button variant="outline" className="rounded-xl" onClick={resetFilters}>Reset Filter</Button> : null}
-                  <Button asChild className="rounded-xl"><Link to={paths.katalog + "/manage?tab=product"}><Plus />Tambah Barang</Link></Button>
+                  <Button asChild className="rounded-xl"><Link to={paths.katalogQuickItem}><Plus />Tambah Barang</Link></Button>
                 </div>
               </CardContent>
             </Card>

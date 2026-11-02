@@ -52,6 +52,22 @@ export function hasRentalFineBridge(): boolean {
   return getRentalFineBridge() !== null;
 }
 
+/** Baca state notifikasi yang masih tersimpan di perangkat Android. */
+export function getActiveRentalFineFromAndroid(): { rentalId: string } | null {
+  const bridge = getRentalFineBridge();
+  if (!bridge || typeof bridge.getActiveRentalFine !== "function") return null;
+  try {
+    const raw = bridge.getActiveRentalFine();
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { rental_id?: unknown };
+    return typeof parsed.rental_id === "string" && parsed.rental_id
+      ? { rentalId: parsed.rental_id }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Mulai/perbarui notifikasi denda native. No-op di browser biasa. */
 export function pushRentalFineToAndroid(payload: RentalFinePayload): void {
   const bridge = getRentalFineBridge();

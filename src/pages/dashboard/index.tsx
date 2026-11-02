@@ -396,7 +396,7 @@ export function Dashboard() {
     ["Selesaikan Sewa", paths.penyewaan, TentTree],
     ["Buat Perawatan", paths.perawatan, Wrench],
     ["Tambah Unit", paths.inventarisCreate, Mountain],
-    ["Tambah Barang", paths.katalogEdit, TentTree],
+    ["Tambah Barang", paths.katalogQuickItem, TentTree],
     ["Catat Pembayaran", paths.keuangan, CreditCard],
   ] as const;
 

@@ -1,7 +1,7 @@
 import { createClientId } from "@/lib/client-id";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, Check, CircleAlert, PackagePlus, Search, ShieldCheck } from "lucide-react";
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -13,6 +13,19 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   UnknownOutcomeNotice,
 } from "@/components/inventaris/inventory-ui";
+import {
+  createCatalogVariant,
+  reconcileCatalogMutation,
+} from "@/features/katalog";
+import {
+  EMPTY_INVENTORY_VARIANT_DRAFT,
+  findInventoryVariantNameCollision,
+  findMatchingInventoryVariant,
+  inventoryVariantDraftAttributes,
+  inventoryVariantDraftName,
+  inventoryVariantHasIdentity,
+  type InventoryVariantDraft,
+} from "@/features/inventaris/variant-draft";
 import {
   getInventarisContext,
   getInventoryStateCapabilities,
@@ -94,6 +107,10 @@ export function InventoryCreate() {
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const commandRef = useRef<string | null>(null);
+  const variantCreationKeyRef = useRef<string | null>(null);
+  const [creatingVariant, setCreatingVariant] = useState(false);
+  const [variantDraft, setVariantDraft] = useState<InventoryVariantDraft>(EMPTY_INVENTORY_VARIANT_DRAFT);
+  const [variantFeedback, setVariantFeedback] = useState("");
   const [form, setForm] = useState<RegisterInventoryUnitInput>(() => ({
     ...initialForm,
     barangId: searchParams.get("barangId") ?? "",
@@ -150,6 +167,22 @@ export function InventoryCreate() {
   const selectedProduct = (products.data ?? []).find((product) => product.barang_id === form.barangId);
   const selectedVariants = (variants.data ?? []).filter((variant) => variant.barang_id === form.barangId);
   const selectedVariant = selectedVariants.find((variant) => variant.varian_barang_id === form.varianBarangId);
+  const newVariantAttributes = useMemo(
+    () => inventoryVariantDraftAttributes(variantDraft),
+    [variantDraft],
+  );
+  const newVariantName = useMemo(
+    () => inventoryVariantDraftName(variantDraft),
+    [variantDraft],
+  );
+  const matchingVariant = useMemo(
+    () => findMatchingInventoryVariant(selectedVariants, variantDraft),
+    [selectedVariants, variantDraft],
+  );
+  const variantNameCollision = useMemo(
+    () => findInventoryVariantNameCollision(selectedVariants, variantDraft),
+    [selectedVariants, variantDraft],
+  );
   const selectedLocation = (locations.data ?? []).find((location) => location.lokasi_id === form.lokasiId);
   const selectedPurchaseLine = selectedPurchase.data?.lines.find(
     (line) => line.detail_pembelian_id === form.sumberPembelianDetailId,
@@ -163,10 +196,18 @@ export function InventoryCreate() {
     selectedPurchaseLine &&
     (selectedPurchaseLine.quantity_needs_review || jumlahUnitValue > selectedPurchaseRemaining),
   );
+  const newVariantPurchaseConflict = Boolean(
+    creatingVariant && sourceMode === "purchase" && selectedPurchaseLine?.varian_barang_id,
+  );
+  const validVariantSelection = creatingVariant
+    ? Boolean(inventoryVariantHasIdentity(variantDraft) && newVariantName && !newVariantPurchaseConflict && !(
+        variantNameCollision && !matchingVariant
+      ))
+    : selectedVariants.length === 0 || Boolean(form.varianBarangId);
   const readyToReview = Boolean(
     context.data?.usahaId &&
     form.barangId &&
-    (selectedVariants.length === 0 || Boolean(form.varianBarangId)) &&
+    validVariantSelection &&
     validJumlahUnit &&
     (sourceMode === "manual" || Boolean(form.sumberPembelianDetailId)) &&
     capabilities.mutation,
@@ -176,9 +217,81 @@ export function InventoryCreate() {
     mutationFn: async () => {
       if (!context.data?.usahaId) throw new Error("Konteks Usaha belum siap.");
       if (!commandRef.current) commandRef.current = createClientId();
+
+      let varianBarangId = form.varianBarangId ?? null;
+      if (creatingVariant) {
+        if (newVariantPurchaseConflict) {
+          throw new Error("Item pembelian ini terikat ke varian tertentu. Pilih varian yang tercantum pada pembelian atau gunakan input manual untuk membuat varian baru.");
+        }
+
+        const reusableVariant = findMatchingInventoryVariant(selectedVariants, variantDraft);
+        if (reusableVariant) {
+          varianBarangId = reusableVariant.varian_barang_id;
+          setForm((current) => ({ ...current, varianBarangId }));
+          setCreatingVariant(false);
+          setVariantFeedback("Spesifikasi yang sama sudah terdaftar. Unit akan menggunakan varian yang sudah ada, tanpa membuat duplikat.");
+        } else {
+          if (variantNameCollision) {
+            throw new Error("Nama varian tersebut sudah digunakan dengan spesifikasi berbeda. Periksa varian yang ada atau ubah atributnya.");
+          }
+          if (!inventoryVariantHasIdentity(variantDraft) || !newVariantName) {
+            throw new Error("Isi minimal satu atribut varian: warna, kapasitas/ukuran, atau seri.");
+          }
+
+          if (!variantCreationKeyRef.current) {
+            variantCreationKeyRef.current = "inventory-create-variant-" + createClientId();
+          }
+
+          try {
+            const createdVariant = await createCatalogVariant(context.data.usahaId, {
+              barangId: form.barangId,
+              nama: newVariantName,
+              kodeInternal: variantDraft.kodeInternal.trim() || null,
+              deskripsi: variantDraft.deskripsi.trim() || null,
+              atributPembeda: newVariantAttributes,
+              status: "active",
+            }, { idempotencyKey: variantCreationKeyRef.current });
+
+            const createdVariantId = typeof createdVariant?.varian_barang_id === "string"
+              ? createdVariant.varian_barang_id
+              : null;
+            if (!createdVariantId) {
+              throw new Error("Varian telah diproses tetapi ID-nya belum diterima. Periksa status varian sebelum mencoba kembali.");
+            }
+            varianBarangId = createdVariantId;
+            variantCreationKeyRef.current = null;
+            setForm((current) => ({ ...current, varianBarangId: createdVariantId }));
+            setCreatingVariant(false);
+            setVariantDraft(EMPTY_INVENTORY_VARIANT_DRAFT);
+            setVariantFeedback("Varian baru berhasil dibuat di bawah barang yang sama. Unit akan didaftarkan ke varian tersebut.");
+            await queryClient.invalidateQueries({ queryKey: ["inventaris", "variants", context.data.usahaId] });
+            await variants.refetch();
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (!message.includes("BUSINESS_CONFLICT") && !message.includes("23505") && !message.toLowerCase().includes("duplicate")) {
+              throw error;
+            }
+
+            const refreshed = await variants.refetch();
+            const racedVariant = findMatchingInventoryVariant(
+              (refreshed.data ?? variants.data ?? []).filter((variant) => variant.barang_id === form.barangId),
+              variantDraft,
+            );
+            if (!racedVariant) throw error;
+
+            varianBarangId = racedVariant.varian_barang_id;
+            variantCreationKeyRef.current = null;
+            setForm((current) => ({ ...current, varianBarangId: racedVariant.varian_barang_id }));
+            setCreatingVariant(false);
+            setVariantDraft(EMPTY_INVENTORY_VARIANT_DRAFT);
+            setVariantFeedback("Varian yang sama baru saja dibuat oleh proses lain. Unit akan menggunakan varian tersebut.");
+          }
+        }
+      }
+
       return registerInventoryUnits(context.data.usahaId, {
         barangId: form.barangId,
-        varianBarangId: form.varianBarangId,
+        varianBarangId,
         lokasiId: form.lokasiId,
         tanggalDiperoleh: form.tanggalDiperoleh,
         sumberPembelianDetailId: sourceMode === "purchase" ? form.sumberPembelianDetailId : null,
@@ -224,10 +337,54 @@ export function InventoryCreate() {
     setForm((current) => ({ ...current, [key]: value }));
   };
 
+  const updateVariantDraft = <K extends keyof InventoryVariantDraft>(
+    key: K,
+    value: InventoryVariantDraft[K],
+  ) => {
+    variantCreationKeyRef.current = null;
+    setVariantDraft((current) => ({ ...current, [key]: value }));
+    setVariantFeedback("");
+  };
+
   const reconcile = async () => {
-    if (!context.data?.usahaId || !commandRef.current) return;
+    if (!context.data?.usahaId) return;
     setReconciling(true);
     try {
+      if (variantCreationKeyRef.current) {
+        const variantResult = await reconcileCatalogMutation(
+          context.data.usahaId,
+          "create_varian_barang",
+          variantCreationKeyRef.current,
+        );
+        if (variantResult.state === "committed" && variantResult.response) {
+          const response = variantResult.response as unknown as { varian_barang_id?: string };
+          if (!response.varian_barang_id) {
+            setFeedback("Pembuatan varian tercatat, tetapi ID varian tidak tersedia. Jangan buat varian kedua; periksa Katalog.");
+            return;
+          }
+          setForm((current) => ({ ...current, varianBarangId: response.varian_barang_id! }));
+          setCreatingVariant(false);
+          setVariantDraft(EMPTY_INVENTORY_VARIANT_DRAFT);
+          setVariantFeedback("Varian baru terkonfirmasi. Tinjau kembali pendaftaran unit untuk melanjutkan.");
+          variantCreationKeyRef.current = null;
+          commandRef.current = null;
+          await queryClient.invalidateQueries({ queryKey: ["inventaris", "variants", context.data.usahaId] });
+          await variants.refetch();
+          setFeedback("");
+          setMode("review");
+        } else if (variantResult.state === "not_found") {
+          variantCreationKeyRef.current = null;
+          commandRef.current = null;
+          setFeedback("Pembuatan varian tidak tercatat. Periksa atributnya, lalu coba kembali.");
+          setFormStep(1);
+          setMode("form");
+        } else {
+          setFeedback("Hasil pembuatan varian masih belum dapat dipastikan. Jangan mengulang pembuatan varian.");
+        }
+        return;
+      }
+
+      if (!commandRef.current) return;
       const result = await reconcileInventoryCommand(
         context.data.usahaId,
         "register_inventory_units",
@@ -463,6 +620,10 @@ export function InventoryCreate() {
                     setSourceMode("manual");
                     setSelectedPurchaseId(null);
                     setJumlahUnit("1");
+                    setCreatingVariant(false);
+                    setVariantDraft(EMPTY_INVENTORY_VARIANT_DRAFT);
+                    setVariantFeedback("");
+                    variantCreationKeyRef.current = null;
                     const productVariants = (variants.data ?? []).filter((variant) => variant.barang_id === value);
                     setForm((current) => ({
                       ...current,
@@ -484,12 +645,33 @@ export function InventoryCreate() {
               </div>
 
               <div className={formStep === 1 ? "space-y-1.5 sm:col-span-2" : "hidden"}>
-                <label htmlFor="inventory-variant" className="text-xs font-semibold">
-                  Varian{" "}
-                  <span className="font-normal text-muted-foreground">
-                    {selectedVariants.length > 0 ? "(wajib dipilih)" : "(barang tanpa varian)"}
-                  </span>
-                </label>
+                <div className="flex items-center justify-between gap-2">
+                  <label htmlFor="inventory-variant" className="text-xs font-semibold">
+                    Varian <span className="font-normal text-muted-foreground">{selectedVariants.length > 0 ? "(wajib dipilih)" : "(opsional)"}</span>
+                  </label>
+                  {form.barangId ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={creatingVariant ? "ghost" : "outline"}
+                      className="h-8 shrink-0 rounded-lg px-2.5 text-xs"
+                      onClick={() => {
+                        if (creatingVariant) {
+                          setCreatingVariant(false);
+                          setVariantDraft(EMPTY_INVENTORY_VARIANT_DRAFT);
+                          variantCreationKeyRef.current = null;
+                          setVariantFeedback("");
+                        } else {
+                          setCreatingVariant(true);
+                          update("varianBarangId", null);
+                          setVariantFeedback("");
+                        }
+                      }}
+                    >
+                      {creatingVariant ? "Batal" : "+ Tambah varian"}
+                    </Button>
+                  ) : null}
+                </div>
                 <Select
                   value={form.varianBarangId ?? (selectedVariants.length > 0 ? "" : "none")}
                   onValueChange={(value) => {
@@ -498,7 +680,7 @@ export function InventoryCreate() {
                     setJumlahUnit("1");
                     setForm((current) => ({ ...current, varianBarangId: value === "none" ? null : value, sumberPembelianDetailId: null }));
                   }}
-                  disabled={!form.barangId || selectedVariants.length === 0}
+                  disabled={!form.barangId || selectedVariants.length === 0 || creatingVariant}
                 >
                   <SelectTrigger id="inventory-variant" className="h-11 w-full rounded-xl">
                     <SelectValue placeholder={
@@ -527,12 +709,12 @@ export function InventoryCreate() {
                     ))}
                   </SelectContent>
                 </Select>
-                {selectedVariants.length > 0 && !form.varianBarangId ? (
+                {!creatingVariant && selectedVariants.length > 0 && !form.varianBarangId ? (
                   <p className="text-[11px] leading-5 text-amber-700 dark:text-amber-400">
                     Pilih varian sesuai barang fisik agar unit tidak tercatat pada seri atau kualitas yang keliru.
                   </p>
                 ) : null}
-                {selectedVariant ? (
+                {!creatingVariant && selectedVariant ? (
                   <div className="rounded-xl border bg-muted/20 p-3">
                     <p className="text-xs font-semibold">Spesifikasi varian terpilih</p>
                     {selectedVariant.media?.length ? (
@@ -572,6 +754,92 @@ export function InventoryCreate() {
                       <p className="mt-1 text-xs leading-5 text-muted-foreground">{selectedVariant.deskripsi}</p>
                     ) : null}
                   </div>
+                ) : null}
+                {creatingVariant ? (
+                  <div className="space-y-3 rounded-xl border border-primary/20 bg-primary/[0.025] p-3.5">
+                    <div>
+                      <p className="text-sm font-semibold">Tambah varian untuk {selectedProduct?.nama}</p>
+                      <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
+                        Varian baru akan menjadi bagian dari barang induk ini. Tidak ada barang katalog baru yang dibuat.
+                      </p>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <label className="grid gap-1.5 text-xs font-medium">
+                        Warna
+                        <Input value={variantDraft.warna} onChange={(event) => updateVariantDraft("warna", event.target.value)} placeholder="Contoh: Hitam" className="h-10 rounded-lg" />
+                      </label>
+                      <label className="grid gap-1.5 text-xs font-medium">
+                        Kapasitas / Ukuran
+                        <Input value={variantDraft.kapasitas} onChange={(event) => updateVariantDraft("kapasitas", event.target.value)} placeholder="Contoh: 4 orang" className="h-10 rounded-lg" />
+                      </label>
+                      <label className="grid gap-1.5 text-xs font-medium">
+                        Seri
+                        <Input value={variantDraft.seri} onChange={(event) => updateVariantDraft("seri", event.target.value)} placeholder="Contoh: V2" className="h-10 rounded-lg" />
+                      </label>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <label className="grid gap-1.5 text-xs font-medium">
+                        Kode internal <span className="font-normal text-muted-foreground">(opsional)</span>
+                        <Input value={variantDraft.kodeInternal} onChange={(event) => updateVariantDraft("kodeInternal", event.target.value)} placeholder="Contoh: TND-4P-BLK" className="h-10 rounded-lg" />
+                      </label>
+                      <label className="grid gap-1.5 text-xs font-medium">
+                        Catatan varian <span className="font-normal text-muted-foreground">(opsional)</span>
+                        <Input value={variantDraft.catatan} onChange={(event) => updateVariantDraft("catatan", event.target.value)} placeholder="Catatan pembeda" className="h-10 rounded-lg" />
+                      </label>
+                    </div>
+                    <label className="grid gap-1.5 text-xs font-medium">
+                      Deskripsi <span className="font-normal text-muted-foreground">(opsional)</span>
+                      <Textarea value={variantDraft.deskripsi} onChange={(event) => updateVariantDraft("deskripsi", event.target.value)} placeholder="Informasi tambahan tentang varian" className="min-h-16 rounded-lg" rows={2} />
+                    </label>
+                    <div className="rounded-lg bg-background px-3 py-2.5">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Nama varian otomatis</p>
+                      <p className="mt-1 text-sm font-semibold">{newVariantName || "Isi minimal satu atribut pembeda"}</p>
+                    </div>
+                    {!inventoryVariantHasIdentity(variantDraft) ? (
+                      <p className="text-[11px] text-amber-700 dark:text-amber-400">Isi minimal satu atribut: warna, kapasitas/ukuran, atau seri.</p>
+                    ) : null}
+                    {matchingVariant ? (
+                      <Alert className="border-primary/20 bg-primary/[0.035] py-2.5">
+                        <AlertTitle className="text-xs">Varian sudah tersedia</AlertTitle>
+                        <AlertDescription className="text-xs leading-5">
+                          {matchingVariant.nama} memiliki atribut yang sama. Gunakan data yang sudah ada agar tidak membuat duplikat.
+                        </AlertDescription>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="mt-2 h-8 rounded-lg"
+                          onClick={() => {
+                            setForm((current) => ({ ...current, varianBarangId: matchingVariant.varian_barang_id }));
+                            setCreatingVariant(false);
+                            setVariantDraft(EMPTY_INVENTORY_VARIANT_DRAFT);
+                            setVariantFeedback("Varian yang sama sudah tersedia dan akan digunakan untuk unit ini.");
+                          }}
+                        >
+                          Gunakan varian yang ada
+                        </Button>
+                      </Alert>
+                    ) : variantNameCollision ? (
+                      <Alert variant="destructive" className="py-2.5">
+                        <AlertTitle className="text-xs">Nama varian sudah digunakan</AlertTitle>
+                        <AlertDescription className="text-xs leading-5">
+                          Nama ini sudah dipakai spesifikasi lain pada barang yang sama. Ubah atribut atau pilih varian yang tersedia.
+                        </AlertDescription>
+                      </Alert>
+                    ) : null}
+                    {newVariantPurchaseConflict ? (
+                      <Alert variant="destructive" className="py-2.5">
+                        <AlertTitle className="text-xs">Terikat ke varian pembelian</AlertTitle>
+                        <AlertDescription className="text-xs leading-5">
+                          Rincian pembelian ini sudah menentukan varian tertentu. Gunakan varian yang tercantum pada pembelian atau ganti asal unit menjadi input manual.
+                        </AlertDescription>
+                      </Alert>
+                    ) : null}
+                  </div>
+                ) : variantFeedback ? (
+                  <Alert className="border-primary/20 bg-primary/[0.035] py-2.5">
+                    <AlertDescription className="text-xs leading-5">{variantFeedback}</AlertDescription>
+                  </Alert>
                 ) : null}
               </div>
 
@@ -689,6 +957,12 @@ export function InventoryCreate() {
                               onClick={() => {
                                 const remaining = Math.max(0, Math.floor(Number(line.jumlah) || 0) - Number(line.registered_unit_count ?? 0));
                                 setJumlahUnit(String(remaining));
+                                if (line.barang_id !== form.barangId || line.varian_barang_id) {
+                                  setCreatingVariant(false);
+                                  setVariantDraft(EMPTY_INVENTORY_VARIANT_DRAFT);
+                                  setVariantFeedback("");
+                                  variantCreationKeyRef.current = null;
+                                }
                                 setForm((current) => ({
                                   ...current,
                                   barangId: line.barang_id ?? "",
@@ -786,8 +1060,16 @@ export function InventoryCreate() {
                 </div>
                 <div className="rounded-2xl border bg-muted/20 p-4">
                   <p className="text-xs text-muted-foreground">Varian</p>
-                  <p className="mt-1 font-semibold">{selectedVariant?.nama ?? "Tanpa varian"}</p>
-                  {selectedVariant ? (
+                  <p className="mt-1 font-semibold">{creatingVariant ? (newVariantName || "Varian baru belum lengkap") : (selectedVariant?.nama ?? "Tanpa varian")}</p>
+                  {creatingVariant ? (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {inventoryVariantAttributeEntries(newVariantAttributes).map((attribute) => (
+                        <Badge key={attribute.label} variant="outline" className="rounded-full">
+                          {attribute.label}: {attribute.value}
+                        </Badge>
+                      ))}
+                    </div>
+                  ) : selectedVariant ? (
                     <>
                       {inventoryVariantAttributeEntries(selectedVariant.atribut_pembeda).length > 0 ? (
                         <div className="mt-2 flex flex-wrap gap-1.5">

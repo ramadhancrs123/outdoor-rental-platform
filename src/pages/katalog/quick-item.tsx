@@ -14,7 +14,7 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ListView } from "@/components/refine-ui/views/list-view";
-import { getCatalogContext, listCatalogCategories, uploadCatalogMediaFile } from "@/features/katalog";
+import { getCatalogContext, listCatalogCategories, uploadCatalogMediaFile, uploadCatalogVariantMediaFile } from "@/features/katalog";
 import {
   listQuickItemLocations,
   onboardQuickItem,
@@ -25,7 +25,15 @@ import {
 import { paths } from "@/routes/paths";
 
 type QuickItemPageState = "form" | "processing" | "success" | "error" | "unknown";
-type VariantDraft = { attributes: Record<string, string>; quantity: string; nominal: string; note: string };
+type VariantDraft = {
+  attributes: Record<string, string>;
+  quantity: string;
+  nominal: string;
+  note: string;
+  photoFile: File | null;
+  photoPreviewUrl: string | null;
+  photoError: string;
+};
 
 const DIMENSIONS = [
   { key: "warna", label: "Warna" },
@@ -38,6 +46,9 @@ const createVariantDraft = (dimensions: string[], nominal = ""): VariantDraft =>
   quantity: "1",
   nominal,
   note: "",
+  photoFile: null,
+  photoPreviewUrl: null,
+  photoError: "",
 });
 
 const formatMoney = (value: number, currency: string) =>
@@ -50,9 +61,57 @@ const formatMoney = (value: number, currency: string) =>
 const errorMessage = (error: unknown) =>
   error instanceof Error ? error.message : "Barang belum dapat ditambahkan.";
 
+function VariantPhotoField({
+  row,
+  index,
+  onChange,
+}: {
+  row: VariantDraft;
+  index: number;
+  onChange: (index: number, file: File | null) => void;
+}) {
+  return (
+    <div className="flex min-w-0 items-center gap-2.5">
+      {row.photoPreviewUrl ? (
+        <div className="relative size-12 shrink-0 overflow-hidden rounded-xl border bg-muted">
+          <img src={row.photoPreviewUrl} alt={"Pratinjau foto pilihan " + (index + 1)} className="h-full w-full object-cover" />
+          <button
+            type="button"
+            aria-label={"Hapus foto pilihan " + (index + 1)}
+            onClick={() => onChange(index, null)}
+            className="absolute right-0.5 top-0.5 grid size-5 place-items-center rounded-full bg-black/65 text-white"
+          >
+            <X className="size-3" />
+          </button>
+        </div>
+      ) : null}
+      <div className="min-w-0 flex-1">
+        <label className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-lg border bg-background px-2.5 text-xs font-semibold hover:bg-muted/50">
+          <ImagePlus className="size-3.5 text-primary" />
+          {row.photoFile ? "Ganti foto" : "Pilih foto"}
+          <input
+            type="file"
+            accept="image/*"
+            className="sr-only"
+            onChange={(event) => {
+              onChange(index, event.target.files?.[0] ?? null);
+              event.target.value = "";
+            }}
+          />
+        </label>
+        <p className="mt-1 truncate text-[10px] leading-4 text-muted-foreground">
+          {row.photoFile?.name ?? "JPG, PNG, WEBP · maks. 8 MB"}
+        </p>
+        {row.photoError ? <p className="mt-0.5 text-[10px] leading-4 text-destructive">{row.photoError}</p> : null}
+      </div>
+    </div>
+  );
+}
+
 export function CatalogQuickItem() {
   const queryClient = useQueryClient();
   const commandRef = useRef<string | null>(null);
+  const variantPreviewUrlsRef = useRef<Set<string>>(new Set());
   const [pageState, setPageState] = useState<QuickItemPageState>("form");
   const [feedback, setFeedback] = useState("");
   const [result, setResult] = useState<QuickItemOnboardingResult | null>(null);
@@ -101,6 +160,11 @@ export function CatalogQuickItem() {
     () => quickItemLocationSelection(locations.data ?? []),
     [locations.data],
   );
+
+  useEffect(() => () => {
+    for (const url of variantPreviewUrlsRef.current) URL.revokeObjectURL(url);
+    variantPreviewUrlsRef.current.clear();
+  }, []);
 
   const variantUnitTotal = useMemo(
     () => variants.reduce((total, row) => total + (Number.isFinite(Number(row.quantity)) ? Number(row.quantity) : 0), 0),
@@ -212,7 +276,7 @@ export function CatalogQuickItem() {
         idempotencyKey: currentCommandKey ?? undefined,
       });
 
-      let mediaWarning = "";
+      const mediaWarnings: string[] = [];
       if (photoFile && currentCommandKey) {
         try {
           await uploadCatalogMediaFile(context.data.usahaId, nextResult.barang_id, photoFile, {
@@ -221,11 +285,47 @@ export function CatalogQuickItem() {
             idempotencyKey: "quick-item-media-" + currentCommandKey,
           });
         } catch (error) {
-          mediaWarning = errorMessage(error);
+          mediaWarnings.push("Foto produk: " + errorMessage(error));
         }
       }
 
-      return { result: nextResult, mediaWarning };
+      if (variantMode && currentCommandKey) {
+        const uploadedVariantIds = new Set<string>();
+        for (const [index, draft] of variants.entries()) {
+          if (!draft.photoFile) continue;
+
+          const createdVariant = nextResult.variants.find((candidate) =>
+            !uploadedVariantIds.has(candidate.varian_barang_id) &&
+            dimensions.every((dimension) =>
+              String(candidate.atribut_pembeda?.[dimension] ?? "").trim() ===
+              String(draft.attributes[dimension] ?? "").trim(),
+            ),
+          );
+
+          if (!createdVariant?.varian_barang_id) {
+            mediaWarnings.push("Foto pilihan " + (index + 1) + ": data varian hasil simpan tidak dapat dicocokkan.");
+            continue;
+          }
+
+          uploadedVariantIds.add(createdVariant.varian_barang_id);
+          try {
+            await uploadCatalogVariantMediaFile(
+              context.data.usahaId,
+              createdVariant.varian_barang_id,
+              draft.photoFile,
+              {
+                isCover: true,
+                urutan: 1,
+                idempotencyKey: "quick-item-variant-media-" + currentCommandKey + "-" + createdVariant.varian_barang_id,
+              },
+            );
+          } catch (error) {
+            mediaWarnings.push("Foto pilihan " + (index + 1) + ": " + errorMessage(error));
+          }
+        }
+      }
+
+      return { result: nextResult, mediaWarning: mediaWarnings.join("\n") };
     },
     onMutate: () => {
       setPageState("processing");
@@ -303,8 +403,50 @@ export function CatalogQuickItem() {
   const submitDisabled =
     Boolean(validationError) ||
     Boolean(photoInputError) ||
+    (variantMode && variants.some((row) => Boolean(row.photoError))) ||
     mutation.isPending ||
     pageState === "processing";
+
+  const handleVariantPhotoChange = (index: number, file: File | null) => {
+    const current = variants[index];
+    if (!current) return;
+
+    if (current.photoPreviewUrl) {
+      URL.revokeObjectURL(current.photoPreviewUrl);
+      variantPreviewUrlsRef.current.delete(current.photoPreviewUrl);
+    }
+
+    let nextFile = file;
+    let photoError = "";
+    if (file && !file.type.startsWith("image/")) {
+      nextFile = null;
+      photoError = "Foto varian harus berupa gambar.";
+    } else if (file && file.size > 8 * 1024 * 1024) {
+      nextFile = null;
+      photoError = "Ukuran foto maksimal 8 MB.";
+    }
+
+    const photoPreviewUrl = nextFile ? URL.createObjectURL(nextFile) : null;
+    if (photoPreviewUrl) variantPreviewUrlsRef.current.add(photoPreviewUrl);
+
+    setVariants((rows) => rows.map((row, rowIndex) =>
+      rowIndex === index ? { ...row, photoFile: nextFile, photoPreviewUrl, photoError } : row,
+    ));
+  };
+
+  const removeVariantDraft = (index: number) => {
+    const target = variants[index];
+    if (target?.photoPreviewUrl) {
+      URL.revokeObjectURL(target.photoPreviewUrl);
+      variantPreviewUrlsRef.current.delete(target.photoPreviewUrl);
+    }
+    setVariants((rows) => rows.filter((_, rowIndex) => rowIndex !== index));
+  };
+
+  const clearVariantDraftPhotos = () => {
+    for (const url of variantPreviewUrlsRef.current) URL.revokeObjectURL(url);
+    variantPreviewUrlsRef.current.clear();
+  };
 
   const toggleDimension = (key: string) => {
     setDimensions((current) => {
@@ -328,6 +470,7 @@ export function CatalogQuickItem() {
     setPhotoFile(null);
     setPhotoInputError("");
     setPhotoUploadWarning("");
+    clearVariantDraftPhotos();
     setPrice("65000");
     setDurationUnit("hari");
     setDurationValue("1");
@@ -389,7 +532,7 @@ export function CatalogQuickItem() {
             {photoUploadWarning ? (
               <Alert>
                 <AlertTitle>Barang tersimpan, foto belum dapat dipastikan</AlertTitle>
-                <AlertDescription>{photoUploadWarning} Foto dapat ditambahkan lagi dari detail Barang.</AlertDescription>
+                <AlertDescription className="whitespace-pre-line">{photoUploadWarning} Barang tetap tersimpan; periksa kembali media sebelum mengaktifkan katalog publik.</AlertDescription>
               </Alert>
             ) : null}
 
@@ -723,7 +866,7 @@ export function CatalogQuickItem() {
                       className="size-8 rounded-lg"
                       aria-label={"Hapus pilihan " + (index + 1)}
                       disabled={variants.length === 1}
-                      onClick={() => setVariants((current) => current.filter((_, rowIndex) => rowIndex !== index))}
+                      onClick={() => removeVariantDraft(index)}
                     >
                       <Trash2 className="size-4" />
                     </Button>
@@ -787,6 +930,10 @@ export function CatalogQuickItem() {
                       />
                     </label>
                   </div>
+                  <div className="mt-3 border-t pt-3">
+                    <p className="mb-2 text-[10px] font-semibold text-muted-foreground">Foto varian · opsional</p>
+                    <VariantPhotoField row={row} index={index} onChange={handleVariantPhotoChange} />
+                  </div>
                   {includeNote ? (
                     <label className="mt-3 grid gap-1">
                       <span className="text-[10px] font-semibold text-muted-foreground">Catatan</span>
@@ -809,7 +956,7 @@ export function CatalogQuickItem() {
             </div>
 
             <div className="hidden overflow-x-auto rounded-2xl border sm:block">
-              <table className="w-full min-w-[760px] text-sm">
+              <table className="w-full min-w-[900px] text-sm">
                 <thead className="border-b bg-muted/30 text-left">
                   <tr>
                     {dimensions.map((dimension) => (
@@ -820,6 +967,7 @@ export function CatalogQuickItem() {
                     <th className="px-3 py-3 font-medium">Jumlah</th>
                     <th className="px-3 py-3 font-medium">Harga Sewa</th>
                     {includeNote ? <th className="min-w-52 px-3 py-3 font-medium">Catatan</th> : null}
+                    <th className="min-w-52 px-3 py-3 font-medium">Foto varian</th>
                     <th className="w-12 px-2 py-3" />
                   </tr>
                 </thead>
@@ -891,6 +1039,9 @@ export function CatalogQuickItem() {
                           />
                         </td>
                       ) : null}
+                      <td className="p-2">
+                        <VariantPhotoField row={row} index={index} onChange={handleVariantPhotoChange} />
+                      </td>
                       <td className="p-2 text-right">
                         <Button
                           type="button"
@@ -898,7 +1049,7 @@ export function CatalogQuickItem() {
                           size="icon"
                           aria-label="Hapus pilihan"
                           disabled={variants.length === 1}
-                          onClick={() => setVariants((current) => current.filter((_, rowIndex) => rowIndex !== index))}
+                          onClick={() => removeVariantDraft(index)}
                         >
                           <Trash2 className="size-4" />
                         </Button>
