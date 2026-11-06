@@ -11,8 +11,6 @@ import {
   ChevronDown,
   CircleDollarSign,
   Coins,
-  ClipboardCheck,
-  ClipboardList,
   CreditCard,
   FileBarChart,
   Home,
@@ -21,7 +19,6 @@ import {
   Mountain,
   Package,
   Receipt,
-  RotateCcw,
   ShoppingBag,
   TentTree,
   Truck,
@@ -65,12 +62,10 @@ const sections: MenuSection[] = [
     id: "operational",
     label: "Operasional",
     items: [
-      { label: "Permintaan", path: paths.permintaan, icon: ClipboardList },
       { label: "Reservasi", path: paths.reservasi, icon: CalendarCheck },
       { label: "Penyewaan", path: paths.penyewaan, icon: TentTree },
-      { label: "Pengembalian", path: paths.pengembalian, icon: RotateCcw },
-      { label: "Pemeriksaan", path: paths.pemeriksaan, icon: ClipboardCheck },
       { label: "Penjualan", path: paths.penjualan, icon: ShoppingBag },
+      { label: "Perawatan", path: paths.perawatan, icon: Wrench },
     ],
   },
   {
@@ -93,7 +88,6 @@ const sections: MenuSection[] = [
       { label: "Inventaris", path: paths.inventaris, icon: Boxes },
       { label: "Pembelian", path: paths.pembelian, icon: Receipt },
       { label: "Pemasok", path: paths.pemasok, icon: Truck },
-      { label: "Perawatan", path: paths.perawatan, icon: Wrench },
     ],
   },
   {
@@ -225,7 +219,7 @@ export function Sidebar() {
                   onClick={() => setOpenSection((currentSection) => currentSection === section.id ? "" : section.id)}
                   className={cn(
                     "flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-[10px] font-bold uppercase tracking-[0.16em]",
-                    "text-sidebar-foreground/55 transition-colors hover:bg-sidebar-accent/55 hover:text-sidebar-foreground/85",
+                    "text-[#665B52] transition-colors hover:bg-sidebar-accent/55 hover:text-[#211D19] dark:text-[#C3B7AE] dark:hover:text-[#F4F1ED]",
                     iconOnly && "hidden",
                     sectionIsActive && "text-sidebar-foreground/80",
                   )}
@@ -298,22 +292,22 @@ function NavItem({
       title={iconOnly ? label : undefined}
       className={cn(
         "group/nav relative flex min-h-[38px] w-full items-center gap-3 rounded-lg px-3 text-[13px] font-medium",
-        "text-sidebar-foreground/72 transition-[background-color,color,box-shadow] duration-150",
-        "hover:bg-sidebar-accent/70 hover:text-sidebar-foreground",
+        "text-[#211D19] transition-[background-color,color,box-shadow] duration-150 dark:text-[#F4F1ED]",
+        "hover:bg-sidebar-accent/70 hover:text-[#171411] dark:hover:text-white",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring",
         iconOnly && "justify-center px-2",
         prominent && "mb-1 min-h-10 font-semibold",
         isActive && [
-          "bg-sidebar-accent text-sidebar-accent-foreground shadow-sm",
+          "bg-sidebar-accent text-[#211D19] shadow-sm dark:text-[#FFF7F0]",
           "shadow-[inset_3px_0_0_var(--brand-orange),0_1px_2px_rgba(38,28,20,0.04)]",
-          "dark:bg-primary/10 dark:text-orange-100",
+          "dark:bg-primary/10",
         ],
       )}
     >
       <Icon
         className={cn(
           "size-[17px] shrink-0 transition-colors",
-          isActive ? "text-primary" : "text-sidebar-foreground/55 group-hover/nav:text-sidebar-foreground/85",
+          isActive ? "text-primary" : "text-[#766D66] group-hover/nav:text-[#28231F] dark:text-[#B6AAA0] dark:group-hover/nav:text-[#F4F1ED]",
           prominent && "size-[18px]",
         )}
         aria-hidden="true"
