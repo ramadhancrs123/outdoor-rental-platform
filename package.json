@@ -108,7 +108,7 @@
   },
   "scripts": {
     "dev": "refine dev",
-    "build": "tsc && refine build",
+    "build": "tsc -p tsconfig.build.json && refine build",
     "start": "refine start",
     "refine": "refine",
     "typecheck": "tsc --noEmit",
