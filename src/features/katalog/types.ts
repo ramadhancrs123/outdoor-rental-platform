@@ -9,6 +9,12 @@ export type CatalogCategory = {
   updated_at: string;
 };
 
+export type CatalogRentalPromotion = {
+  promosi_katalog_id: string;
+  diskon_persen: number;
+  valid_until: string | null;
+};
+
 export type CatalogProduct = {
   barang_id: string;
   usaha_id: string;
@@ -19,9 +25,19 @@ export type CatalogProduct = {
   ringkasan_publik: string | null;
   status: "active" | "inactive" | string;
   is_public: boolean;
+  is_rentable: boolean;
+  is_sellable: boolean;
+  harga_jual: number | null;
+  has_rentable_variants?: boolean;
+  harga_beli?: number | null;
+  satuan_jual?: string;
+  inventory_mode: "serialized" | "quantity" | "untracked";
   updated_at: string;
   kategori: Pick<CatalogCategory, "kategori_barang_id" | "nama" | "status"> | null;
   active_tariff: CatalogTariff | null;
+  rental_promotion?: CatalogRentalPromotion | null;
+  rental_variant_promotions?: Record<string, CatalogRentalPromotion>;
+  has_variant_promotion?: boolean;
   cover_url?: string | null;
   ready_count?: number;
   total_unit_count?: number;
@@ -49,6 +65,12 @@ export type CatalogVariant = {
   deskripsi: string | null;
   atribut_pembeda: Record<string, unknown> | null;
   status: string;
+  is_rentable?: boolean | null;
+  is_sellable?: boolean | null;
+  harga_jual?: number | null;
+  harga_beli?: number | null;
+  inventory_mode?: "serialized" | "quantity" | "untracked" | null;
+  rental_promotion?: CatalogRentalPromotion | null;
   updated_at: string;
   media?: CatalogVariantMedia[];
 };

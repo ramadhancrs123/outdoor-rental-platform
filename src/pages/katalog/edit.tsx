@@ -28,6 +28,10 @@ import {
   setCatalogProductVisibility,
   setCatalogVariantStatus,
   setCatalogTariffStatus,
+  setCatalogProductSalesConfig,
+  setCatalogVariantSalesConfig,
+  setCatalogProductPurchaseCost,
+  setCatalogVariantPurchaseCost,
   updateCatalogProduct,
   updateCatalogTariff,
   updateCatalogVariant,
@@ -41,6 +45,7 @@ import type { CatalogMedia, CatalogTariff, CatalogVariant } from "@/features/kat
 import { catalogErrorMessage, catalogStatusLabel, catalogVariantCapacity, catalogVariantColor, formatCatalogMoney, formatTariffDuration } from "@/features/katalog/utils";
 import { paths } from "@/routes/paths";
 import { VariantMediaManager } from "@/components/katalog/variant-media-manager";
+import { adjustSaleStock, getSaleStockBalance } from "@/features/penjualan";
 
 type UncertainCommand = {
   commandName: string;
@@ -60,6 +65,22 @@ type VariantDraft = {
   color: string;
   capacityLiters: string;
 };
+
+type VariantSalesDraft = {
+  isRentable: "inherit" | "true" | "false";
+  isSellable: "inherit" | "true" | "false";
+  hargaJual: string;
+  inventoryMode: "inherit" | "serialized" | "quantity" | "untracked";
+};
+
+function variantSalesDraftFrom(source: CatalogVariant): VariantSalesDraft {
+  return {
+    isRentable: source.is_rentable == null ? "inherit" : String(source.is_rentable) as "true" | "false",
+    isSellable: source.is_sellable == null ? "inherit" : String(source.is_sellable) as "true" | "false",
+    hargaJual: source.harga_jual == null ? "" : String(source.harga_jual),
+    inventoryMode: source.inventory_mode ?? "inherit",
+  };
+}
 
 function variantDraftFrom(source: CatalogVariant): VariantDraft {
   const attrs = source.atribut_pembeda ?? {};
@@ -126,7 +147,12 @@ export function CatalogEdit() {
   const [uncertainCommand, setUncertainCommand] = useState<UncertainCommand | null>(null);
   const [transition, setTransition] = useState<TransitionRequest | null>(null);
   const [productDraft, setProductDraft] = useState({ categoryId: "", name: "", slug: "", description: "", publicSummary: "" });
+  const [salesDraft, setSalesDraft] = useState({ isRentable: true, isSellable: false, hargaJual: "", hargaBeli: "", inventoryMode: "serialized" as "serialized" | "quantity" | "untracked" });
+  const [stockQuantityDraft, setStockQuantityDraft] = useState("");
+  const [stockReasonDraft, setStockReasonDraft] = useState("");
   const [variantDrafts, setVariantDrafts] = useState<Record<string, VariantDraft>>({});
+  const [variantSalesDrafts, setVariantSalesDrafts] = useState<Record<string, VariantSalesDraft>>({});
+  const [variantHppDrafts, setVariantHppDrafts] = useState<Record<string, string>>({});
   const [tariffDrafts, setTariffDrafts] = useState<Record<string, { name: string; durationValue: string; durationUnit: string; nominal: string }>>({});
   const [newVariant, setNewVariant] = useState({ name: "", code: "", description: "", color: "", capacityLiters: "" });
   const [mediaFile, setMediaFile] = useState<File | null>(null);
@@ -156,6 +182,15 @@ export function CatalogEdit() {
     staleTime: 5_000,
     retry: false,
   });
+  const stockBalance = useQuery({
+    queryKey: ["penjualan", "stock-balance", context.data?.usahaId, id],
+    queryFn: () => getSaleStockBalance(context.data!.usahaId, id!),
+    enabled: Boolean(context.data?.usahaId && id && product.data?.inventory_mode === "quantity"),
+    staleTime: 5_000,
+  });
+  useEffect(() => {
+    if (stockBalance.data) setStockQuantityDraft(String(stockBalance.data.jumlah));
+  }, [stockBalance.data]);
 
   useEffect(() => {
     if (!product.data) return;
@@ -168,6 +203,9 @@ export function CatalogEdit() {
     });
     setVariantDrafts(
       Object.fromEntries(product.data.variants.map((variant) => [variant.varian_barang_id, variantDraftFrom(variant)])),
+    );
+    setVariantSalesDrafts(
+      Object.fromEntries(product.data.variants.map((variant) => [variant.varian_barang_id, variantSalesDraftFrom(variant)])),
     );
     setTariffDrafts(
       Object.fromEntries(
@@ -182,6 +220,13 @@ export function CatalogEdit() {
         ]),
       ),
     );
+    setSalesDraft({
+      isRentable: product.data.is_rentable,
+      isSellable: product.data.is_sellable,
+      hargaJual: product.data.harga_jual == null ? "" : String(product.data.harga_jual),
+      hargaBeli: product.data.harga_beli == null ? "" : String(product.data.harga_beli),
+      inventoryMode: product.data.inventory_mode,
+    });
   }, [product.data]);
 
   useEffect(() => {
@@ -548,6 +593,159 @@ export function CatalogEdit() {
     },
   });
 
+
+  const variantPurchaseCostMutation = useMutation({
+    mutationFn: async ({ variant, hargaBeli }: { variant: CatalogVariant; hargaBeli: number }) => {
+      if (!context.data) throw new Error("Konteks Katalog belum siap.");
+      const key=commandKey("set-katalog-variant-hpp");
+      rememberCommand(commandRef,"set_varian_hpp",key);
+      setBusyKey("variant-hpp-"+variant.varian_barang_id);
+      return setCatalogVariantPurchaseCost(context.data.usahaId,variant.varian_barang_id,hargaBeli,variant.updated_at,{idempotencyKey:key});
+    },
+    onSuccess:async(_,variables)=>{
+      setBusyKey("");
+      toast.success("Harga pokok varian diperbarui untuk penjualan berikutnya.");
+      setVariantHppDrafts(current=>{const copy={...current};delete copy[variables.variant.varian_barang_id];return copy;});
+      await refreshAll();
+    },
+    onError:error=>{
+      setBusyKey("");
+      if(isUnknownOutcome(error)){
+        const ref=commandRef.current;
+        setUncertainCommand(ref?{...ref,message:messageOf(error)}:{commandName:"set_varian_hpp",idempotencyKey:"",message:messageOf(error)});
+      } else toast.error(messageOf(error));
+    },
+  });
+
+  const variantSalesConfigMutation = useMutation({
+    mutationFn: async (variant: CatalogVariant) => {
+      if (!context.data || !current) throw new Error("Konteks Katalog belum siap.");
+      const draft = variantSalesDrafts[variant.varian_barang_id] ?? variantSalesDraftFrom(variant);
+      const isRentable = draft.isRentable === "inherit" ? null : draft.isRentable === "true";
+      const isSellable = draft.isSellable === "inherit" ? null : draft.isSellable === "true";
+      const hargaJual = draft.hargaJual.trim() === "" ? null : Number(draft.hargaJual);
+      const inventoryMode = draft.inventoryMode === "inherit" ? null : draft.inventoryMode;
+      const effectiveRentable = isRentable ?? current.is_rentable;
+      const effectiveSellable = isSellable ?? current.is_sellable;
+      const effectiveMode = inventoryMode ?? current.inventory_mode;
+      const effectivePrice = hargaJual ?? current.harga_jual;
+      if (effectiveRentable && effectiveMode !== "serialized") throw new Error("Varian rental harus menggunakan unit fisik individual.");
+      if (effectiveSellable && (effectivePrice == null || effectivePrice <= 0)) throw new Error("Harga jual varian atau produk induk wajib diisi sebelum varian dijual.");
+      if (hargaJual != null && (!Number.isFinite(hargaJual) || hargaJual <= 0)) throw new Error("Harga jual varian harus lebih besar dari nol.");
+      const key = commandKey("set-katalog-variant-sales-config");
+      rememberCommand(commandRef, "set_varian_sales_config", key);
+      setBusyKey("variant-sales-" + variant.varian_barang_id);
+      return setCatalogVariantSalesConfig(context.data.usahaId, variant.varian_barang_id, {
+        isRentable,
+        isSellable,
+        hargaJual,
+        inventoryMode,
+        expectedUpdatedAt: variant.updated_at,
+      }, { idempotencyKey: key });
+    },
+    onSuccess: async () => {
+      setBusyKey("");
+      toast.success("Channel dan harga jual varian diperbarui.");
+      await refreshAll();
+    },
+    onError: (error) => {
+      setBusyKey("");
+      if (isUnknownOutcome(error)) {
+        const ref = commandRef.current;
+        setUncertainCommand(ref ? { ...ref, message: messageOf(error) } : { commandName: "set_varian_sales_config", idempotencyKey: "", message: messageOf(error) });
+      } else toast.error(messageOf(error));
+    },
+  });
+
+  const salesConfigMutation = useMutation({
+    mutationFn: async () => {
+      if (!context.data || !current) throw new Error("Konteks Katalog belum siap.");
+      const price = salesDraft.hargaJual.trim() === "" ? null : Number(salesDraft.hargaJual);
+      if (price !== null && (!Number.isFinite(price) || price <= 0)) throw new Error("Harga jual harus lebih besar dari nol atau dikosongkan.");
+      if (salesDraft.isRentable && salesDraft.inventoryMode !== "serialized") throw new Error("Barang yang dapat disewakan harus menggunakan unit fisik.");
+      const key = commandKey("set-katalog-sales-config");
+      rememberCommand(commandRef, "set_barang_sales_config", key);
+      setBusyKey("sales-config");
+      return setCatalogProductSalesConfig(context.data.usahaId,current.barang_id,{
+        isRentable:salesDraft.isRentable,
+        isSellable:salesDraft.isSellable,
+        hargaJual:price,
+        inventoryMode:salesDraft.inventoryMode,
+        expectedUpdatedAt:current.updated_at,
+      },{idempotencyKey:key});
+    },
+    onSuccess:async()=>{
+      setBusyKey("");
+      toast.success("Konfigurasi sewa dan penjualan disimpan.");
+      await refreshAll();
+    },
+    onError:error=>{
+      setBusyKey("");
+      if(isUnknownOutcome(error)){
+        const ref=commandRef.current;
+        setUncertainCommand(ref?{...ref,message:messageOf(error)}:{commandName:"set_barang_sales_config",idempotencyKey:"",message:messageOf(error)});
+      } else toast.error(messageOf(error));
+    },
+  });
+
+  const purchaseCostMutation = useMutation({
+    mutationFn: async () => {
+      if (!context.data || !current) throw new Error("Konteks Katalog belum siap.");
+      const cost = Number(salesDraft.hargaBeli);
+      if (salesDraft.hargaBeli.trim()==="" || !Number.isFinite(cost) || cost<0) throw new Error("Harga pokok wajib diisi nol atau lebih.");
+      const key=commandKey("set-katalog-product-hpp");
+      rememberCommand(commandRef,"set_barang_hpp",key);
+      setBusyKey("purchase-cost");
+      return setCatalogProductPurchaseCost(context.data.usahaId,current.barang_id,cost,current.updated_at,{idempotencyKey:key});
+    },
+    onSuccess:async()=>{
+      setBusyKey("");
+      toast.success("Harga pokok barang diperbarui. Penjualan berikutnya memakai nilai ini.");
+      await refreshAll();
+    },
+    onError:error=>{
+      setBusyKey("");
+      if(isUnknownOutcome(error)){
+        const ref=commandRef.current;
+        setUncertainCommand(ref?{...ref,message:messageOf(error)}:{commandName:"set_barang_hpp",idempotencyKey:"",message:messageOf(error)});
+      } else toast.error(messageOf(error));
+    },
+  });
+
+  const saleStockMutation = useMutation({
+    mutationFn:async()=>{
+      if(!context.data||!current) throw new Error("Konteks Katalog belum siap.");
+      const quantity=Number(stockQuantityDraft);
+      if(!Number.isInteger(quantity)||quantity<0) throw new Error("Jumlah stok harus berupa bilangan bulat nol atau lebih.");
+      if(stockReasonDraft.trim().length<5) throw new Error("Alasan penyesuaian minimal 5 karakter.");
+      const key=commandKey("adjust-sale-stock");
+      rememberCommand(commandRef,"adjust_sale_stock",key);
+      setBusyKey("sale-stock");
+      return adjustSaleStock(context.data.usahaId,{
+        barangId:current.barang_id,
+        jumlahBaru:quantity,
+        alasan:stockReasonDraft,
+        expectedUpdatedAt:stockBalance.data?.updated_at??null,
+      },{idempotencyKey:key});
+    },
+    onSuccess:async()=>{
+      setBusyKey("");
+      setStockReasonDraft("");
+      toast.success("Saldo stok diperbarui dan mutasinya tercatat.");
+      await Promise.all([
+        stockBalance.refetch(),
+        queryClient.invalidateQueries({queryKey:["penjualan","catalog",context.data?.usahaId]}),
+      ]);
+    },
+    onError:error=>{
+      setBusyKey("");
+      if(isUnknownOutcome(error)){
+        const ref=commandRef.current;
+        setUncertainCommand(ref?{...ref,message:messageOf(error)}:{commandName:"adjust_sale_stock",idempotencyKey:"",message:messageOf(error)});
+      } else toast.error(messageOf(error));
+    },
+  });
+
   if (context.isPending || product.isPending) {
     return (
       <div className="space-y-4">
@@ -638,6 +836,7 @@ export function CatalogEdit() {
       <Tabs defaultValue="general" className="space-y-4">
         <TabsList className="w-full justify-start overflow-x-auto sm:w-fit">
           <TabsTrigger value="general">Informasi Produk</TabsTrigger>
+          <TabsTrigger value="sales">Sewa & Jual</TabsTrigger>
           <TabsTrigger value="variants">Varian ({current.variants.length})</TabsTrigger>
           <TabsTrigger value="tariffs">Tarif ({current.tariffs.length})</TabsTrigger>
           <TabsTrigger value="media">Media ({current.media.length})</TabsTrigger>
@@ -698,6 +897,86 @@ export function CatalogEdit() {
           </div>
         </TabsContent>
 
+
+        <TabsContent value="sales" className="space-y-4">
+          <Card className="rounded-2xl shadow-sm">
+            <CardHeader>
+              <CardTitle className="text-base">Channel Transaksi</CardTitle>
+              <p className="text-sm text-muted-foreground">Satu master produk dapat ditawarkan untuk disewa, dijual, atau keduanya. Harga jual tidak memakai tarif sewa.</p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="flex items-start gap-3 rounded-xl border p-3">
+                  <input type="checkbox" checked={salesDraft.isRentable} onChange={e=>setSalesDraft(d=>({...d,isRentable:e.target.checked,inventoryMode:e.target.checked?"serialized":d.inventoryMode}))} className="mt-1 size-4 accent-primary"/>
+                  <span><span className="block text-sm font-semibold">Dapat disewakan</span><span className="mt-0.5 block text-xs text-muted-foreground">Menggunakan unit fisik dan tarif sewa berdasarkan periode.</span></span>
+                </label>
+                <label className="flex items-start gap-3 rounded-xl border p-3">
+                  <input type="checkbox" checked={salesDraft.isSellable} onChange={e=>setSalesDraft(d=>({...d,isSellable:e.target.checked}))} className="mt-1 size-4 accent-primary"/>
+                  <span><span className="block text-sm font-semibold">Dapat dijual</span><span className="mt-0.5 block text-xs text-muted-foreground">Muncul di POS dan dapat ditambahkan pada mixed checkout.</span></span>
+                </label>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <label className="grid gap-2 text-sm font-medium">Harga jual (IDR)
+                  <Input className="h-11 rounded-xl" inputMode="decimal" value={salesDraft.hargaJual} onChange={e=>setSalesDraft(d=>({...d,hargaJual:e.target.value}))} placeholder="Contoh: 45000"/>
+                  <span className="text-[11px] font-normal text-muted-foreground">Kosong berarti harga belum dikonfigurasi dan produk tidak bisa di-checkout.</span>
+                </label>
+                <label className="grid gap-2 text-sm font-medium">Harga pokok / beli (IDR)
+                  <Input className="h-11 rounded-xl" type="number" min="0" step="1" inputMode="decimal" value={salesDraft.hargaBeli} onChange={e=>setSalesDraft(d=>({...d,hargaBeli:e.target.value}))} placeholder="Modal per unit"/>
+                  <span className="text-[11px] font-normal text-muted-foreground">Disimpan sebagai snapshot HPP saat penjualan; tidak membuat pengeluaran kas ganda.</span>
+                </label>
+                <label className="grid gap-2 text-sm font-medium">Mode inventaris
+                  <Select value={salesDraft.inventoryMode} onValueChange={value=>setSalesDraft(d=>({...d,inventoryMode:value as "serialized"|"quantity"|"untracked"}))}>
+                    <SelectTrigger className="h-11 rounded-xl"><SelectValue/></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="serialized">Unit fisik / serial</SelectItem>
+                      <SelectItem value="quantity" disabled={salesDraft.isRentable}>Stok kuantitas</SelectItem>
+                      <SelectItem value="untracked" disabled={salesDraft.isRentable}>Tanpa pelacakan stok</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <span className="text-[11px] font-normal text-muted-foreground">{salesDraft.inventoryMode==="serialized"?"Penjualan mengeluarkan unit fisik tertentu.":salesDraft.inventoryMode==="quantity"?"Penjualan mengurangi saldo dan mencatat mutasi stok.":"Barang dapat dijual tanpa saldo stok; cocok untuk barang habis pakai."}</span>
+                </label>
+              </div>
+              {salesDraft.isRentable&&salesDraft.inventoryMode==="quantity"?<Alert variant="destructive"><AlertTitle>Mode inventaris tidak kompatibel</AlertTitle><AlertDescription>Produk yang dapat disewakan harus memakai unit fisik individual.</AlertDescription></Alert>:null}
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-muted/40 px-3 py-2.5">
+                <div className="flex flex-wrap gap-1.5">
+                  <Badge variant="outline">{salesDraft.isRentable?"Sewa": "Bukan sewa"}</Badge>
+                  <Badge variant={salesDraft.isSellable?"default":"secondary"}>{salesDraft.isSellable?"Jual":"Tidak dijual"}</Badge>
+                  <Badge variant="outline">{salesDraft.inventoryMode==="quantity"?"Stok kuantitas":salesDraft.inventoryMode==="untracked"?"Tanpa stok":"Unit fisik"}</Badge>
+                </div>
+                <Button className="rounded-xl" disabled={busyKey==="sales-config"|| (salesDraft.isRentable&&salesDraft.inventoryMode!=="serialized")} onClick={()=>salesConfigMutation.mutate()}>
+                  {busyKey==="sales-config"?<Loader2 className="animate-spin"/>:<Save/>}Simpan Channel
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="rounded-2xl shadow-sm">
+            <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-end">
+              <div className="min-w-0 flex-1"><p className="text-sm font-semibold">Harga pokok untuk perhitungan laba</p><p className="mt-1 text-xs text-muted-foreground">Perubahan hanya memengaruhi transaksi baru. HPP transaksi lama tetap memakai snapshot saat checkout.</p></div>
+              <Button className="rounded-xl" disabled={busyKey==="purchase-cost"||salesDraft.hargaBeli.trim()===""} onClick={()=>purchaseCostMutation.mutate()}>{busyKey==="purchase-cost"?<Loader2 className="animate-spin"/>:<Save/>}Simpan HPP</Button>
+            </CardContent>
+          </Card>
+
+          {salesDraft.inventoryMode==="quantity"?(
+            <Card className="rounded-2xl shadow-sm">
+              <CardHeader><CardTitle className="text-base">Saldo Stok Penjualan</CardTitle><p className="text-sm text-muted-foreground">Saldo awal dapat dimasukkan setelah mode kuantitas tersimpan. Setiap penyesuaian tercatat sebagai pergerakan stok.</p></CardHeader>
+              <CardContent className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-xl border bg-muted/20 p-3"><p className="text-xs text-muted-foreground">Stok saat ini</p><p className="mt-1 text-2xl font-black tabular-nums">{stockBalance.data?.jumlah??0}</p><p className="mt-1 text-[10px] text-muted-foreground">{stockBalance.isPending?"Memuat saldo…":stockBalance.error?"Saldo belum dapat dibaca":"Unit tersedia untuk POS"}</p></div>
+                <div className="space-y-2">
+                  <label className="grid gap-1 text-xs font-semibold">Jumlah stok baru<Input className="h-10 rounded-xl" type="number" min={0} step={1} value={stockQuantityDraft} onChange={e=>setStockQuantityDraft(e.target.value)}/></label>
+                  <label className="grid gap-1 text-xs font-semibold">Alasan perubahan<Input className="h-10 rounded-xl" value={stockReasonDraft} onChange={e=>setStockReasonDraft(e.target.value)} placeholder="Contoh: stok awal / hasil opname"/></label>
+                  <Button className="w-full rounded-xl" disabled={busyKey==="sale-stock"||stockBalance.isPending||!stockReasonDraft.trim()} onClick={()=>saleStockMutation.mutate()}>{busyKey==="sale-stock"?<Loader2 className="animate-spin"/>:<Save/>}Simpan Mutasi Stok</Button>
+                </div>
+              </CardContent>
+            </Card>
+          ):null}
+
+          <Alert>
+            <AlertTitle>Pemisahan stok dan transaksi</AlertTitle>
+            <AlertDescription>Produk rental tetap menggunakan unit fisik. Produk jual dapat memakai unit fisik, stok kuantitas, atau tanpa pelacakan stok. Untuk mengubah barang jual menjadi barang rental, aktifkan channel sewa dan pilih unit fisik setelah memastikan data unitnya.</AlertDescription>
+          </Alert>
+        </TabsContent>
+
         <TabsContent value="variants" className="space-y-4">
           <Card className="rounded-2xl shadow-sm">
             <CardHeader><CardTitle className="text-base">Tambah Varian</CardTitle><p className="text-sm text-muted-foreground">Varian tetap berada di bawah produk ini; bukan unit fisik.</p></CardHeader>
@@ -715,6 +994,7 @@ export function CatalogEdit() {
             <Card className="rounded-2xl"><CardContent className="flex min-h-48 items-center justify-center p-6 text-center"><div><p className="font-semibold">Belum ada varian</p><p className="mt-1 text-sm text-muted-foreground">Varian hanya perlu dibuat bila ada perbedaan bermakna pada identitas, spesifikasi, atau harga.</p></div></CardContent></Card>
           ) : current.variants.map((variant) => {
             const draft = variantDrafts[variant.varian_barang_id] ?? variantDraftFrom(variant);
+            const salesDraft = variantSalesDrafts[variant.varian_barang_id] ?? variantSalesDraftFrom(variant);
             return (
               <Card key={variant.varian_barang_id} className="rounded-2xl shadow-sm">
                 <CardHeader className="flex flex-row items-start justify-between gap-3"><div><CardTitle className="text-base">{variant.nama}</CardTitle><p className="text-sm text-muted-foreground">Bagian dari {current.nama}</p></div><Badge variant={variant.status === "active" ? "default" : "secondary"} className="rounded-full">{catalogStatusLabel(variant.status)}</Badge></CardHeader>
@@ -724,9 +1004,45 @@ export function CatalogEdit() {
                   <label className="grid gap-2 text-sm font-medium">Deskripsi<Input className="h-11 rounded-xl" value={draft.description} onChange={(e) => updateVariantDraft(variant.varian_barang_id, { description: e.target.value })} /></label>
                   <label className="grid gap-2 text-sm font-medium">Warna<Input className="h-11 rounded-xl" value={draft.color} onChange={(e) => updateVariantDraft(variant.varian_barang_id, { color: e.target.value })} placeholder="Contoh: hitam" /></label>
                   <label className="grid gap-2 text-sm font-medium">Kapasitas<Input className="h-11 rounded-xl" value={draft.capacityLiters} onChange={(e) => updateVariantDraft(variant.varian_barang_id, { capacityLiters: e.target.value })} placeholder="Contoh: 60 liter atau 4 orang" /></label>
+                  <label className="grid gap-2 text-sm font-medium">HPP varian (IDR)
+                    <Input className="h-11 rounded-xl" type="number" min="0" step="1" inputMode="decimal" value={variantHppDrafts[variant.varian_barang_id] ?? (variant.harga_beli == null ? "" : String(variant.harga_beli))} onChange={e=>setVariantHppDrafts(current=>({...current,[variant.varian_barang_id]:e.target.value}))} placeholder={current.harga_beli==null?"Ikuti HPP barang induk":"Harga pokok varian"}/>
+                    <span className="text-[10px] font-normal text-muted-foreground">Kosong = mengikuti HPP barang induk.</span>
+                  </label>
+                  <div className="lg:col-span-3 space-y-3 rounded-xl border bg-muted/15 p-3">
+                    <div><p className="text-sm font-semibold">Channel dan Harga Varian</p><p className="mt-0.5 text-xs text-muted-foreground">Pilih mengikuti produk induk atau atur berbeda. Foto varian tidak mengubah stok.</p></div>
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      <label className="grid gap-1.5 text-xs font-semibold">Channel sewa
+                        <Select value={salesDraft.isRentable} onValueChange={(value) => setVariantSalesDrafts((state) => ({ ...state, [variant.varian_barang_id]: { ...salesDraft, isRentable: value as VariantSalesDraft["isRentable"] } }))}>
+                          <SelectTrigger className="h-10 rounded-xl"><SelectValue /></SelectTrigger>
+                          <SelectContent><SelectItem value="inherit">Ikuti produk</SelectItem><SelectItem value="true">Dapat disewakan</SelectItem><SelectItem value="false">Tidak disewakan</SelectItem></SelectContent>
+                        </Select>
+                      </label>
+                      <label className="grid gap-1.5 text-xs font-semibold">Channel jual
+                        <Select value={salesDraft.isSellable} onValueChange={(value) => setVariantSalesDrafts((state) => ({ ...state, [variant.varian_barang_id]: { ...salesDraft, isSellable: value as VariantSalesDraft["isSellable"] } }))}>
+                          <SelectTrigger className="h-10 rounded-xl"><SelectValue /></SelectTrigger>
+                          <SelectContent><SelectItem value="inherit">Ikuti produk</SelectItem><SelectItem value="true">Dapat dijual</SelectItem><SelectItem value="false">Tidak dijual</SelectItem></SelectContent>
+                        </Select>
+                      </label>
+                      <label className="grid gap-1.5 text-xs font-semibold">Mode stok
+                        <Select value={salesDraft.inventoryMode} onValueChange={(value) => setVariantSalesDrafts((state) => ({ ...state, [variant.varian_barang_id]: { ...salesDraft, inventoryMode: value as VariantSalesDraft["inventoryMode"] } }))}>
+                          <SelectTrigger className="h-10 rounded-xl"><SelectValue /></SelectTrigger>
+                          <SelectContent><SelectItem value="inherit">Ikuti produk</SelectItem><SelectItem value="serialized">Unit fisik terlacak</SelectItem><SelectItem value="quantity">Stok kuantitas</SelectItem><SelectItem value="untracked">Tidak mengurangi stok</SelectItem></SelectContent>
+                        </Select>
+                      </label>
+                      <label className="grid gap-1.5 text-xs font-semibold">Harga jual varian
+                        <Input className="h-10 rounded-xl" type="number" min="1" step="1" value={salesDraft.hargaJual} onChange={(e) => setVariantSalesDrafts((state) => ({ ...state, [variant.varian_barang_id]: { ...salesDraft, hargaJual: e.target.value } }))} placeholder={current.harga_jual == null ? "Wajib jika dijual" : "Ikuti " + formatCatalogMoney(current.harga_jual, "IDR")} />
+                        <span className="text-[10px] font-normal text-muted-foreground">Kosong = harga produk induk.</span>
+                      </label>
+                    </div>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-[11px] text-muted-foreground">Isi ulang gas dapat memakai mode tidak mengurangi stok; tabung LPG yang dijual utuh memakai unit fisik terlacak.</p>
+                      <Button size="sm" variant="outline" className="rounded-xl" disabled={busyKey === "variant-sales-" + variant.varian_barang_id} onClick={() => variantSalesConfigMutation.mutate(variant)}>{busyKey === "variant-sales-" + variant.varian_barang_id ? <Loader2 className="animate-spin" /> : <Save />}Simpan Channel Varian</Button>
+                    </div>
+                  </div>
                   <div className="lg:col-span-3 flex flex-wrap gap-2 border-t pt-4">
                     <Button size="sm" className="rounded-xl" disabled={busyKey === "variant-" + variant.varian_barang_id} onClick={() => variantSaveMutation.mutate(variant)}>{busyKey === "variant-" + variant.varian_barang_id ? <Loader2 className="animate-spin" /> : <Save />}Simpan Varian</Button>
                     <Button size="sm" variant="outline" className="rounded-xl" disabled={busyKey === "variant-status-" + variant.varian_barang_id} onClick={() => variantStatusMutation.mutate({ variant, status: variant.status === "active" ? "inactive" : "active" })}>{variant.status === "active" ? "Nonaktifkan" : "Aktifkan"}</Button>
+                    <Button size="sm" variant="outline" className="rounded-xl" disabled={busyKey === "variant-hpp-" + variant.varian_barang_id || (variantHppDrafts[variant.varian_barang_id] ?? (variant.harga_beli == null ? "" : String(variant.harga_beli)))==="" || Number(variantHppDrafts[variant.varian_barang_id] ?? variant.harga_beli)<0} onClick={()=>variantPurchaseCostMutation.mutate({variant,hargaBeli:Number(variantHppDrafts[variant.varian_barang_id] ?? variant.harga_beli)})}>{busyKey === "variant-hpp-" + variant.varian_barang_id ? <Loader2 className="animate-spin"/> : <Save/>}Simpan HPP</Button>
                   </div>
                   {context.data?.usahaId ? (
                     <div className="lg:col-span-3">

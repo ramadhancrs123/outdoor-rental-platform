@@ -36,8 +36,15 @@ export type RentalQrLineData = {
   nama: string;
   rincian?: string | null;
   jumlah: number;
+  unit_price?: number | null;
   subtotal: number;
   currency_code: string;
+  harga_normal_snapshot?: number | null;
+  diskon_persen_snapshot?: number | null;
+  nominal_diskon_snapshot?: number | null;
+  promo_label?: string | null;
+  period_count?: number | null;
+  period_description?: string | null;
 };
 
 export type RentalReceiptData = {
@@ -47,18 +54,32 @@ export type RentalReceiptData = {
   usaha_email?: string | null;
   timezone: string;
   nomor_penyewaan: string;
+  nomor_checkout?: string | null;
+  nomor_penjualan?: string | null;
+  tanggal_transaksi?: string | null;
   penyewa_nama: string;
   penyewa_telepon?: string | null;
   jadwal_mulai: string;
   jadwal_kembali: string;
   tolerance_deadline?: string | null;
   actual_pickup_at?: string | null;
+  actual_return_completed_at?: string | null;
+  subtotal_rental?: number;
+  subtotal_penjualan?: number;
   total_amount: number;
   currency_code: string;
   token_qr: string;
   url: string;
   generated_at: string;
   lines: RentalQrLineData[];
+  sale_lines?: RentalQrLineData[];
+  discounts?: {
+    manual_rental: number;
+    loyalty_rental: number;
+    loyalty_sale: number;
+    other_rental: number;
+    other_rental_label?: string | null;
+  };
   catatan?: string | null;
   pembayaran?: {
     tercatat: number;

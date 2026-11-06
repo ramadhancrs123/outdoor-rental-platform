@@ -10,6 +10,9 @@ import { formatFinanceDateTime, formatFinanceMoney, formatFinanceTimezone, seman
 import { paths } from "@/routes/paths";
 
 function movementSourceLabel(movement: Awaited<ReturnType<typeof getFinanceAccountDetail>>["movements"][number]) {
+  if (movement.sale_id) {
+    return [movement.sale_number ? "Penjualan #" + movement.sale_number : "Penjualan", movement.payment_number ? "Pembayaran #" + movement.payment_number : null].filter(Boolean).join(" · ");
+  }
   if (movement.payment_id) {
     return [
       movement.payment_number ? "Pembayaran #" + movement.payment_number : "Pembayaran",

@@ -4,6 +4,7 @@ import type {
   FinanceCapabilities,
   FinanceCorrectionResult,
   FinanceExpenseAnalysis,
+  FinanceRetailAnalysis,
   FinanceHealth,
   FinanceReconciliationFindings,
   FinanceProductRevenueReport,
@@ -376,7 +377,7 @@ export async function getFinanceAccountDetail(
 
   const movements = (movementRows ?? []) as FinanceAccountMovement[];
   const transactionIds = Array.from(new Set(movements.map((movement) => movement.transaksi_keuangan_id)));
-  const [transactionsResult, paymentsResult, expensesResult] = await Promise.all([
+  const [transactionsResult, paymentsResult, salePaymentsResult, expensesResult] = await Promise.all([
     transactionIds.length
       ? supabase.from("transaksi_keuangan")
         .select("transaksi_keuangan_id,nomor_transaksi,jenis,status")
@@ -390,6 +391,12 @@ export async function getFinanceAccountDetail(
         .in("transaksi_keuangan_id", transactionIds)
       : Promise.resolve({ data: [], error: null }),
     transactionIds.length
+      ? supabase.from("penjualan_pembayaran")
+        .select("penjualan_pembayaran_id,penjualan_id,transaksi_keuangan_id,nomor_pembayaran,metode")
+        .eq("usaha_id", usahaId)
+        .in("transaksi_keuangan_id", transactionIds)
+      : Promise.resolve({ data: [], error: null }),
+    transactionIds.length
       ? supabase.from("pengeluaran")
         .select("pengeluaran_id,transaksi_keuangan_id,kategori_biaya,deskripsi")
         .eq("usaha_id", usahaId)
@@ -398,11 +405,20 @@ export async function getFinanceAccountDetail(
   ]);
   if (transactionsResult.error) throw transactionsResult.error;
   if (paymentsResult.error) throw paymentsResult.error;
+  if (salePaymentsResult.error) throw salePaymentsResult.error;
   if (expensesResult.error) throw expensesResult.error;
 
   const transactionMap = new Map((transactionsResult.data ?? []).map((row) => [String(row.transaksi_keuangan_id), row]));
   const paymentRows = (paymentsResult.data ?? []) as Array<Record<string, unknown>>;
   const paymentMap = new Map(paymentRows.map((row) => [String(row.transaksi_keuangan_id), row]));
+  const salePaymentRows = (salePaymentsResult.data ?? []) as Array<Record<string, unknown>>;
+  const salePaymentMap = new Map(salePaymentRows.map((row) => [String(row.transaksi_keuangan_id), row]));
+  const saleIds = Array.from(new Set(salePaymentRows.map((row) => row.penjualan_id).filter((id): id is string => typeof id === "string")));
+  const salesResult = saleIds.length
+    ? await supabase.from("penjualan").select("penjualan_id,nomor_penjualan").eq("usaha_id",usahaId).in("penjualan_id",saleIds)
+    : { data: [], error: null };
+  if (salesResult.error) throw salesResult.error;
+  const saleMap = new Map((salesResult.data ?? []).map((row) => [String(row.penjualan_id),String(row.nomor_penjualan)]));
   const expenseRows = (expensesResult.data ?? []) as Array<Record<string, unknown>>;
   const expenseMap = new Map(expenseRows.map((row) => [String(row.transaksi_keuangan_id), row]));
 
@@ -418,6 +434,7 @@ export async function getFinanceAccountDetail(
     movements: movements.map((movement) => {
       const transaction = transactionMap.get(movement.transaksi_keuangan_id);
       const payment = paymentMap.get(movement.transaksi_keuangan_id);
+      const salePayment = salePaymentMap.get(movement.transaksi_keuangan_id);
       const expense = expenseMap.get(movement.transaksi_keuangan_id);
       return {
         ...movement,
@@ -425,11 +442,13 @@ export async function getFinanceAccountDetail(
         transaksi_jenis: transaction ? String(transaction.jenis) : null,
         transaksi_status: transaction ? String(transaction.status) : null,
         payment_id: payment ? String(payment.pembayaran_id) : null,
-        payment_number: payment ? String(payment.nomor_pembayaran) : null,
-        payment_type: payment ? String(payment.jenis) : null,
-        payment_method: payment ? String(payment.metode) : null,
+        payment_number: payment ? String(payment.nomor_pembayaran) : salePayment ? String(salePayment.nomor_pembayaran) : null,
+        payment_type: payment ? String(payment.jenis) : salePayment ? "pembayaran_penjualan" : null,
+        payment_method: payment ? String(payment.metode) : salePayment ? String(salePayment.metode) : null,
         rental_id: payment?.penyewaan_id ? String(payment.penyewaan_id) : null,
         rental_number: payment?.penyewaan_id ? rentalMap.get(String(payment.penyewaan_id)) ?? null : null,
+        sale_id: salePayment?.penjualan_id ? String(salePayment.penjualan_id) : null,
+        sale_number: salePayment?.penjualan_id ? saleMap.get(String(salePayment.penjualan_id)) ?? null : null,
         expense_id: expense ? String(expense.pengeluaran_id) : null,
         expense_category: expense ? String(expense.kategori_biaya) : null,
         expense_description: expense ? String(expense.deskripsi) : null,
@@ -741,6 +760,27 @@ export async function getFinancePaymentPage(
     p_offset: offset,
   });
   return normalizeFinancePeriod(assertFinanceRpcResult(data as (FinanceReportPage<FinancePayment> & { period?: FinancePeriod }) | null, error, "Daftar pembayaran keuangan"));
+}
+
+export async function getFinanceRetailAnalysis(
+  usahaId: string,
+  startDate: string,
+  endDateExclusive: string,
+  limit = 50,
+): Promise<FinanceRetailAnalysis> {
+  const { data, error } = await supabase.rpc("finance_retail_analysis", {
+    p_usaha_id: usahaId,
+    p_start_date: startDate,
+    p_end_date: endDateExclusive,
+    p_limit: limit,
+  });
+  return normalizeFinancePeriod(
+    assertFinanceRpcResult(
+      data as (FinanceRetailAnalysis & { period?: FinancePeriod }) | null,
+      error,
+      "Analisis retail",
+    ),
+  );
 }
 
 export async function getFinanceExpensePage(

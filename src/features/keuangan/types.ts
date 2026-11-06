@@ -64,6 +64,9 @@ export type FinancePayment = {
   updated_at: string;
   nomor_transaksi: string | null;
   source_label: string | null;
+  payment_source_type?: "rental" | "sale";
+  penjualan_id?: string | null;
+  nomor_penjualan?: string | null;
 };
 
 export type FinanceRentalPaymentSummary = {
@@ -166,6 +169,8 @@ export type FinanceAccountMovement = {
   payment_method: string | null;
   rental_id: string | null;
   rental_number: string | null;
+  sale_id: string | null;
+  sale_number: string | null;
   expense_id: string | null;
   expense_category: string | null;
   expense_description: string | null;
@@ -245,13 +250,133 @@ export type SupplierOption = {
 };
 
 export type FinancePeriod = { start_date: string; end_date_exclusive: string; timezone: string; };
-export type FinanceSummary = FinancePeriod & { recorded_income:number; recorded_expense:number; net_operational_movement:number; recorded_income_transaction_count:number; recorded_expense_transaction_count:number; recorded_payment_amount:number; recorded_payment_count:number; reversal_income_in_period:number; reversal_expense_in_period:number; source_note:string; };
+export type FinanceSummary = FinancePeriod & {
+  recorded_income:number;
+  recorded_expense:number;
+  net_operational_movement:number;
+  recorded_income_transaction_count:number;
+  recorded_expense_transaction_count:number;
+  recorded_payment_amount:number;
+  recorded_payment_count:number;
+  reversal_income_in_period:number;
+  reversal_expense_in_period:number;
+  rental_income:number;
+  retail_income:number;
+  purchase_cash_out:number;
+  non_purchase_expense:number;
+  source_note:string;
+};
 export type FinanceReportPage<T> = FinancePeriod & { items:T[]; total:number; limit:number; offset:number; has_more:boolean; };
 export type FinanceExpenseAnalysis = FinancePeriod & { by_category:Array<{kategori_biaya:string;amount:number;count:number}>; by_supplier:Array<{pemasok_id:string|null;amount:number;count:number}>; by_source:Array<{source_type:string|null;amount:number;count:number}>; note:string; };
 export type FinanceProductRevenueItem = { barang_id:string|null; varian_barang_id:string|null; recorded_income_exact:number; rental_detail_value:number; transaction_count:number; attribution_status:"exact_single_detail"; };
 export type FinanceProductRevenueReport = FinancePeriod & { items:FinanceProductRevenueItem[]; total_rental_or_reservation_income:number; exact_attributable_income:number; unallocated_income:number; coverage_ratio:number|null; allocation_policy:string; };
 export type FinanceUnitRevenueItem = { unit_barang_id:string; kode_unit:string; barang_id:string|null; varian_barang_id:string|null; recorded_income_exact:number; transaction_count:number; attribution_status:"exact_single_detail_single_unit"; };
 export type FinanceUnitRevenueReport = FinancePeriod & { items:FinanceUnitRevenueItem[]; total_rental_income:number; exact_unit_attributable_income:number; unallocated_or_ambiguous_income:number; coverage_ratio:number|null; allocation_policy:string; };
+
+export type FinanceRetailSummary = {
+  sales_count: number;
+  sales_revenue: number;
+  sold_quantity: number;
+  known_hpp: number;
+  gross_profit_known: number;
+  hpp_unknown_revenue: number;
+  hpp_unknown_lines: number;
+  known_hpp_lines: number;
+  sales_with_incomplete_hpp: number;
+  hpp_coverage_pct: number | null;
+  promotion_bonus_quantity: number;
+  promotion_bonus_cost: number;
+  promotion_bonus_hpp_unknown_lines: number;
+  payment_received: number;
+  payment_count: number;
+  completed_purchase_count: number;
+  completed_purchase_value: number;
+  purchase_cash_out: number;
+  receiving_count: number;
+  received_quantity: number;
+  received_stock_value: number;
+  currency_code: string;
+};
+
+export type FinanceRetailProduct = {
+  barang_id: string;
+  varian_barang_id: string | null;
+  nama_barang: string;
+  nama_varian: string | null;
+  inventory_mode: "serialized" | "quantity" | "untracked" | string;
+  quantity_sold: number;
+  revenue: number;
+  known_hpp: number;
+  gross_profit_known: number;
+  hpp_unknown_revenue: number;
+  hpp_unknown_lines: number;
+  sale_count: number;
+};
+
+export type FinanceRetailSale = {
+  penjualan_id: string;
+  nomor_penjualan: string;
+  source: string;
+  nama_pelanggan: string | null;
+  nomor_telepon: string | null;
+  status: string;
+  payment_status: string;
+  total_amount: number;
+  total_hpp: number | null;
+  gross_profit: number | null;
+  known_hpp: number;
+  gross_profit_known: number;
+  hpp_unknown_lines: number;
+  sold_quantity: number;
+  bonus_hpp_amount: number | null;
+  bonus_quantity: number;
+  bonus_hpp_cost: number;
+  bonus_hpp_unknown_lines: number;
+  created_at: string;
+  currency_code: string;
+};
+
+export type FinanceRetailPurchase = {
+  pembelian_id: string;
+  nomor_pembelian: string;
+  tanggal_pembelian: string;
+  status: string;
+  pemasok_id: string | null;
+  nama_pemasok: string;
+  total_amount: number;
+  currency_code: string;
+  receiving_count: number;
+  received_quantity: number;
+  received_stock_value: number;
+  cash_out_amount: number;
+  catatan: string | null;
+};
+
+export type FinanceRetailStockItem = {
+  barang_id: string;
+  varian_barang_id: string | null;
+  nama_barang: string;
+  nama_varian: string | null;
+  kategori_nama: string | null;
+  inventory_mode: "serialized" | "quantity" | "untracked" | string;
+  satuan_jual: string | null;
+  stock_quantity: number | null;
+  known_cost_value: number | null;
+  unknown_cost_quantity: number;
+  average_unit_cost: number | null;
+};
+
+export type FinanceRetailAnalysis = FinancePeriod & {
+  summary: FinanceRetailSummary;
+  top_products: FinanceRetailProduct[];
+  recent_sales: FinanceRetailSale[];
+  purchase_history: FinanceRetailPurchase[];
+  stock_snapshot: FinanceRetailStockItem[];
+  read_only: true;
+  account_policy: string;
+  hpp_policy: string;
+};
+
 export type FinanceHealth = { status:"HEALTHY"|"ATTENTION"|"UNHEALTHY"; critical:Record<string,number>; attention:Record<string,number>; principle:string; };
 export type FinanceFinding = { code:string; severity:"critical"|"attention"; [key:string]:unknown; };
 export type FinanceReconciliationFindings = { items:FinanceFinding[]; limit:number; };

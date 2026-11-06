@@ -101,7 +101,7 @@ export function PurchaseShow() {
             <h1 className="text-[22px] font-bold tracking-tight">{item.nomor_pembelian}</h1>
             <Badge variant={purchaseStatusVariant()} className="rounded-full bg-amber-50 text-amber-700 hover:bg-amber-50">{purchaseStatusLabel(item.status)}</Badge>
           </div>
-          <p className="mt-1 text-sm text-muted-foreground">{item.status === "draft" ? "Draft pembelian · belum dibayar atau diselesaikan." : "Pembelian tercatat · periksa status inventaris di bawah."}</p>
+          <p className="mt-1 text-sm text-muted-foreground">{item.status === "draft" ? "Draft pengadaan · stok dan kas belum berubah." : "Pembelian selesai · hasil penerimaan barang dan HPP tercatat otomatis."}</p>
         </div>
         <Button variant="ghost" size="icon" className="rounded-xl" aria-label="Menu pembelian"><MoreVertical /></Button>
       </header>
@@ -149,7 +149,34 @@ export function PurchaseShow() {
             </CardContent>
           </Card>
 
-          <Alert><Info /><AlertTitle>Fakta procurement</AlertTitle><AlertDescription>{capabilities.reason} Pembelian tidak otomatis berarti receiving, unit fisik, unit ready, atau pembayaran.</AlertDescription></Alert>
+          <Alert><Info /><AlertTitle>{item.status === "draft" ? "Receiving menunggu penyelesaian" : "Penerimaan dan HPP otomatis"}</AlertTitle><AlertDescription>{item.status === "draft" ? "Setelah pembelian dibayar dan diselesaikan, backend menerima stok sesuai mode katalog, memperbarui HPP, dan mencatat pengeluaran pada akun uang yang dipilih." : "Penerimaan stok, riwayat inventaris, biaya perolehan, dan pembaruan HPP dijalankan bersama penyelesaian pembelian. Akun uang tetap mencatat arus kas keluar aktual."} {capabilities.reason}</AlertDescription></Alert>
+
+          {(item.receiving?.state ?? "not_received") === "received" ? (
+            <Card className="rounded-2xl shadow-sm">
+              <CardHeader className="pb-2"><CardTitle className="text-base">Bukti Penerimaan</CardTitle><p className="text-xs text-muted-foreground">Referensi receiving yang dibuat otomatis saat pembelian diselesaikan.</p></CardHeader>
+              <CardContent className="space-y-3">
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="rounded-xl bg-muted/35 p-3"><p className="text-[10px] text-muted-foreground">Nomor penerimaan</p><p className="mt-1 text-sm font-bold">{item.receiving.nomor_penerimaan ?? "-"}</p></div>
+                  <div className="rounded-xl bg-muted/35 p-3"><p className="text-[10px] text-muted-foreground">Waktu diterima</p><p className="mt-1 text-sm font-semibold">{item.receiving.received_at ? formatProcurementDateTime(item.receiving.received_at) : "-"}</p></div>
+                </div>
+                <div className="space-y-2">
+                  {(item.receiving.details ?? []).map((detail) => {
+                    const line = item.lines.find((candidate) => candidate.detail_pembelian_id === detail.detail_pembelian_id);
+                    const modeLabel = detail.inventory_mode === "serialized" ? "Unit fisik" : detail.inventory_mode === "quantity" ? "Stok kuantitas" : "Tanpa stok";
+                    return (
+                      <div key={detail.detail_penerimaan_pembelian_id} className="flex items-center gap-3 rounded-xl border p-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-xs font-semibold">{line?.barang_nama ?? "Barang"}{line?.varian_nama ? " · " + line.varian_nama : ""}</p>
+                          <p className="mt-0.5 text-[10px] text-muted-foreground">{modeLabel} · {detail.quantity_received} × {formatPurchaseMoney(detail.unit_cost, item.currency_code)}</p>
+                        </div>
+                        <p className="shrink-0 text-xs font-bold">{formatPurchaseMoney(detail.subtotal_cost, item.currency_code)}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+          ) : null}
 
           <Card className="rounded-2xl">
             <CardContent className="flex items-center justify-between gap-3 p-4 text-xs text-muted-foreground">
@@ -178,7 +205,7 @@ export function PurchaseShow() {
                           <div><p className="text-xs text-muted-foreground">Jumlah</p><p className="mt-1 font-medium">{line.jumlah}</p></div>
                           <div><p className="text-xs text-muted-foreground">Harga / unit</p><p className="mt-1 font-medium">{formatPurchaseMoney(line.unit_price, item.currency_code)}</p></div>
                         </div>
-                        <InventoryProgressControl line={line} loading={registeringLineId === line.detail_pembelian_id} disabled={registeringLineId !== null} onRegister={() => void registerRemainingUnits(line)} />
+                        <InventoryProgressControl line={line} purchaseStatus={item.status} loading={registeringLineId === line.detail_pembelian_id} disabled={registeringLineId !== null} onRegister={() => void registerRemainingUnits(line)} />
                         {line.deskripsi ? <p className="mt-3 text-sm leading-6 text-muted-foreground">{line.deskripsi}</p> : null}
                       </div>
                     ))}
@@ -194,7 +221,7 @@ export function PurchaseShow() {
                             <td className="px-4 py-3">{line.jumlah}</td>
                             <td className="px-4 py-3">{formatPurchaseMoney(line.unit_price, item.currency_code)}</td>
                             <td className="px-4 py-3 font-semibold">{formatPurchaseMoney(line.subtotal, item.currency_code)}</td>
-                            <td className="min-w-56 px-4 py-3"><InventoryProgressControl line={line} loading={registeringLineId === line.detail_pembelian_id} disabled={registeringLineId !== null} onRegister={() => void registerRemainingUnits(line)} /></td>
+                            <td className="min-w-56 px-4 py-3"><InventoryProgressControl line={line} purchaseStatus={item.status} loading={registeringLineId === line.detail_pembelian_id} disabled={registeringLineId !== null} onRegister={() => void registerRemainingUnits(line)} /></td>
                           </tr>
                         ))}
                       </tbody>
@@ -217,11 +244,13 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 
 function InventoryProgressControl({
   line,
+  purchaseStatus,
   loading,
   disabled,
   onRegister,
 }: {
   line: PurchaseLineItem;
+  purchaseStatus: string;
   loading: boolean;
   disabled: boolean;
   onRegister: () => void;
@@ -229,61 +258,87 @@ function InventoryProgressControl({
   const planned = Number(line.jumlah);
   const wholeQuantity = Number.isFinite(planned) && planned > 0 ? Math.floor(planned) : 0;
   const registered = Math.max(0, Number(line.registered_unit_count ?? 0));
-  const remaining = Math.max(0, wholeQuantity - registered);
+  const received = Math.max(0, Number(line.received_quantity ?? 0));
+  const mode = line.inventory_mode_snapshot ?? null;
 
+  if (mode === "serialized") {
+    return (
+      <div className="mt-3 space-y-2 rounded-xl border bg-muted/20 p-3">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-xs font-semibold">Unit fisik</p>
+          <Badge variant="outline" className="rounded-full border-emerald-200 bg-emerald-50 text-emerald-800">{registered}/{wholeQuantity} unit diterima</Badge>
+        </div>
+        <p className="text-xs leading-5 text-muted-foreground">
+          Unit dibuat otomatis dengan kode inventaris, biaya perolehan per unit, dan tautan ke detail pembelian. Unit tersedia untuk POS sesuai status unit serta komitmen rental.
+        </p>
+        {registered < wholeQuantity ? <p className="text-xs font-medium text-amber-700">Penerimaan unit belum lengkap. Periksa detail receiving sebelum digunakan.</p> : null}
+      </div>
+    );
+  }
+
+  if (mode === "quantity") {
+    return (
+      <div className="mt-3 space-y-2 rounded-xl border bg-muted/20 p-3">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-xs font-semibold">Stok kuantitas</p>
+          <Badge variant="outline" className="rounded-full border-emerald-200 bg-emerald-50 text-emerald-800">{received} unit diterima</Badge>
+        </div>
+        <p className="text-xs leading-5 text-muted-foreground">
+          Stok penjualan dan mutasi penerimaan diperbarui otomatis. HPP rata-rata tertimbang disimpan untuk transaksi POS berikutnya.
+        </p>
+      </div>
+    );
+  }
+
+  if (mode === "untracked") {
+    return (
+      <div className="mt-3 space-y-2 rounded-xl border bg-muted/20 p-3">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-xs font-semibold">Tanpa pengurangan stok</p>
+          <Badge variant="outline" className="rounded-full">HPP diperbarui</Badge>
+        </div>
+        <p className="text-xs leading-5 text-muted-foreground">
+          Biaya pembelian menjadi HPP referensi POS. Penjualan tidak membuat atau mengurangi saldo stok. Cocok untuk isi ulang gas ketika tabung tidak ikut dijual.
+        </p>
+      </div>
+    );
+  }
+
+  if (purchaseStatus !== "completed") {
+    return (
+      <div className="mt-3 rounded-xl border border-dashed bg-muted/20 p-3">
+        <p className="text-xs font-semibold">Menunggu pembayaran dan receiving</p>
+        <p className="mt-1 text-xs leading-5 text-muted-foreground">Setelah pembelian diselesaikan, sistem membaca mode katalog dan menerima barang secara otomatis.</p>
+      </div>
+    );
+  }
+
+  // Compatibility path for purchases completed before automatic receiving was introduced.
+  const remaining = Math.max(0, wholeQuantity - registered);
   return (
     <div className="mt-3 space-y-2 rounded-xl border bg-muted/20 p-3">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-xs font-semibold">Status inventaris</p>
-        <Badge
-          variant="outline"
-          className={remaining > 0 || line.quantity_needs_review
-            ? "rounded-full border-amber-300 bg-amber-50 text-amber-800"
-            : "rounded-full border-emerald-200 bg-emerald-50 text-emerald-800"}
-        >
-          {registered}/{wholeQuantity} terdaftar
+        <p className="text-xs font-semibold">Receiving pembelian lama</p>
+        <Badge variant="outline" className={remaining > 0 || line.quantity_needs_review
+          ? "rounded-full border-amber-300 bg-amber-50 text-amber-800"
+          : "rounded-full border-emerald-200 bg-emerald-50 text-emerald-800"}>
+          {registered}/{wholeQuantity} unit
         </Badge>
       </div>
-
       {line.quantity_needs_review ? (
-        <div className="space-y-2">
-          <p className="text-xs leading-5 text-amber-800">
-            Jumlah pada catatan pembelian perlu diperiksa. Pendaftaran unit fisik tetap dapat dilakukan melalui Inventaris.
-          </p>
-          <Button asChild type="button" variant="outline" size="sm" className="w-full rounded-xl">
-            <Link to={paths.inventarisCreate}>Daftarkan unit di Inventaris</Link>
-          </Button>
-        </div>
+        <p className="text-xs leading-5 text-amber-800">Jumlah historis perlu diperiksa. Jangan mendaftarkan unit sebelum jumlah dipastikan.</p>
       ) : !line.barang_id ? (
-        <p className="text-xs leading-5 text-muted-foreground">
-          Item belum terhubung ke barang katalog. Hubungkan barang terlebih dahulu.
-        </p>
+        <p className="text-xs leading-5 text-muted-foreground">Item belum terhubung ke barang katalog.</p>
       ) : remaining > 0 ? (
         <>
-          <p className="text-xs leading-5 text-muted-foreground">
-            {remaining} unit belum terdaftar di inventaris.
-          </p>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="w-full rounded-xl"
-            disabled={disabled || loading}
-            onClick={onRegister}
-          >
+          <p className="text-xs leading-5 text-muted-foreground">{remaining} unit historis belum didaftarkan.</p>
+          <Button type="button" variant="outline" size="sm" className="w-full rounded-xl" disabled={disabled || loading} onClick={onRegister}>
             {loading ? <Check className="size-3.5 animate-pulse" /> : <ShoppingBag className="size-3.5" />}
             {loading ? "Mendaftarkan unit…" : "Daftarkan " + remaining + " unit"}
           </Button>
         </>
       ) : (
-        <div className="space-y-2">
-          <p className="text-xs leading-5 text-emerald-700">
-            Seluruh jumlah pada catatan pembelian sudah terhubung ke inventaris. Jika masih ada unit fisik lain, daftarkan melalui Inventaris; jumlah pembelian bukan batas stok.
-          </p>
-          <Button asChild type="button" variant="outline" size="sm" className="w-full rounded-xl">
-            <Link to={paths.inventarisCreate}>Daftarkan unit lain</Link>
-          </Button>
-        </div>
+        <p className="text-xs leading-5 text-emerald-700">Unit historis yang tercatat sudah terhubung dengan inventaris.</p>
       )}
     </div>
   );

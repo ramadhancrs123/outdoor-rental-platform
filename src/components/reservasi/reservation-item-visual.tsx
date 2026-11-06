@@ -13,7 +13,7 @@ export function ReservationItemVisual({
 }) {
   return (
     <div className={cn(
-      "relative overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-50 via-stone-50 to-white text-emerald-900 ring-1 ring-black/5 dark:from-emerald-950/35 dark:via-slate-900 dark:to-slate-950 dark:text-emerald-200",
+      "relative overflow-hidden rounded-2xl bg-gradient-to-br from-orange-50 via-stone-50 to-white text-orange-900 ring-1 ring-black/5 dark:from-orange-950/35 dark:via-neutral-900 dark:to-neutral-950 dark:text-orange-200",
       compact ? "size-14" : "aspect-[4/3] w-full",
       className,
     )}>

@@ -13,13 +13,14 @@ import {
   History,
   LockKeyhole,
   LockKeyholeOpen,
+  Loader2,
   Package,
   RefreshCw,
   ShieldCheck,
   UserRound,
   X,
 } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
@@ -53,13 +54,38 @@ import {
 } from "@/features/reservasi";
 import { paths } from "@/routes/paths";
 import { getRentalForReservation } from "@/features/penyewaan";
+import { getMyBusinessPermissions } from "@/features/event-promotions";
+import { amendReservation, listReservationAmendTargets, previewReservationAmendment } from "@/features/reservasi";
+import type { ReservationAmendPreview, ReservationAmendTarget, ReservationAmendLineInput } from "@/features/reservasi/types";
 
 function formatQuantity(value: string | number) {
   const numberValue = Number(value);
   return Number.isFinite(numberValue) ? new Intl.NumberFormat("id-ID").format(numberValue) : String(value);
 }
 
+function money(value: number | string | null | undefined) {
+  return new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(value ?? 0));
+}
+
 type CommandFeedback = { kind: "unknown" | "conflict" | "authorization" | "success" | "error"; message: string } | null;
+
+type ReservationAmendDraftLine = {
+  id: string;
+  targetKey: string;
+  tariffId: string;
+  quantity: string;
+  note: string;
+};
+
+function buildReservationAmendDraft(reservation: NonNullable<ReturnType<typeof getReservation> extends Promise<infer T> ? T : never>): ReservationAmendDraftLine[] {
+  return reservation.lines.map((line) => ({
+    id: line.detail_reservasi_id,
+    targetKey: line.paket_sewa_id ? "paket:" + line.paket_sewa_id : line.varian_barang_id ? "varian:" + line.varian_barang_id : line.barang_id ? "barang:" + line.barang_id : "",
+    tariffId: line.tarif_sewa_id ?? "",
+    quantity: String(line.jumlah),
+    note: line.catatan ?? "",
+  }));
+}
 
 function classifyCommandError(error: unknown): Exclude<CommandFeedback, null> {
   const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
@@ -96,6 +122,11 @@ export function ReservationShow() {
   const [cancelReason, setCancelReason] = useState("");
   const [cancelOpen, setCancelOpen] = useState(false);
   const [commandFeedback, setCommandFeedback] = useState<CommandFeedback>(null);
+  const [amendOpen, setAmendOpen] = useState(false);
+  const [amendReason, setAmendReason] = useState("");
+  const [amendLines, setAmendLines] = useState<ReservationAmendDraftLine[]>([]);
+  const [amendPreview, setAmendPreview] = useState<ReservationAmendPreview | null>(null);
+  const amendCommandContext = useRef<{ idempotencyKey: string; requestId: string } | null>(null);
   const confirmCommandContext = useRef<{ idempotencyKey: string; requestId: string } | null>(null);
   const cancelCommandContext = useRef<{ idempotencyKey: string; requestId: string } | null>(null);
 
@@ -117,6 +148,140 @@ export function ReservationShow() {
     enabled: Boolean(context.data?.usahaId && id && detail.data?.status === "confirmed"),
     staleTime: 0,
     refetchOnMount: "always",
+  });
+
+  const promotionPermissions = useQuery({
+    queryKey: ["reservasi", "permissions", context.data?.usahaId],
+    queryFn: () => getMyBusinessPermissions(context.data!.usahaId),
+    enabled: Boolean(context.data?.usahaId),
+    staleTime: 30_000,
+  });
+
+  const canUseAmendmentPermission = Boolean(promotionPermissions.data?.includes("reservation.amend"));
+  const amendmentTargets = useQuery({
+    queryKey: ["reservasi", "amend-targets", context.data?.usahaId],
+    queryFn: () => listReservationAmendTargets(context.data!.usahaId),
+    enabled: Boolean(context.data?.usahaId && canUseAmendmentPermission && detail.data?.status === "confirmed" && detail.data?.stock_lock_status === "locked"),
+    staleTime: 15_000,
+  });
+
+  const amendmentTargetMap = useMemo(
+    () => new Map((amendmentTargets.data ?? []).map((target) => [target.key, target])),
+    [amendmentTargets.data],
+  );
+
+  useEffect(() => {
+    if (!amendOpen || !detail.data) return;
+    setAmendLines(buildReservationAmendDraft(detail.data));
+    setAmendReason("");
+    setAmendPreview(null);
+    amendCommandContext.current = null;
+  }, [amendOpen, detail.data?.reservasi_id, detail.data?.updated_at]);
+
+  const amendmentEstimatedTotal = useMemo(() => amendLines.reduce((sum, line) => {
+    const tariff = amendmentTargetMap.get(line.targetKey)?.tariffs.find((item) => item.tarif_sewa_id === line.tariffId);
+    const quantity = Number(line.quantity);
+    return sum + (tariff && Number.isFinite(quantity) && quantity > 0 ? tariff.nominal * quantity : 0);
+  }, 0), [amendLines, amendmentTargetMap]);
+
+  const buildAmendInput = (): ReservationAmendLineInput[] => amendLines.map((line) => {
+    const target = amendmentTargetMap.get(line.targetKey);
+    const tariff = target?.tariffs.find((item) => item.tarif_sewa_id === line.tariffId);
+    const quantity = Number(line.quantity);
+    if (!target || !tariff) throw new Error("Pilih target dan tarif aktif untuk setiap rincian.");
+    if (!Number.isFinite(quantity) || quantity <= 0) throw new Error("Jumlah setiap rincian harus lebih besar dari nol.");
+    return {
+      barang_id: target.barang_id,
+      varian_barang_id: target.varian_barang_id,
+      paket_sewa_id: target.paket_sewa_id,
+      tarif_sewa_id: tariff.tarif_sewa_id,
+      jumlah: quantity,
+      catatan: line.note.trim() || null,
+    };
+  });
+
+  const previewMutation = useMutation({
+    mutationFn: async () => {
+      if (!context.data || !id) throw new Error("Konteks reservasi belum siap.");
+      if (!canUseAmendmentPermission) throw new Error("Anda tidak memiliki izin mengubah reservasi.");
+      const payload = buildAmendInput();
+      if (!payload.length) throw new Error("Reservasi harus memiliki minimal satu rincian.");
+      return previewReservationAmendment(context.data.usahaId, id, payload);
+    },
+    onSuccess: (preview) => {
+      setAmendPreview(preview);
+      setCommandFeedback(null);
+    },
+    onError: (error) => {
+      setAmendPreview(null);
+      setCommandFeedback({
+        kind: "conflict",
+        message: error instanceof Error ? error.message : "Preview perubahan reservasi gagal.",
+      });
+    },
+  });
+
+  const amendMutation = useMutation({
+    mutationFn: async () => {
+      if (!context.data || !id || !detail.data) throw new Error("Konteks reservasi belum siap.");
+      if (!canUseAmendmentPermission) throw new Error("Anda tidak memiliki izin mengubah reservasi.");
+      if (!amendReason.trim()) throw new Error("Alasan perubahan wajib diisi.");
+      if (!amendPreview) throw new Error("Tinjau perubahan dan harga akhir dari server terlebih dahulu.");
+      const basePayload = buildAmendInput();
+      if (basePayload.length !== amendPreview.lines.length) throw new Error("Rincian berubah sejak preview. Tinjau ulang sebelum menyimpan.");
+      const payload: ReservationAmendLineInput[] = basePayload.map((line, index) => {
+        const snapshot = amendPreview.lines[index];
+        return {
+          ...line,
+          expected_unit_price: Number(snapshot.unit_price),
+          expected_harga_normal: Number(snapshot.harga_normal_snapshot),
+          expected_diskon_persen: Number(snapshot.diskon_persen_snapshot),
+          expected_nominal_diskon: Number(snapshot.nominal_diskon_snapshot),
+          expected_promosi_katalog_id: snapshot.promosi_katalog_id,
+          expected_promosi_paket_id: snapshot.promosi_paket_id,
+          expected_durasi_unit: snapshot.durasi_unit_snapshot,
+          expected_durasi_nilai: Number(snapshot.durasi_nilai_snapshot),
+          expected_currency_code: snapshot.currency_code,
+        };
+      });
+      if (!amendCommandContext.current) {
+        amendCommandContext.current = {
+          idempotencyKey: "amend-reservation-" + id + "-" + createClientId(),
+          requestId: createClientId(),
+        };
+      }
+      return amendReservation(
+        context.data.usahaId,
+        id,
+        amendPreview.reservation_updated_at,
+        payload,
+        amendReason,
+        amendCommandContext.current,
+      );
+    },
+    onSuccess: async () => {
+      amendCommandContext.current = null;
+      setAmendOpen(false);
+      setAmendReason("");
+      setAmendPreview(null);
+      setCommandFeedback({ kind: "success", message: "Perubahan reservasi tersimpan. Harga, promo, durasi, dan kapasitas telah divalidasi kembali oleh server." });
+      await Promise.all([
+        detail.refetch(),
+        queryClient.invalidateQueries({ queryKey: ["reservasi", "list"] }),
+        queryClient.invalidateQueries({ queryKey: ["reservasi", "amend-targets", context.data?.usahaId] }),
+        queryClient.invalidateQueries({ queryKey: ["penyewaan"] }),
+      ]);
+    },
+    onError: async (error) => {
+      await detail.refetch();
+      const feedback = classifyCommandError(error);
+      setCommandFeedback({
+        kind: feedback.kind,
+        message: feedback.kind === "conflict"
+          ? "Reservasi atau kapasitas telah berubah. Muat ulang detail lalu susun kembali perubahan sebelum mencoba lagi."
+          : error instanceof Error ? error.message : feedback.message,
+      });
+    },
   });
 
   const confirmMutation = useMutation({
@@ -237,6 +402,7 @@ export function ReservationShow() {
     reservation.stock_lock_status === "locked" &&
     linkedRentalResolved &&
     !linkedRental.data;
+  const canAmend = canPrepare && canUseAmendmentPermission;
   const canOpenLinkedRental = reservation.status === "confirmed" && Boolean(linkedRental.data);
   const busy = confirmMutation.isPending || cancelMutation.isPending;
   const lockView = stockLockPresentation(reservation.stock_lock_status);
@@ -375,6 +541,112 @@ export function ReservationShow() {
                     Lanjutkan Penyewaan <ArrowRight className="size-4" />
                   </Link>
                 </Button>
+              </div>
+            )}
+            {canAmend && (
+              <div className="mb-3 flex flex-col gap-3 rounded-2xl border bg-muted/15 p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <p className="font-semibold">Ubah kesepakatan reservasi</p>
+                  <p className="mt-1 text-sm text-muted-foreground">Atur ulang barang, varian, paket, jumlah, atau tarif. Harga promosi dan kapasitas akan dihitung ulang oleh server sebelum disimpan.</p>
+                </div>
+                <Drawer open={amendOpen} onOpenChange={(open) => {
+                  if (!open && !amendMutation.isPending) {
+                    setAmendOpen(false);
+                    amendCommandContext.current = null;
+                  } else if (open) setAmendOpen(true);
+                }}>
+                  <DrawerTrigger asChild>
+                    <Button variant="outline" className="h-11 shrink-0 rounded-xl" disabled={amendmentTargets.isPending}>
+                      {amendmentTargets.isPending ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />} Ubah reservasi
+                    </Button>
+                  </DrawerTrigger>
+                  <DrawerContent className="max-h-[92vh] rounded-t-3xl">
+                    <DrawerHeader className="text-left">
+                      <DrawerTitle>Ubah {reservation.nomor_reservasi}</DrawerTitle>
+                      <DrawerDescription>Susun rincian baru. Server akan menghitung harga efektif, snapshot promo, durasi, serta ketersediaan stok sebelum perubahan disimpan.</DrawerDescription>
+                    </DrawerHeader>
+                    <div className="max-h-[62vh] space-y-3 overflow-y-auto px-4 pb-3">
+                      {amendmentTargets.isError ? <Alert variant="destructive"><AlertDescription>{amendmentTargets.error instanceof Error ? amendmentTargets.error.message : "Katalog rental tidak dapat dimuat."}</AlertDescription></Alert> : null}
+                      {amendLines.map((line, index) => {
+                        const target = amendmentTargetMap.get(line.targetKey);
+                        const quantity = Number(line.quantity);
+                        const tariff = target?.tariffs.find((item) => item.tarif_sewa_id === line.tariffId);
+                        return (
+                          <div key={line.id} className="space-y-2 rounded-xl border p-3">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-xs font-bold">Rincian {index + 1}</p>
+                              <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-[10px] text-rose-600" onClick={() => { setAmendPreview(null); setAmendLines((items) => items.filter((item) => item.id !== line.id)); }}>Hapus</Button>
+                            </div>
+                            <label className="grid gap-1 text-[11px] font-medium">Barang / varian / paket
+                              <select className="h-10 rounded-lg border bg-background px-2 text-xs" value={line.targetKey} onChange={(event) => {
+                                const next = amendmentTargetMap.get(event.target.value);
+                                setAmendPreview(null);
+                                setAmendLines((items) => items.map((item) => item.id === line.id ? { ...item, targetKey: event.target.value, tariffId: next?.tariffs[0]?.tarif_sewa_id ?? "" } : item));
+                              }}>
+                                <option value="">Pilih target</option>
+                                {(amendmentTargets.data ?? []).map((item: ReservationAmendTarget) => <option key={item.key} value={item.key}>{item.label}</option>)}
+                              </select>
+                            </label>
+                            <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_120px]">
+                              <label className="grid gap-1 text-[11px] font-medium">Tarif sewa
+                                <select className="h-10 rounded-lg border bg-background px-2 text-xs" value={line.tariffId} disabled={!target?.tariffs.length} onChange={(event) => { setAmendPreview(null); setAmendLines((items) => items.map((item) => item.id === line.id ? { ...item, tariffId: event.target.value } : item)); }}>
+                                  <option value="">Pilih tarif</option>
+                                  {(target?.tariffs ?? []).map((item) => <option key={item.tarif_sewa_id} value={item.tarif_sewa_id}>{item.nama} · {money(item.nominal)} / {item.durasi_nilai} {item.durasi_unit}</option>)}
+                                </select>
+                              </label>
+                              <label className="grid gap-1 text-[11px] font-medium">Jumlah
+                                <Input type="number" min="0.001" step="0.001" value={line.quantity} onChange={(event) => { setAmendPreview(null); setAmendLines((items) => items.map((item) => item.id === line.id ? { ...item, quantity: event.target.value } : item)); }} />
+                              </label>
+                            </div>
+                            <label className="grid gap-1 text-[11px] font-medium">Catatan (opsional)
+                              <Input value={line.note} onChange={(event) => { setAmendPreview(null); setAmendLines((items) => items.map((item) => item.id === line.id ? { ...item, note: event.target.value } : item)); }} placeholder="Catatan item" />
+                            </label>
+                            <div className="flex items-center justify-between rounded-lg bg-muted/35 px-3 py-2 text-[10px]">
+                              <span className="text-muted-foreground">{tariff ? "Tarif dasar " + money(tariff.nominal) + " × " + (Number.isFinite(quantity) ? quantity : 0) : "Tarif belum dipilih"}</span>
+                              <strong>{tariff && Number.isFinite(quantity) && quantity > 0 ? money(tariff.nominal * quantity) : "—"}</strong>
+                            </div>
+                          </div>
+                        );
+                      })}
+                      <Button type="button" variant="outline" className="w-full rounded-xl" onClick={() => { setAmendPreview(null); setAmendLines((items) => [...items, { id: createClientId(), targetKey: "", tariffId: "", quantity: "1", note: "" }]); }}>
+                        + Tambah rincian
+                      </Button>
+                      <div className="rounded-xl border bg-primary/[0.035] p-3">
+                        <div className="flex items-center justify-between text-xs"><span className="text-muted-foreground">Total sebelumnya</span><strong>{formatReservationMoney(totalValue, primaryCurrency)}</strong></div>
+                        {amendPreview ? <>
+                          <div className="mt-1 flex items-center justify-between text-xs"><span className="text-muted-foreground">Total baru (harga server)</span><strong>{money(amendPreview.total_after)}</strong></div>
+                          <div className="mt-1 flex items-center justify-between text-xs"><span className="text-muted-foreground">Perubahan</span><strong className={amendPreview.delta > 0 ? "text-amber-700" : amendPreview.delta < 0 ? "text-emerald-700" : ""}>{amendPreview.delta > 0 ? "+" : ""}{money(amendPreview.delta)}</strong></div>
+                          <div className="mt-3 space-y-1 border-t pt-2">
+                            {amendPreview.lines.map((line, index) => <div key={index} className="flex items-center justify-between gap-3 text-[10px]"><span className="min-w-0 truncate text-muted-foreground">Rincian {index + 1} · {line.diskon_persen_snapshot > 0 || line.nominal_diskon_snapshot > 0 ? "Promo diterapkan" : "Harga normal"}</span><strong className="shrink-0">{money(line.unit_price)} × {line.jumlah}</strong></div>)}
+                          </div>
+                          <p className="mt-2 text-[10px] leading-4 text-muted-foreground">Preview server berhasil. Harga dan identitas promo akan dicocokkan ulang sebelum commit.</p>
+                        </> : <>
+                          <div className="mt-1 flex items-center justify-between text-xs"><span className="text-muted-foreground">Estimasi tarif dasar</span><strong>{money(amendmentEstimatedTotal)}</strong></div>
+                          <p className="mt-2 text-[10px] leading-4 text-muted-foreground">Tinjau perubahan untuk mendapatkan harga efektif termasuk promosi aktif dan validasi kapasitas dari server.</p>
+                        </>}
+                      </div>
+                      <label className="grid gap-1 text-xs font-medium">Alasan perubahan
+                        <Input value={amendReason} onChange={(event) => setAmendReason(event.target.value)} placeholder="Contoh: pelanggan mengganti jumlah dan pilihan barang" maxLength={500} />
+                      </label>
+                    </div>
+                    <DrawerFooter>
+                      {!amendPreview ? (
+                        <Button className="h-11 rounded-xl" disabled={previewMutation.isPending || amendMutation.isPending || amendLines.length === 0 || amendmentTargets.isPending} onClick={() => previewMutation.mutate()}>
+                          {previewMutation.isPending ? <><Loader2 className="size-4 animate-spin" /> Memeriksa harga & kapasitas…</> : "Tinjau perubahan"}
+                        </Button>
+                      ) : (
+                        <>
+                          <Button className="h-11 rounded-xl" disabled={amendMutation.isPending || !amendReason.trim()} onClick={() => amendMutation.mutate()}>
+                            {amendMutation.isPending ? <><Loader2 className="size-4 animate-spin" /> Menyimpan perubahan…</> : "Konfirmasi perubahan"}
+                          </Button>
+                          <Button type="button" variant="outline" className="h-10 rounded-xl" disabled={amendMutation.isPending || previewMutation.isPending} onClick={() => previewMutation.mutate()}>Perbarui preview</Button>
+                        </>
+                      )}
+                      <p className="px-2 text-center text-[10px] text-muted-foreground">Harga snapshot lama tetap berlaku sampai perubahan ini berhasil dikonfirmasi.</p>
+                      <DrawerClose asChild><Button variant="outline" className="h-11 rounded-xl" disabled={amendMutation.isPending}>Batal</Button></DrawerClose>
+                    </DrawerFooter>
+                  </DrawerContent>
+                </Drawer>
               </div>
             )}
             {canOpenLinkedRental && linkedRental.data && (

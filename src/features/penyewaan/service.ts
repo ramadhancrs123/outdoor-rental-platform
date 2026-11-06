@@ -26,6 +26,7 @@ import type {
   RentalLateFeeAssessment,
   AutoAssignRentalResult,
   AutoAssignRentalTarget,
+  CheckoutDiscountRequest,
 } from "./types";
 import { sanitizeRentalSearch } from "./utils";
 
@@ -43,6 +44,8 @@ type RentalHeader = {
   actual_return_started_at: string | null;
   actual_return_completed_at: string | null;
   status: string;
+  subtotal_amount: string | number;
+  discount_amount: string | number;
   total_amount: string | number;
   currency_code: string;
   catatan: string | null;
@@ -51,9 +54,9 @@ type RentalHeader = {
 };
 
 const RENTAL_SELECT =
-  "penyewaan_id,usaha_id,reservasi_id,penyewa_id,nomor_penyewaan,jadwal_mulai,jadwal_kembali,tolerance_deadline,actual_pickup_at,actual_return_started_at,actual_return_completed_at,status,total_amount,currency_code,catatan,created_at,updated_at";
+  "penyewaan_id,usaha_id,reservasi_id,penyewa_id,nomor_penyewaan,jadwal_mulai,jadwal_kembali,tolerance_deadline,actual_pickup_at,actual_return_started_at,actual_return_completed_at,status,subtotal_amount,discount_amount,total_amount,currency_code,catatan,created_at,updated_at";
 const DETAIL_SELECT =
-  "detail_penyewaan_id,usaha_id,penyewaan_id,barang_id,varian_barang_id,paket_sewa_id,jumlah,unit_price,currency_code,subtotal,catatan";
+  "detail_penyewaan_id,usaha_id,penyewaan_id,barang_id,varian_barang_id,paket_sewa_id,jumlah,unit_price,currency_code,subtotal,catatan,harga_normal_snapshot,diskon_persen_snapshot,nominal_diskon_snapshot,promosi_paket_id,promosi_katalog_id,durasi_unit_snapshot,durasi_nilai_snapshot";
 
 export async function getPenyewaanContext(): Promise<RentalTenantContext> {
   const { data: userData, error: userError } = await supabase.auth.getUser();
@@ -506,6 +509,8 @@ export async function getRental(usahaId: string, id: string): Promise<RentalDeta
     detail_penyewaan_id: string; usaha_id: string; penyewaan_id: string;
     barang_id: string | null; varian_barang_id: string | null; paket_sewa_id: string | null;
     jumlah: string | number; unit_price: string | number; currency_code: string; subtotal: string | number; catatan: string | null;
+    harga_normal_snapshot: string | number | null; diskon_persen_snapshot: string | number | null; nominal_diskon_snapshot: string | number | null;
+    promosi_paket_id: string | null; promosi_katalog_id: string | null; durasi_unit_snapshot: string | null; durasi_nilai_snapshot: string | number | null;
   }>;
   const catalog = await resolveCatalogNames(usahaId, rawLines);
   const rawAssignments = (assignmentResult.data ?? []) as Omit<RentalAssignment, "kode_unit">[];
@@ -988,6 +993,70 @@ function buildDirectRentalCommandParams(
     p_idempotency_key: options.idempotencyKey ?? `create-direct-rental-${createClientId()}`,
     p_request_id: options.requestId ?? createClientId(),
   };
+}
+
+async function runDiscountAwareRentalCommand(
+  rpcName: string,
+  payload: Record<string, unknown>,
+  label: string,
+): Promise<RentalCommandResult> {
+  const { data, error } = await supabase.rpc(rpcName, payload as never);
+  return assertRentalRpcResult(data as RentalCommandResult | null, error, label);
+}
+
+export async function createDirectRentalWithDiscount(
+  usahaId: string,
+  input: CreateDirectRentalInput,
+  discountRequest: CheckoutDiscountRequest,
+  options: RentalCommandOptions = {},
+  activateImmediately = false,
+): Promise<RentalCommandResult> {
+  const params = buildDirectRentalCommandParams(usahaId, input, options);
+  const rpcName = activateImmediately
+    ? "command_create_direct_rental_and_activate_with_discount"
+    : "command_create_direct_rental_with_discount";
+  return runDiscountAwareRentalCommand(
+    rpcName,
+    { ...params, p_discount_request: discountRequest },
+    activateImmediately ? "Pembuatan dan aktivasi rental dengan diskon" : "Pembuatan rental dengan diskon",
+  );
+}
+
+export async function createRentalFromReservationWithDiscount(
+  usahaId: string,
+  input: CreateRentalFromReservationInput,
+  discountRequest: CheckoutDiscountRequest,
+  options: RentalCommandOptions = {},
+  activateImmediately = false,
+): Promise<RentalCommandResult> {
+  if (!input.reservasiId.trim()) throw new Error("Reservasi wajib dipilih.");
+  if (!input.jadwalMulai || !input.jadwalKembali) throw new Error("Jadwal rental wajib diisi.");
+  const start = new Date(input.jadwalMulai);
+  const end = new Date(input.jadwalKembali);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) {
+    throw new Error("Jadwal rental tidak valid.");
+  }
+
+  const idempotencyKey = options.idempotencyKey ?? `create-rental-from-reservation-${createClientId()}`;
+  const requestId = options.requestId ?? newRentalCommandRequestId();
+  const rpcName = activateImmediately
+    ? "command_create_reservation_rental_activate_discount"
+    : "command_create_rental_from_reservation_with_discount";
+  const payload = {
+    p_usaha_id: usahaId,
+    p_reservasi_id: input.reservasiId,
+    p_jadwal_mulai: input.jadwalMulai,
+    p_jadwal_kembali: input.jadwalKembali,
+    ...(activateImmediately ? { p_catatan: "Aktivasi langsung dari konversi reservasi." } : {}),
+    p_discount_request: discountRequest,
+    p_idempotency_key: idempotencyKey,
+    p_request_id: requestId,
+  };
+  return runDiscountAwareRentalCommand(
+    rpcName,
+    payload,
+    activateImmediately ? "Konversi dan aktivasi reservasi dengan diskon" : "Konversi reservasi dengan diskon",
+  );
 }
 
 export async function createDirectRental(

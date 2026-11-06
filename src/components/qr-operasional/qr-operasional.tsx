@@ -1,17 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { BrowserQRCodeReader, IScannerControls } from "@zxing/browser";
-import { Camera, Download, LockKeyhole, Printer, QrCode, ScanLine } from "lucide-react";
+import { Bluetooth, Camera, Download, FileDown, LockKeyhole, MessageCircle, Printer, QrCode, ScanLine } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import {
-  buildThermalReceiptPrintHtml,
+  buildRentalReceiptFileName,
+  buildRentalReceiptHtml,
   buildUnitQrPrintDocument,
   buildUnitQrUrl,
   generateQrPngDataUrl,
-  generateRentalReceiptThermalPdf,
   generateUnitQrLabelPdf,
+  normalizeReceiptWhatsAppPhone,
   listQrUnitRecords,
   printHtmlDocument,
   resolveQrPenyewaanToken,
@@ -543,6 +544,95 @@ export function QrPreviewDialog({
 }
 
 
+type ReceiptAndroidBridge = {
+  savePdfFromBase64?: (base64Payload: string, fileName: string) => boolean;
+  shareReceiptPngToWhatsApp?: (base64Png: string, fileName: string, phoneNumber: string, caption: string) => boolean;
+  getThermalPrinterInfo?: () => string;
+  openThermalPrinterSettings?: () => boolean;
+};
+
+type ThermalPrinterInfo = {
+  supported?: boolean;
+  permissionGranted?: boolean;
+  configured?: boolean;
+  printerName?: string;
+  bluetoothEnabled?: boolean;
+};
+
+function getReceiptAndroidBridge() {
+  return (window as Window & { AndroidInterface?: ReceiptAndroidBridge }).AndroidInterface;
+}
+
+async function loadReceiptLogoDataUrl() {
+  const assetPath = `${import.meta.env.BASE_URL}logo.webp`;
+  const response = await fetch(assetPath, { cache: "force-cache" });
+  if (!response.ok) throw new Error("Logo Akasha Outdoor tidak dapat dimuat.");
+  const blob = await response.blob();
+  return await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => typeof reader.result === "string" ? resolve(reader.result) : reject(new Error("Logo tidak dapat dibaca."));
+    reader.onerror = () => reject(new Error("Logo tidak dapat dibaca."));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function captureReceiptCanvas(frame: HTMLIFrameElement | null) {
+  const doc = frame?.contentDocument;
+  if (!doc?.body) throw new Error("Pratinjau struk belum siap untuk diekspor.");
+
+  await doc.fonts?.ready;
+  await Promise.all(Array.from(doc.images).map(async (image) => {
+    if (!image.complete) {
+      await new Promise<void>((resolve, reject) => {
+        image.addEventListener("load", () => resolve(), { once: true });
+        image.addEventListener("error", () => reject(new Error("Logo atau QR struk gagal dimuat.")), { once: true });
+      });
+    }
+    if (image.naturalWidth === 0) throw new Error("Logo atau QR struk gagal dimuat.");
+  }));
+
+  const { default: html2canvas } = await import("html2canvas");
+  return await html2canvas(doc.body, {
+    backgroundColor: "#ffffff",
+    scale: 3,
+    useCORS: true,
+    allowTaint: false,
+    logging: false,
+    width: Math.ceil(doc.body.scrollWidth),
+    height: Math.ceil(doc.body.scrollHeight),
+    windowWidth: Math.ceil(doc.documentElement.scrollWidth),
+  });
+}
+
+function bytesToBase64(bytes: Uint8Array) {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  return window.btoa(binary);
+}
+
+function downloadReceiptBlob(blob: Blob, fileName: string) {
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = fileName;
+  link.style.display = "none";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 30_000);
+}
+
+function pngDataUrlToBlob(dataUrl: string) {
+  const base64 = dataUrl.split(",", 2)[1] ?? "";
+  const binary = window.atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return new Blob([bytes], { type: "image/png" });
+}
+
 export function RentalReceiptDialog({
   open,
   onOpenChange,
@@ -553,118 +643,280 @@ export function RentalReceiptDialog({
   receipt: RentalReceiptData;
 }) {
   const [qrDataUrl, setQrDataUrl] = useState("");
-  const [working, setWorking] = useState(false);
+  const [logoDataUrl, setLogoDataUrl] = useState("");
+  const [workingAction, setWorkingAction] = useState<"print" | "pdf" | "whatsapp" | null>(null);
   const [actionError, setActionError] = useState("");
+  const [actionMessage, setActionMessage] = useState("");
+  const [previewHeight, setPreviewHeight] = useState(480);
+  const [printerInfo, setPrinterInfo] = useState<ThermalPrinterInfo | null>(null);
+  const previewRef = useRef<HTMLIFrameElement>(null);
 
   useEffect(() => {
     if (!open || !receipt.url) return;
     let cancelled = false;
-    void generateQrPngDataUrl(receipt.url, 768).then((value) => {
-      if (!cancelled) setQrDataUrl(value);
-    });
+    setQrDataUrl("");
+    setLogoDataUrl("");
+    setActionError("");
+    setActionMessage("");
+    void Promise.all([generateQrPngDataUrl(receipt.url, 768), loadReceiptLogoDataUrl()])
+      .then(([qr, logo]) => {
+        if (!cancelled) {
+          setQrDataUrl(qr);
+          setLogoDataUrl(logo);
+        }
+      })
+      .catch((cause) => {
+        if (!cancelled) setActionError(cause instanceof Error ? cause.message : "Struk gagal disiapkan.");
+      });
     return () => { cancelled = true; };
   }, [open, receipt.url]);
 
+  const receiptHtml = useMemo(
+    () => qrDataUrl && logoDataUrl ? buildRentalReceiptHtml(receipt, qrDataUrl, logoDataUrl) : "",
+    [qrDataUrl, logoDataUrl, receipt],
+  );
+  useEffect(() => {
+    if (!open) return;
+    const bridge = getReceiptAndroidBridge();
+    if (!bridge) {
+      setPrinterInfo(null);
+      return;
+    }
+
+    const refreshPrinterInfo = () => {
+      if (typeof bridge.getThermalPrinterInfo !== "function") {
+        setPrinterInfo({ supported: true, configured: false });
+        return;
+      }
+      try {
+        setPrinterInfo(JSON.parse(bridge.getThermalPrinterInfo() || "{}") as ThermalPrinterInfo);
+      } catch {
+        setPrinterInfo({ supported: true, configured: false });
+      }
+    };
+    const handlePrinterChanged = () => refreshPrinterInfo();
+    const handlePrintResult = (event: Event) => {
+      const detail = (event as CustomEvent<{ success?: boolean; message?: string }>).detail;
+      setWorkingAction(null);
+      if (detail?.success) {
+        setActionError("");
+        setActionMessage(detail.message || "Struk berhasil dikirim ke printer.");
+      } else if (detail) {
+        setActionError(detail.message || "Pencetakan Bluetooth gagal.");
+        setActionMessage("");
+      }
+    };
+
+    refreshPrinterInfo();
+    window.addEventListener("akasha:thermal-printer-changed", handlePrinterChanged);
+    window.addEventListener("akasha:thermal-print-result", handlePrintResult);
+    return () => {
+      window.removeEventListener("akasha:thermal-printer-changed", handlePrinterChanged);
+      window.removeEventListener("akasha:thermal-print-result", handlePrintResult);
+    };
+  }, [open]);
+
+  const documentName = useMemo(() => buildRentalReceiptFileName(receipt), [receipt]);
+  const whatsappPhone = useMemo(() => normalizeReceiptWhatsAppPhone(receipt.penyewa_telepon), [receipt.penyewa_telepon]);
+  const isWorking = workingAction !== null;
+
   const printReceipt = async () => {
-    if (!qrDataUrl) return;
-    setWorking(true);
+    if (!receiptHtml) return;
+    setWorkingAction("print");
     setActionError("");
+    setActionMessage("");
+    const bridge = getReceiptAndroidBridge();
+    const waitsForNativeResult = Boolean(bridge
+      && typeof bridge.getThermalPrinterInfo === "function"
+      && typeof bridge.openThermalPrinterSettings === "function");
+    let nativeJobAccepted = false;
     try {
-      await printHtmlDocument(buildThermalReceiptPrintHtml(receipt, qrDataUrl), {
-        androidThermal: true,
-        documentName: "struk-" + receipt.nomor_penyewaan + "-58mm",
-      });
+      await printHtmlDocument(receiptHtml, { androidThermal: true, documentName });
+      if (waitsForNativeResult) {
+        nativeJobAccepted = true;
+        setActionMessage("Menyiapkan struk dan menghubungkan printer Bluetooth…");
+      }
     } catch (cause) {
       setActionError(cause instanceof Error ? cause.message : "Struk gagal disiapkan untuk dicetak.");
     } finally {
-      setWorking(false);
+      if (!nativeJobAccepted) setWorkingAction(null);
     }
   };
 
-  const downloadPdf = async () => {
-    setWorking(true);
+  const openPrinterSettings = () => {
     setActionError("");
-    try {
-      const bytes = await generateRentalReceiptThermalPdf(receipt);
-      await downloadPdfBytes(bytes, "struk-" + receipt.nomor_penyewaan + "-58mm.pdf");
-    } catch (cause) {
-      setActionError(cause instanceof Error ? cause.message : "PDF struk gagal disimpan.");
-    } finally {
-      setWorking(false);
+    setActionMessage("");
+    const bridge = getReceiptAndroidBridge();
+    if (!bridge) {
+      setActionError("Konfigurasi Bluetooth printer tersedia melalui aplikasi Android Akasha Outdoor.");
+      return;
+    }
+    if (typeof bridge.openThermalPrinterSettings !== "function") {
+      setActionError("Versi aplikasi Android belum mendukung konfigurasi printer Bluetooth. Perbarui APK Akasha Outdoor.");
+      return;
+    }
+    if (!bridge.openThermalPrinterSettings()) {
+      setActionError("Dialog konfigurasi printer tidak dapat dibuka. Coba buka ulang aplikasi.");
     }
   };
 
-  const money = new Intl.NumberFormat("id-ID", { style: "currency", currency: receipt.currency_code, maximumFractionDigits: 0 });
-  const date = (value: string | null | undefined) => value ? new Intl.DateTimeFormat("id-ID", { timeZone: receipt.timezone, day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(value)).replace(".", ":") : "—";
+  const createReceiptPng = async () => {
+    const canvas = await captureReceiptCanvas(previewRef.current);
+    const dataUrl = canvas.toDataURL("image/png");
+    if (!dataUrl.startsWith("data:image/png;base64,")) throw new Error("Gambar PNG struk gagal dibuat.");
+    return { canvas, dataUrl, blob: pngDataUrlToBlob(dataUrl) };
+  };
+
+  const saveReceiptPdf = async () => {
+    if (!receiptHtml) return;
+    setWorkingAction("pdf");
+    setActionError("");
+    setActionMessage("");
+    try {
+      const { dataUrl, canvas } = await createReceiptPng();
+      const { PDFDocument } = await import("pdf-lib");
+      const pdf = await PDFDocument.create();
+      const image = await pdf.embedPng(dataUrl);
+      const pageWidth = (58 / 25.4) * 72;
+      const pageHeight = pageWidth * (canvas.height / canvas.width);
+      const page = pdf.addPage([pageWidth, pageHeight]);
+      page.drawImage(image, { x: 0, y: 0, width: pageWidth, height: pageHeight });
+      const pdfBytes = await pdf.save();
+      const pdfBase64 = bytesToBase64(pdfBytes);
+      const fileName = `${documentName}.pdf`;
+      const bridge = getReceiptAndroidBridge();
+      if (typeof bridge?.savePdfFromBase64 === "function") {
+        if (!bridge.savePdfFromBase64(pdfBase64, fileName)) throw new Error("Android gagal menyimpan PDF struk.");
+        setActionMessage(`PDF disimpan di Downloads/${fileName}`);
+      } else {
+        const pdfBlobBuffer = new ArrayBuffer(pdfBytes.byteLength);
+        new Uint8Array(pdfBlobBuffer).set(pdfBytes);
+        downloadReceiptBlob(new Blob([pdfBlobBuffer], { type: "application/pdf" }), fileName);
+        setActionMessage(`Unduhan ${fileName} dimulai.`);
+      }
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : "PDF struk gagal dibuat.");
+    } finally {
+      setWorkingAction(null);
+    }
+  };
+
+  const shareReceiptToWhatsApp = async () => {
+    if (!receiptHtml) return;
+    if (!whatsappPhone) {
+      setActionError("Nomor WhatsApp penyewa tidak valid. Perbarui nomor pada data penyewa.");
+      return;
+    }
+    setWorkingAction("whatsapp");
+    setActionError("");
+    setActionMessage("");
+    try {
+      const { dataUrl, blob } = await createReceiptPng();
+      const fileName = `${documentName}.png`;
+      const caption = `Halo ${receipt.penyewa_nama}, berikut struk transaksi Akasha Outdoor untuk penyewaan Anda.`;
+      const base64Png = dataUrl.split(",", 2)[1] ?? "";
+      const bridge = getReceiptAndroidBridge();
+
+      if (bridge && typeof bridge.shareReceiptPngToWhatsApp !== "function") {
+        throw new Error("Aplikasi Android yang terpasang belum memiliki fitur berbagi langsung ke WhatsApp. Perbarui APK Akasha Outdoor terlebih dahulu.");
+      }
+      if (typeof bridge?.shareReceiptPngToWhatsApp === "function") {
+        const accepted = bridge.shareReceiptPngToWhatsApp(base64Png, fileName, whatsappPhone, caption);
+        if (!accepted) throw new Error("Android tidak dapat membuka WhatsApp. Periksa aplikasi WhatsApp dan coba lagi.");
+        setActionMessage(`WhatsApp dibuka dengan PNG terlampir. Periksa chat ${receipt.penyewa_telepon} dan tekan Kirim.`);
+      } else {
+        const file = new File([blob], fileName, { type: "image/png" });
+        if (typeof navigator.share === "function" && typeof navigator.canShare === "function" && navigator.canShare({ files: [file] })) {
+          await navigator.share({ files: [file], title: "Struk Akasha Outdoor", text: caption });
+          setActionMessage("Pilih WhatsApp pada menu berbagi untuk mengirim struk PNG.");
+        } else {
+          downloadReceiptBlob(blob, fileName);
+          window.location.href = `https://wa.me/${whatsappPhone}?text=${encodeURIComponent(caption)}`;
+          setActionMessage("WhatsApp dibuka. Lampirkan PNG yang baru diunduh pada chat penyewa.");
+        }
+      }
+    } catch (cause) {
+      if (cause instanceof DOMException && cause.name === "AbortError") return;
+      setActionError(cause instanceof Error ? cause.message : "Struk PNG gagal dibagikan ke WhatsApp.");
+    } finally {
+      setWorkingAction(null);
+    }
+  };
+
+  const handlePreviewLoad = () => {
+    const document = previewRef.current?.contentDocument;
+    const contentHeight = document?.documentElement?.scrollHeight ?? document?.body?.scrollHeight ?? 0;
+    if (contentHeight > 0) setPreviewHeight(Math.max(300, contentHeight + 4));
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="w-[calc(100%-1rem)] max-h-[calc(100dvh-1rem)] max-w-sm overflow-y-auto rounded-[24px] p-0">
         <DialogHeader className="px-5 pt-5">
-          <DialogTitle>Bukti Penyewaan · Thermal 58 mm</DialogTitle>
-          <DialogDescription>Preview dokumen serah-terima dengan data rental, payment summary, dan QR Penyewaan.</DialogDescription>
+          <DialogTitle>Struk Transaksi · 58 mm</DialogTitle>
+          <DialogDescription>Satu tampilan untuk cetak thermal, simpan PDF, dan bagikan gambar PNG ke WhatsApp.</DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 px-5 pb-5">
-          <div className="mx-auto w-full max-w-[290px] rounded-[20px] border bg-white p-4 text-slate-900 shadow-sm">
-            <div className="text-center">
-              <p className="text-[11px] font-black tracking-[0.055em] whitespace-nowrap">AKASHA OUTDOOR RENT</p>
-              <p className="mt-1 text-[8px] font-semibold tracking-[0.02em] text-slate-500">ready for your wild journey</p>
-              {receipt.usaha_alamat ? <p className="mt-2 text-[9px] leading-4 text-slate-500">{receipt.usaha_alamat}</p> : null}
-              {receipt.usaha_telepon || receipt.usaha_email ? <p className="mt-1 text-[8px] leading-4 text-slate-500">{[receipt.usaha_telepon, receipt.usaha_email].filter(Boolean).join(" · ")}</p> : null}
-            </div>
-            <div className="my-3 border-t-2 border-slate-900" />
-            <div className="text-center">
-              <p className="text-[10px] font-black uppercase tracking-[0.08em]">Bukti Penyewaan</p>
-              <p className="mt-1 text-xs font-black">{receipt.nomor_penyewaan}</p>
-            </div>
-            <div className="mt-4 border-t border-dashed border-slate-400 pt-3">
-              <p className="text-[9px] font-black uppercase tracking-[0.08em] text-slate-600">PERIODE PENYEWAAN</p>
-              <div className="mt-2 space-y-2 text-[9px]">
-                <div className="flex justify-between gap-3"><span className="text-slate-500">Mulai</span><strong>{date(receipt.jadwal_mulai)}</strong></div>
-              <div className="flex justify-between gap-3"><span className="text-slate-500">Berakhir</span><strong>{date(receipt.jadwal_kembali)}</strong></div>
-              <div className="flex justify-between gap-3"><span className="text-slate-500">Toleransi</span><strong>{date(receipt.tolerance_deadline)}</strong></div>
-                {receipt.actual_pickup_at ? <div className="flex justify-between gap-3"><span className="text-slate-500">Serah-terima</span><strong>{date(receipt.actual_pickup_at)}</strong></div> : null}
+        <div className="space-y-3 px-4 pb-5">
+          <div className="flex justify-center overflow-x-auto rounded-2xl border bg-muted/30 p-2">
+            {receiptHtml ? (
+              <iframe
+                ref={previewRef}
+                title="Pratinjau struk Akasha Outdoor 58 mm"
+                srcDoc={receiptHtml}
+                sandbox="allow-same-origin"
+                onLoad={handlePreviewLoad}
+                style={{ width: "58mm", height: `${previewHeight}px`, border: 0, background: "#fff", flex: "0 0 auto" }}
+              />
+            ) : (
+              <div className="flex min-h-52 w-full items-center justify-center gap-2 text-xs text-muted-foreground">
+                <span className="size-4 animate-spin rounded-full border-2 border-current border-r-transparent" />
+                Menyiapkan pratinjau struk…
               </div>
-            </div>
-            <div className="mt-4 border-t border-dashed border-slate-400 pt-3">
-              <p className="text-[9px] font-black uppercase tracking-[0.08em] text-slate-600">PENYEWA</p>
-              <p className="mt-1 text-[11px] font-bold">{receipt.penyewa_nama}</p>
-              {receipt.penyewa_telepon ? <p className="mt-0.5 text-[9px] text-slate-500">{receipt.penyewa_telepon}</p> : null}
-            </div>
-            <div className="mt-4 border-t border-dashed border-slate-400 pt-3">
-              <p className="text-[9px] font-black uppercase tracking-[0.08em] text-slate-600">PERLENGKAPAN</p>
-              <div className="mt-2 space-y-2">
-                {receipt.lines.map((line, index) => (
-                  <div key={index} className="text-[9px]">
-                    <div className="flex justify-between gap-2"><span className="max-w-[70%] font-bold">{line.nama}{line.rincian ? " · " + line.rincian : ""}</span><strong>{money.format(line.subtotal)}</strong></div>
-                    <div className="mt-0.5 text-slate-500">{line.jumlah} × {money.format(line.subtotal / Math.max(line.jumlah, 1))}</div>
-                  </div>
-                ))}
+            )}
+          </div>
+
+          {getReceiptAndroidBridge() ? (
+            <div className="flex items-center justify-between gap-3 rounded-xl border px-3 py-2.5">
+              <div className="flex min-w-0 items-center gap-2.5">
+                <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted"><Bluetooth className="size-4" /></div>
+                <div className="min-w-0">
+                  <p className="text-[10px] font-semibold">PRINTER BLUETOOTH</p>
+                  <p className="truncate text-[11px] text-muted-foreground">
+                    {printerInfo?.configured
+                      ? `${printerInfo.printerName || "Printer tersimpan"}${printerInfo.permissionGranted === false ? " · Izin diperlukan" : printerInfo.bluetoothEnabled === false ? " · Bluetooth mati" : " · Printer utama"}`
+                      : printerInfo?.supported === false ? "Bluetooth tidak tersedia" : "Belum ada printer utama"}
+                  </p>
+                </div>
               </div>
+              <Button type="button" size="sm" variant="outline" className="h-8 shrink-0 rounded-lg px-2.5 text-[10px]" onClick={openPrinterSettings}>
+                {printerInfo?.configured ? "Ubah" : "Hubungkan"}
+              </Button>
             </div>
-            <div className="mt-4 border-y-2 border-slate-900 py-2.5">
-              <div className="flex justify-between gap-2"><span className="text-[10px] font-black">TOTAL PENYEWAAN</span><strong className="text-[13px]">{money.format(receipt.total_amount)}</strong></div>
-            </div>
-            {receipt.pembayaran ? <div className="mt-4 space-y-1.5 text-[9px]"><p className="font-black uppercase tracking-[0.08em] text-slate-600">PEMBAYARAN</p><div className="flex justify-between"><span>Status</span><strong>{receipt.pembayaran.status === "lunas" ? "LUNAS" : receipt.pembayaran.status === "sebagian" ? "SEBAGIAN" : "BELUM DIBAYAR"}</strong></div><div className="flex justify-between"><span>Tercatat</span><strong>{money.format(receipt.pembayaran.tercatat)}</strong></div><div className="flex justify-between"><span>Sisa</span><strong>{money.format(receipt.pembayaran.sisa)}</strong></div></div> : null}
-            <div className="mt-4 flex flex-col items-center border-t border-dashed border-slate-400 pt-4">
-              {qrDataUrl ? <img src={qrDataUrl} alt="QR Penyewaan" className="size-28" /> : <div className="size-28 animate-pulse rounded bg-slate-100" />}
-              <p className="mt-2 text-[8px] font-black uppercase tracking-[0.12em]">QR PENYEWAAN</p>
-              <p className="mt-1 text-[8px] font-bold">{receipt.nomor_penyewaan}</p>
-              <p className="mt-3 text-center text-[8px] font-black uppercase tracking-[0.08em]">SEMOGA PERJALANAN ANDA MENYENANGKAN</p>
-            </div>
+          ) : null}
+
+          <div className="rounded-xl bg-muted/40 px-3 py-2 text-[10px]">
+            <p className="font-semibold">Nama file</p>
+            <p className="mt-0.5 break-all font-mono text-muted-foreground">{documentName}.pdf</p>
+            <p className="mt-0.5 text-muted-foreground">PNG WhatsApp: {documentName}.png</p>
           </div>
 
           {actionError ? <p role="alert" className="rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">{actionError}</p> : null}
+          {actionMessage ? <p role="status" className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300">{actionMessage}</p> : null}
 
           <div className="grid grid-cols-2 gap-2">
-            <Button variant="outline" className="h-11 rounded-xl" onClick={() => void downloadPdf()} disabled={working}>
-              <Download />PDF 58 mm
+            <Button className="h-11 rounded-xl" onClick={() => void printReceipt()} disabled={isWorking || !receiptHtml}>
+              <Printer />{workingAction === "print" ? "Menyiapkan…" : "Cetak 58 mm"}
             </Button>
-            <Button className="h-11 rounded-xl" onClick={() => void printReceipt()} disabled={working || !qrDataUrl}>
-              <Printer />{working ? "Menyiapkan…" : "Cetak 58 mm"}
+            <Button variant="outline" className="h-11 rounded-xl" onClick={() => void saveReceiptPdf()} disabled={isWorking || !receiptHtml}>
+              <FileDown />{workingAction === "pdf" ? "Menyimpan…" : "Simpan PDF"}
             </Button>
           </div>
+          <Button className="h-11 w-full rounded-xl bg-[#1f9d58] text-white hover:bg-[#17834a]" onClick={() => void shareReceiptToWhatsApp()} disabled={isWorking || !receiptHtml || !whatsappPhone}>
+            <MessageCircle />{workingAction === "whatsapp" ? "Menyiapkan PNG…" : "Bagikan PNG ke WhatsApp"}
+          </Button>
+          <p className="text-center text-[10px] leading-4 text-muted-foreground">PDF disimpan ke Download. Cetak mengirim langsung ke printer Bluetooth utama.</p>
+          {!whatsappPhone ? <p className="text-center text-[10px] text-muted-foreground">Nomor WhatsApp penyewa belum valid; fitur bagikan dinonaktifkan.</p> : null}
         </div>
       </DialogContent>
     </Dialog>

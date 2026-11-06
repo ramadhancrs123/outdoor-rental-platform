@@ -66,6 +66,8 @@ export type PurchaseLineItem = {
   subtotal: string | number;
   created_at: string;
   updated_at: string;
+  inventory_mode_snapshot?: "serialized" | "quantity" | "untracked" | null;
+  received_quantity?: string | number;
   barang_nama: string | null;
   varian_nama: string | null;
   registered_unit_count?: number;
@@ -73,8 +75,29 @@ export type PurchaseLineItem = {
   quantity_needs_review?: boolean;
 };
 
+export type PurchaseReceivingDetail = {
+  detail_penerimaan_pembelian_id: string;
+  detail_pembelian_id: string;
+  barang_id: string;
+  varian_barang_id: string | null;
+  inventory_mode: "serialized" | "quantity" | "untracked";
+  quantity_received: string | number;
+  unit_cost: string | number;
+  subtotal_cost: string | number;
+};
+
+export type PurchaseReceivingSummary = {
+  state: "not_received" | "received";
+  penerimaan_pembelian_id?: string;
+  nomor_penerimaan?: string;
+  status?: "completed" | "reversed";
+  received_at?: string;
+  details?: PurchaseReceivingDetail[];
+};
+
 export type PurchaseDetail = PurchaseListItem & {
   lines: PurchaseLineItem[];
+  receiving: PurchaseReceivingSummary;
 };
 
 export type ProcurementCapabilities = {

@@ -19,6 +19,7 @@ import {
   ShoppingCart,
   Trash2,
   UserPlus,
+  X,
   Users,
   WalletCards,
 } from "lucide-react";
@@ -27,19 +28,16 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import {
-  createDirectRental,
-  createDirectRentalAndActivate,
-  createRentalFromReservation,
+  createDirectRentalWithDiscount,
+  createRentalFromReservationWithDiscount,
   getOperationalRentalWorkspace,
   getRental,
   getPenyewaanContext,
-  reconcileDirectRentalActivation,
-  reconcileDirectRentalCreation,
-  reconcileRentalCreation,
   type DirectRentalLineInput,
   type OperationalRentalWorkspace,
 } from "@/features/penyewaan";
@@ -64,7 +62,7 @@ import {
 } from "@/features/katalog";
 import { isActiveCatalogTariff, formatCatalogMoney } from "@/features/katalog/utils";
 import { listInventoryPackageAvailability, listInventoryReadyUnitCovers, type InventoryPackageAvailability } from "@/features/inventaris";
-import { createRenter, listRenters, reconcileRenterCreation } from "@/features/penyewa/service";
+import { createRenter, getRenterSummary, listRenters, reconcileRenterCreation } from "@/features/penyewa/service";
 import { getReservation } from "@/features/reservasi/service";
 import type { ReservationDetail } from "@/features/reservasi/types";
 import {
@@ -77,8 +75,17 @@ import {
 import { localDateTimeToUtcIso, formatDateTimeLocalInTimezone } from "@/features/keuangan/utils";
 import { QrPreviewDialog, RentalReceiptDialog } from "@/components/qr-operasional/qr-operasional";
 import { RentalPhase2Actions } from "./phase2-actions";
-import { buildPenyewaanQrUrl, getQrPenyewaanRecord, getRentalReceiptSupport } from "@/features/qr-operasional";
+import { buildPenyewaanQrUrl, getQrPenyewaanRecord, getRentalReceiptData } from "@/features/qr-operasional";
 import { createClientId } from "@/lib/client-id";
+import {
+  getCheckoutDiscountPolicy,
+  getMyBusinessPermissions,
+  previewLoyaltyDiscount,
+  reconcileEventPromotionCheckout,
+} from "@/features/event-promotions";
+import type { CheckoutDiscountRequest } from "@/features/penyewaan/types";
+import { createMixedCheckout, getSaleReceiptData, listSaleCatalogItems } from "@/features/penjualan";
+import type { SaleCatalogItem, SaleReceiptData } from "@/features/penjualan";
 import { paths } from "@/routes/paths";
 import { cn } from "@/lib/utils";
 
@@ -87,6 +94,10 @@ type DraftRentalLine = {
   kind: "item" | "package";
   label: string;
   description: string;
+  stockReadyAtSelection?: number | null;
+  normalUnitPrice?: number;
+  promoDiscountPercent?: number;
+  promoId?: string | null;
   input: DirectRentalLineInput;
 };
 
@@ -158,8 +169,18 @@ function getLineIdentity(productId: string, variantId: string) {
   return "item:" + productId + ":" + (variantId || "base");
 }
 
+function matchesCatalogTerm(term: string, name: string, categoryName: string, slug = "") {
+  if (!term) return true;
+  const needle = term.toLocaleLowerCase("id-ID");
+  return (
+    name.toLocaleLowerCase("id-ID").includes(needle) ||
+    categoryName.toLocaleLowerCase("id-ID").includes(needle) ||
+    slug.toLocaleLowerCase("id-ID").includes(needle)
+  );
+}
+
 export function RentalWalkIn() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const renterIdFromQuery = searchParams.get("renter_id");
   const reservationIdFromQuery = searchParams.get("reservasi_id");
   const isReservationFlow = Boolean(reservationIdFromQuery);
@@ -190,9 +211,12 @@ export function RentalWalkIn() {
   const [endAt, setEndAt] = useState("");
 
   const [categoryId, setCategoryId] = useState("all");
+  const [saleCategoryId, setSaleCategoryId] = useState("all");
   const [productSearch, setProductSearch] = useState("");
-  const [selectionMode, setSelectionMode] = useState<"item" | "package">("item");
-  const [catalogPickerOpen, setCatalogPickerOpen] = useState(false);
+  const [cartReviewOpen, setCartReviewOpen] = useState(false);
+  const [itemConfigOpen, setItemConfigOpen] = useState(false);
+  const [selectionMode, setSelectionMode] = useState<"rental" | "package" | "sale">("rental");
+  const catalogPickerOpen = searchParams.get("view") === "catalog";
   const [catalogDialog, setCatalogDialog] = useState<CatalogDialogState>({ open: false });
   const [pickerLines, setPickerLines] = useState<DraftRentalLine[]>([]);
   const [selectedVariantId, setSelectedVariantId] = useState("");
@@ -201,6 +225,22 @@ export function RentalWalkIn() {
   const [selectedPackageNote, setSelectedPackageNote] = useState("");
 
   const [draftLines, setDraftLines] = useState<DraftRentalLine[]>([]);
+  const [saleCart, setSaleCart] = useState<Record<string, { item: SaleCatalogItem; jumlah: number }>>({});
+  const [saleBonusReasons, setSaleBonusReasons] = useState<Record<string, string>>({});
+  const [checkoutDiscountMode, setCheckoutDiscountMode] = useState<CheckoutDiscountRequest["mode"]>("none");
+  const [manualDiscountAmount, setManualDiscountAmount] = useState("");
+  const [manualDiscountReasonCode, setManualDiscountReasonCode] = useState("other");
+  const [manualDiscountReasonNote, setManualDiscountReasonNote] = useState("");
+  const [manualDiscountApplied, setManualDiscountApplied] = useState(false);
+  const [manualDiscountDialogOpen, setManualDiscountDialogOpen] = useState(false);
+  const [manualDiscountDraftAmount, setManualDiscountDraftAmount] = useState("");
+  const [manualDiscountDraftReasonCode, setManualDiscountDraftReasonCode] = useState("other");
+  const [manualDiscountDraftReasonNote, setManualDiscountDraftReasonNote] = useState("");
+  const [applyLoyaltyDiscount, setApplyLoyaltyDiscount] = useState(false);
+  useEffect(() => {
+    setApplyLoyaltyDiscount(false);
+  }, [selectedRenterId]);
+  const [mixedSaleId, setMixedSaleId] = useState("");
   const [rentalId, setRentalId] = useState("");
   const [rentalCommandKey, setRentalCommandKey] = useState(() => createClientId());
   const [rentalCommandState, setRentalCommandState] = useState<CommandState>("idle");
@@ -234,17 +274,36 @@ export function RentalWalkIn() {
     staleTime: 15_000,
   });
 
+  const selectedRenterFromPicker = (renters.data ?? []).find((renter) => renter.penyewa_id === selectedRenterId) ?? null;
+  const selectedRenterQuery = useQuery({
+    queryKey: ["penyewa", "walk-in-selected", context.data?.usahaId, selectedRenterId],
+    queryFn: () => getRenterSummary({
+      akunAdminId: context.data!.akunAdminId,
+      usahaId: context.data!.usahaId,
+      usahaNama: context.data!.usahaNama,
+    }, selectedRenterId),
+    enabled: Boolean(context.data?.usahaId && selectedRenterId && !rentalId && !selectedRenterFromPicker),
+    staleTime: 30_000,
+  });
+
+  const saleCatalog = useQuery<SaleCatalogItem[]>({
+    queryKey: ["penjualan", "catalog", context.data?.usahaId],
+    queryFn: () => listSaleCatalogItems(context.data!.usahaId),
+    enabled: Boolean(context.data?.usahaId && catalogPickerOpen && !rentalId && !isReservationFlow),
+    staleTime: 20_000,
+  });
+
   const products = useQuery({
     queryKey: ["penyewaan", "walk-in", "products", context.data?.usahaId],
-    queryFn: () => listCatalogProducts(context.data!.usahaId, DEFAULT_CATALOG_FILTERS),
-    enabled: Boolean(context.data?.usahaId && !rentalId && !isReservationFlow),
+    queryFn: () => listCatalogProducts(context.data!.usahaId, { ...DEFAULT_CATALOG_FILTERS, pageSize: 100 }),
+    enabled: Boolean(context.data?.usahaId && catalogPickerOpen && selectionMode === "rental" && !rentalId && !isReservationFlow),
     staleTime: 60_000,
   });
 
   const packages = useQuery({
     queryKey: ["penyewaan", "walk-in", "packages", context.data?.usahaId],
     queryFn: () => listCatalogPackages(context.data!.usahaId),
-    enabled: Boolean(context.data?.usahaId && !rentalId && !isReservationFlow),
+    enabled: Boolean(context.data?.usahaId && catalogPickerOpen && selectionMode === "package" && !rentalId && !isReservationFlow),
     staleTime: 60_000,
   });
 
@@ -255,7 +314,7 @@ export function RentalWalkIn() {
       endAt: localDateTimeToUtcIso(endAt, context.data!.timezone),
     }),
     enabled: Boolean(
-      context.data?.usahaId && !rentalId && !isReservationFlow && startAt && endAt
+      context.data?.usahaId && catalogPickerOpen && selectionMode === "package" && Boolean(packages.data?.length) && !rentalId && !isReservationFlow && startAt && endAt
       && new Date(endAt).getTime() > new Date(startAt).getTime(),
     ),
     staleTime: 10_000,
@@ -269,21 +328,21 @@ export function RentalWalkIn() {
   const productCovers = useQuery({
     queryKey: ["penyewaan", "walk-in", "product-covers", context.data?.usahaId, productIds.join(",")],
     queryFn: () => listCatalogProductCovers(context.data!.usahaId, productIds),
-    enabled: Boolean(context.data?.usahaId && productIds.length && !rentalId && !isReservationFlow),
+    enabled: Boolean(context.data?.usahaId && catalogPickerOpen && selectionMode === "rental" && productIds.length && !rentalId && !isReservationFlow),
     staleTime: 60_000,
   });
 
   const unitCovers = useQuery({
     queryKey: ["penyewaan", "walk-in", "ready-unit-covers", context.data?.usahaId, productIds.join(",")],
     queryFn: () => listInventoryReadyUnitCovers(context.data!.usahaId, productIds),
-    enabled: Boolean(context.data?.usahaId && productIds.length && !rentalId && !isReservationFlow),
+    enabled: Boolean(context.data?.usahaId && catalogPickerOpen && selectionMode === "rental" && productIds.length && !rentalId && !isReservationFlow),
     staleTime: 15_000,
   });
 
   const readyStock = useQuery({
     queryKey: ["penyewaan", "walk-in", "ready-stock", context.data?.usahaId, productIds.join(",")],
     queryFn: () => listCatalogReadyStock(context.data!.usahaId, productIds),
-    enabled: Boolean(context.data?.usahaId && productIds.length && !rentalId && !isReservationFlow),
+    enabled: Boolean(context.data?.usahaId && catalogPickerOpen && selectionMode === "rental" && productIds.length && !rentalId && !isReservationFlow),
     staleTime: 10_000,
   });
 
@@ -299,7 +358,7 @@ export function RentalWalkIn() {
       itemDialogId || null,
     ],
     queryFn: () => getCatalogProduct(context.data!.usahaId, itemDialogId),
-    enabled: Boolean(context.data?.usahaId && itemDialogId && !rentalId && !isReservationFlow),
+    enabled: Boolean(context.data?.usahaId && catalogPickerOpen && itemDialogId && !rentalId && !isReservationFlow),
     staleTime: 60_000,
   });
 
@@ -320,7 +379,7 @@ export function RentalWalkIn() {
       packageDialogId || null,
     ],
     queryFn: () => getCatalogPackageDetails(context.data!.usahaId, selectedPackage!.paket_sewa_id),
-    enabled: Boolean(context.data?.usahaId && packageDialogId && !rentalId && !isReservationFlow),
+    enabled: Boolean(context.data?.usahaId && catalogPickerOpen && packageDialogId && !rentalId && !isReservationFlow),
     staleTime: 60_000,
   });
 
@@ -342,7 +401,7 @@ export function RentalWalkIn() {
   const accounts = useQuery<FinanceAccount[]>({
     queryKey: ["keuangan", "accounts", context.data?.usahaId],
     queryFn: () => listFinanceAccounts(context.data!.usahaId),
-    enabled: Boolean(context.data?.usahaId && rentalId),
+    enabled: Boolean(context.data?.usahaId && (rentalId || Object.keys(saleCart).length > 0)),
     staleTime: 30_000,
   });
 
@@ -353,10 +412,17 @@ export function RentalWalkIn() {
     staleTime: 5 * 60_000,
   });
 
-  const receiptSupport = useQuery({
-    queryKey: ["qr-operasional", "rental-receipt-support", context.data?.usahaId, rentalId, operationalWorkspace.data?.renter.penyewa_id],
-    queryFn: () => getRentalReceiptSupport(context.data!.usahaId, rentalId, operationalWorkspace.data!.renter.penyewa_id),
-    enabled: Boolean(context.data?.usahaId && rentalId && operationalWorkspace.data?.renter.penyewa_id),
+  const mixedReceipt = useQuery<SaleReceiptData>({
+    queryKey: ["penjualan", "mixed-receipt", context.data?.usahaId, mixedSaleId],
+    queryFn: () => getSaleReceiptData(context.data!.usahaId, mixedSaleId),
+    enabled: Boolean(context.data?.usahaId && mixedSaleId),
+    staleTime: 60_000,
+  });
+
+  const receiptQuery = useQuery({
+    queryKey: ["qr-operasional", "rental-receipt", context.data?.usahaId, rentalId],
+    queryFn: () => getRentalReceiptData(context.data!.usahaId, rentalId),
+    enabled: Boolean(context.data?.usahaId && rentalId),
     staleTime: 15_000,
   });
 
@@ -381,21 +447,24 @@ export function RentalWalkIn() {
     return result;
   }, [unitCovers.data]);
 
+  const catalogSearch = productSearch.trim();
+
   const activeProducts = useMemo(
     () =>
       (products.data?.products ?? []).filter(
         (product) =>
           product.status === "active" &&
+          (product.is_rentable || product.has_rentable_variants) &&
           (categoryId === "all" || product.kategori_barang_id === categoryId) &&
-          product.nama.toLowerCase().includes(productSearch.trim().toLowerCase()),
+          matchesCatalogTerm(catalogSearch, product.nama, product.kategori?.nama ?? "", product.slug),
       ),
-    [categoryId, productSearch, products.data?.products],
+    [categoryId, catalogSearch, products.data?.products],
   );
 
   const categories = useMemo(() => {
     const map = new Map<string, { id: string; nama: string }>();
     for (const product of products.data?.products ?? []) {
-      if (product.status !== "active" || !product.kategori) continue;
+      if (product.status !== "active" || !product.kategori || (!product.is_rentable && !product.has_rentable_variants)) continue;
       map.set(product.kategori.kategori_barang_id, {
         id: product.kategori.kategori_barang_id,
         nama: product.kategori.nama,
@@ -405,13 +474,14 @@ export function RentalWalkIn() {
   }, [products.data?.products]);
 
   const selectedProduct = useMemo<CatalogProduct | null>(
-    () => (itemDialogId ? activeProducts.find((product) => product.barang_id === itemDialogId) ?? null : null),
-    [activeProducts, itemDialogId],
+    () => (itemDialogId ? (products.data?.products ?? []).find((product) => product.barang_id === itemDialogId) ?? null : null),
+    [itemDialogId, products.data?.products],
   );
 
   useEffect(() => {
     if (!catalogDialog.open || catalogDialog.mode !== "item" || !productDetail.data || selectedVariantId) return;
     const activeVariant = productDetail.data.variants.find((variant) =>
+      (variant.is_rentable ?? productDetail.data?.is_rentable) &&
       productDetail.data?.tariffs.some(
         (tariff) =>
           tariff.varian_barang_id === variant.varian_barang_id &&
@@ -459,8 +529,19 @@ export function RentalWalkIn() {
     );
   }, [itemDialogId, productDetail.data, rentalTariffAt, selectedProduct?.active_tariff, selectedVariantId]);
 
+  const selectedRentalPromotion = selectedVariant?.rental_promotion ??
+    (selectedVariantId
+      ? selectedProduct?.rental_variant_promotions?.[selectedVariantId] ?? selectedProduct?.rental_promotion ?? null
+      : selectedProduct?.rental_promotion ?? null);
+  const selectedRentalNormalUnitPrice = Number(selectedTariff?.nominal ?? 0);
+  const selectedRentalEffectiveUnitPrice = selectedTariff
+    ? selectedRentalPromotion
+      ? Math.round(selectedRentalNormalUnitPrice * (100 - Number(selectedRentalPromotion.diskon_persen)) + Number.EPSILON) / 100
+      : selectedRentalNormalUnitPrice
+    : 0;
   const pricedVariantId =
     productDetail.data?.variants.find((variant) =>
+      (variant.is_rentable ?? productDetail.data?.is_rentable) &&
       productDetail.data?.tariffs.some(
         (tariff) =>
           tariff.varian_barang_id === variant.varian_barang_id &&
@@ -490,11 +571,170 @@ export function RentalWalkIn() {
       ? calculateTariffPeriods(startAt, endAt, selectedTariff)
       : 0;
 
+  const selectedRentalNormalSubtotal = selectedTariff && billingPeriods
+    ? calculateRentalLineSubtotal(Number(selectedQuantity), selectedRentalNormalUnitPrice, billingPeriods)
+    : 0;
+  const selectedRentalEffectiveSubtotal = selectedTariff && billingPeriods
+    ? calculateRentalLineSubtotal(Number(selectedQuantity), selectedRentalEffectiveUnitPrice, billingPeriods)
+    : 0;
+
+
   const reservationLines = reservationPrefill.data?.lines ?? [];
   const totalRental = isReservationFlow
     ? reservationLines.reduce((sum, line) => sum + Number(line.subtotal ?? 0), 0)
     : draftLines.reduce((sum, line) => sum + Number(line.input.subtotal), 0);
   const rentalCurrencyCode = isReservationFlow ? reservationLines[0]?.currency_code ?? "IDR" : "IDR";
+  const saleCategories = useMemo(() => {
+    const map = new Map<string, { id: string; nama: string }>();
+    for (const item of saleCatalog.data ?? []) {
+      if (!item.kategori_barang_id || !item.kategori_nama) continue;
+      map.set(item.kategori_barang_id, {
+        id: item.kategori_barang_id,
+        nama: item.kategori_nama,
+      });
+    }
+    return Array.from(map.values()).sort((a, b) => a.nama.localeCompare(b.nama, "id"));
+  }, [saleCatalog.data]);
+
+  const saleCatalogItems = (saleCatalog.data ?? []).filter(
+    (item) =>
+      (saleCategoryId === "all" || item.kategori_barang_id === saleCategoryId) &&
+      matchesCatalogTerm(catalogSearch, item.nama, item.kategori_nama),
+  );
+  const visibleCategories = selectionMode === "sale" ? saleCategories : categories;
+  const visibleCategoryId = selectionMode === "sale" ? saleCategoryId : categoryId;
+  const setVisibleCategoryId = selectionMode === "sale" ? setSaleCategoryId : setCategoryId;
+  const saleCartLines = Object.values(saleCart);
+  const saleSubtotal = saleCartLines.reduce((sum, line) => {
+    const isBonus = Object.prototype.hasOwnProperty.call(saleBonusReasons, line.item.key);
+    const effectivePrice = Number(line.item.harga_jual_efektif ?? line.item.harga_jual ?? 0);
+    return sum + (isBonus ? 0 : effectivePrice * line.jumlah);
+  }, 0);
+
+  const promotionPermissions = useQuery({
+    queryKey: ["event-promotions", "walk-in-permissions", context.data?.usahaId],
+    queryFn: () => getMyBusinessPermissions(context.data!.usahaId),
+    enabled: Boolean(context.data?.usahaId),
+    staleTime: 30_000,
+  });
+  const checkoutDiscountPolicy = useQuery({
+    queryKey: ["event-promotions", "checkout-policy", context.data?.usahaId],
+    queryFn: () => getCheckoutDiscountPolicy(context.data!.usahaId),
+    enabled: Boolean(context.data?.usahaId),
+    staleTime: 30_000,
+  });
+  const canApplyCheckoutDiscount = promotionPermissions.data?.includes("checkout_discount.apply") === true;
+  const canOverrideLoyalty = promotionPermissions.data?.includes("checkout_discount.override") === true;
+  const canApplyRetailBonus = promotionPermissions.data?.includes("retail_bonus.apply") === true;
+  const loyaltyPreview = useQuery({
+    queryKey: ["event-promotions", "walk-in-reservation-loyalty-preview", context.data?.usahaId, selectedRenterId, totalRental],
+    queryFn: () => previewLoyaltyDiscount(context.data!.usahaId, selectedRenterId, totalRental),
+    enabled: Boolean(context.data?.usahaId && selectedRenterId && totalRental > 0 && !rentalId && isReservationFlow),
+    staleTime: 10_000,
+  });
+  const allowedManualReasons = checkoutDiscountPolicy.data?.allowed_reason_codes ?? ["other"];
+  const firstAllowedManualReason = allowedManualReasons[0];
+  const currentManualReasonAllowed = allowedManualReasons.includes(manualDiscountReasonCode);
+  const manualAmountValue = Number(manualDiscountAmount);
+  const walkInManualAmountValue = manualDiscountApplied ? Math.max(0, manualAmountValue || 0) : 0;
+  const legacyRequestedDiscountAmount = checkoutDiscountMode === "loyalty"
+    ? Number(loyaltyPreview.data?.recommended_amount ?? 0)
+    : checkoutDiscountMode === "manual" ? manualAmountValue : 0;
+  const legacyDiscountRequest: CheckoutDiscountRequest = checkoutDiscountMode === "manual"
+    ? {
+        mode: "manual",
+        amount: manualAmountValue,
+        reason_code: manualDiscountReasonCode,
+        reason_note: manualDiscountReasonNote.trim() || null,
+      }
+    : checkoutDiscountMode === "loyalty" ? { mode: "loyalty" } : { mode: "none" };
+  const effectiveDiscountAmount = Math.min(Math.max(0, legacyRequestedDiscountAmount), totalRental);
+  const discountedRentalTotal = Math.max(0, totalRental - effectiveDiscountAmount);
+  const manualDiscountExceedsPercentCap = checkoutDiscountPolicy.data?.max_discount_percent != null &&
+    totalRental > 0 &&
+    manualAmountValue / totalRental * 100 > Number(checkoutDiscountPolicy.data.max_discount_percent);
+  const manualDiscountExceedsAmountCap = checkoutDiscountPolicy.data?.max_discount_amount != null &&
+    manualAmountValue > Number(checkoutDiscountPolicy.data.max_discount_amount);
+  const manualDiscountExceedsLoyalty = loyaltyPreview.data?.eligible === true &&
+    manualAmountValue > Number(loyaltyPreview.data.recommended_amount);
+  const manualDiscountOverrideAllowed = checkoutDiscountPolicy.data?.allow_above_loyalty === true && canOverrideLoyalty;
+  const legacyDiscountInputIsValid = checkoutDiscountMode === "none" ||
+    (canApplyCheckoutDiscount && checkoutDiscountMode === "loyalty" &&
+      loyaltyPreview.isSuccess && loyaltyPreview.data?.eligible === true && legacyRequestedDiscountAmount > 0) ||
+    (canApplyCheckoutDiscount && checkoutDiscountMode === "manual" &&
+      checkoutDiscountPolicy.data?.manual_discount_enabled === true &&
+      Number.isFinite(manualAmountValue) && manualAmountValue > 0 && manualAmountValue <= totalRental &&
+      !manualDiscountExceedsPercentCap && !manualDiscountExceedsAmountCap &&
+      (!manualDiscountExceedsLoyalty || manualDiscountOverrideAllowed) &&
+      allowedManualReasons.includes(manualDiscountReasonCode) &&
+      (!checkoutDiscountPolicy.data.require_reason || Boolean(manualDiscountReasonNote.trim())));
+
+  const loyaltyBasisAmount = Math.max(0, totalRental - walkInManualAmountValue) + saleSubtotal;
+  const walkInLoyaltyPreview = useQuery({
+    queryKey: ["event-promotions", "walk-in-checkout-loyalty-preview", context.data?.usahaId, selectedRenterId, loyaltyBasisAmount],
+    queryFn: () => previewLoyaltyDiscount(context.data!.usahaId, selectedRenterId, loyaltyBasisAmount),
+    enabled: Boolean(context.data?.usahaId && selectedRenterId && !rentalId && !isReservationFlow),
+    staleTime: 10_000,
+  });
+  const walkInLoyaltyRecommended = Number(walkInLoyaltyPreview.data?.recommended_amount ?? 0);
+  const walkInLoyaltyActual = applyLoyaltyDiscount ? walkInLoyaltyRecommended : 0;
+  const roundMoney = (amount: number) => Math.round((amount + Number.EPSILON) * 100) / 100;
+  const walkInLoyaltySaleAmount = loyaltyBasisAmount > 0
+    ? walkInLoyaltyActual >= loyaltyBasisAmount
+      ? saleSubtotal
+      : Math.min(saleSubtotal, roundMoney(walkInLoyaltyActual * saleSubtotal / loyaltyBasisAmount))
+    : 0;
+  const walkInLoyaltyRentalAmount = roundMoney(walkInLoyaltyActual - walkInLoyaltySaleAmount);
+  const walkInEffectiveRentalDiscount = walkInManualAmountValue + walkInLoyaltyRentalAmount;
+  const walkInDiscountedRentalTotal = Math.max(0, totalRental - walkInEffectiveRentalDiscount);
+  const checkoutTotal = Math.max(0, walkInDiscountedRentalTotal + saleSubtotal - walkInLoyaltySaleAmount);
+  const manualDraftAmountValue = Number(manualDiscountDraftAmount);
+  const manualDraftExceedsPercentCap = checkoutDiscountPolicy.data?.max_discount_percent != null &&
+    totalRental > 0 && manualDraftAmountValue / totalRental * 100 > Number(checkoutDiscountPolicy.data.max_discount_percent);
+  const manualDraftExceedsAmountCap = checkoutDiscountPolicy.data?.max_discount_amount != null &&
+    manualDraftAmountValue > Number(checkoutDiscountPolicy.data.max_discount_amount);
+  const manualDiscountDraftIsValid = Boolean(
+    canApplyCheckoutDiscount &&
+    checkoutDiscountPolicy.data?.manual_discount_enabled === true &&
+    Number.isFinite(manualDraftAmountValue) && manualDraftAmountValue > 0 && manualDraftAmountValue <= totalRental &&
+    !manualDraftExceedsPercentCap && !manualDraftExceedsAmountCap &&
+    allowedManualReasons.includes(manualDiscountDraftReasonCode) &&
+    (!checkoutDiscountPolicy.data.require_reason || Boolean(manualDiscountDraftReasonNote.trim())),
+  );
+  const directDiscountInputIsValid =
+    (!manualDiscountApplied || Boolean(
+      canApplyCheckoutDiscount &&
+      checkoutDiscountPolicy.data?.manual_discount_enabled === true &&
+      Number.isFinite(walkInManualAmountValue) && walkInManualAmountValue > 0 && walkInManualAmountValue <= totalRental &&
+      !manualDiscountExceedsPercentCap && !manualDiscountExceedsAmountCap &&
+      allowedManualReasons.includes(manualDiscountReasonCode) &&
+      (!checkoutDiscountPolicy.data.require_reason || Boolean(manualDiscountReasonNote.trim()))
+    )) &&
+    (!applyLoyaltyDiscount || Boolean(
+      canApplyCheckoutDiscount &&
+      walkInLoyaltyPreview.isSuccess &&
+      walkInLoyaltyPreview.data?.eligible === true &&
+      walkInLoyaltyRecommended > 0
+    ));
+  const discountInputIsValid = isReservationFlow ? legacyDiscountInputIsValid : directDiscountInputIsValid;
+  const discountRequest: CheckoutDiscountRequest = isReservationFlow
+    ? legacyDiscountRequest
+    : manualDiscountApplied || applyLoyaltyDiscount
+      ? {
+          mode: "combined",
+          manual: {
+            enabled: manualDiscountApplied,
+            amount: walkInManualAmountValue,
+            reason_code: manualDiscountReasonCode,
+            reason_note: manualDiscountReasonNote.trim() || null,
+          },
+          loyalty: { apply: applyLoyaltyDiscount },
+        }
+      : { mode: "none" };
+  const hasBonusLineWithoutReason = saleCartLines.some(({ item }) =>
+    Object.prototype.hasOwnProperty.call(saleBonusReasons, item.key) &&
+    !saleBonusReasons[item.key]?.trim(),
+  );
   const selectedQuantityNumber = Number(selectedQuantity);
   const selectedPackageQuantityNumber = Number(selectedPackageQuantity);
 
@@ -530,7 +770,13 @@ export function RentalWalkIn() {
     staleTime: 10_000,
   });
 
-  const selectedReadyStock = availabilityPreview.data?.readyPhysicalUnits ?? 0;
+  const selectedReadyStock =
+    availabilityPreview.data?.readyPhysicalUnits ??
+    (selectedVariantId
+      ? readyStock.data?.byVariant[selectedVariantId] ?? 0
+      : itemDialogId
+        ? readyStock.data?.byProduct[itemDialogId] ?? 0
+        : 0);
 
   const selectedPackageAvailability = useMemo(
     () =>
@@ -556,8 +802,13 @@ export function RentalWalkIn() {
       ? calculateTariffPeriods(startAt, endAt, packageTariff)
       : 0;
 
+  const selectedItemIsRentable = selectedVariantId
+    ? Boolean(selectedVariant?.is_rentable ?? selectedProduct?.is_rentable)
+    : Boolean(selectedProduct?.is_rentable);
+
+  const canOpenItemConfig = Boolean(selectedProduct && selectedItemIsRentable);
   const canAddItem =
-    Boolean(selectedProduct && selectedTariff && canMoveFromPeriod) &&
+    Boolean(selectedProduct && selectedTariff && selectedItemIsRentable && canMoveFromPeriod) &&
     Number.isInteger(selectedQuantityNumber) &&
     selectedQuantityNumber > 0 &&
     billingPeriods > 0 &&
@@ -574,7 +825,7 @@ export function RentalWalkIn() {
     selectedPackageAvailability?.status === "available" &&
     selectedPackageQuantityNumber <= (selectedPackageAvailability?.available_package_quantity ?? 0);
 
-  const selectedRenter = (renters.data ?? []).find((renter) => renter.penyewa_id === selectedRenterId) ?? null;
+  const selectedRenter = selectedRenterQuery.data ?? selectedRenterFromPicker;
 
   const paymentRecorded = operationalWorkspace.data?.payments.reduce(
     (sum, payment) => sum + Number(payment.amount ?? 0),
@@ -584,44 +835,7 @@ export function RentalWalkIn() {
   const paymentRemaining = Math.max(0, operationalTotal - paymentRecorded);
   const currentPaymentStatus = paymentStatus(paymentRecorded, operationalTotal);
 
-  const receiptData = useMemo(() => {
-    const workspace = operationalWorkspace.data;
-    const support = receiptSupport.data;
-    const qr = rentalQr.data;
-    if (!workspace || !support || !qr) return null;
-    return {
-      usaha_nama: support.usaha_nama,
-      usaha_alamat: support.usaha_alamat,
-      usaha_telepon: support.usaha_telepon,
-      usaha_email: support.usaha_email,
-      timezone: support.timezone,
-      nomor_penyewaan: workspace.rental.nomor_penyewaan,
-      penyewa_nama: workspace.renter.nama_lengkap,
-      penyewa_telepon: support.penyewa_telepon,
-      jadwal_mulai: workspace.rental.jadwal_mulai,
-      jadwal_kembali: workspace.rental.jadwal_kembali,
-      tolerance_deadline: workspace.rental.tolerance_deadline,
-      actual_pickup_at: workspace.rental.actual_pickup_at,
-      total_amount: Number(workspace.rental.total_amount),
-      currency_code: workspace.rental.currency_code,
-      token_qr: qr.token_qr,
-      url: buildPenyewaanQrUrl(window.location.origin, qr.token_qr),
-      generated_at: new Date().toISOString(),
-      lines: workspace.lines.map((line) => ({
-        nama: line.paket_nama ?? line.barang_nama ?? "Barang",
-        rincian: line.varian_nama,
-        jumlah: Number(line.jumlah),
-        subtotal: Number(line.subtotal),
-        currency_code: line.currency_code,
-      })),
-      catatan: workspace.rental.catatan,
-      pembayaran: {
-        tercatat: paymentRecorded,
-        sisa: paymentRemaining,
-        status: (currentPaymentStatus === "paid" ? "lunas" : currentPaymentStatus === "partial" ? "sebagian" : "belum_dibayar") as "lunas" | "sebagian" | "belum_dibayar",
-      },
-    };
-  }, [currentPaymentStatus, operationalWorkspace.data, paymentRecorded, paymentRemaining, receiptSupport.data, rentalQr.data]);
+  const receiptData = receiptQuery.data ?? null;
 
   useEffect(() => {
     if (!context.data || startAt || rentalId || isReservationFlow) return;
@@ -638,6 +852,12 @@ export function RentalWalkIn() {
     if (!accounts.data?.length || paymentAccountId) return;
     setPaymentAccountId(accounts.data[0].akun_keuangan_id);
   }, [accounts.data, paymentAccountId]);
+
+  useEffect(() => {
+    if (firstAllowedManualReason && !currentManualReasonAllowed) {
+      setManualDiscountReasonCode(firstAllowedManualReason);
+    }
+  }, [firstAllowedManualReason, currentManualReasonAllowed]);
 
   useEffect(() => {
     if (!rentalId || !operationalWorkspace.data) return;
@@ -721,14 +941,16 @@ export function RentalWalkIn() {
         }
         if (!reservation.lines.length) throw new Error("Reservasi belum memiliki barang atau paket.");
         setRentalCommandState("processing");
-        return createRentalFromReservation(
+        return createRentalFromReservationWithDiscount(
           context.data.usahaId,
           {
             reservasiId: reservation.reservasi_id,
             jadwalMulai: localDateTimeToUtcIso(startAt, context.data.timezone),
             jadwalKembali: localDateTimeToUtcIso(endAt, context.data.timezone),
           },
+          discountRequest,
           { idempotencyKey: rentalCommandIdempotencyKey, requestId: createClientId() },
+          directAfterCreateRef.current,
         );
       }
       if (!draftLines.length) throw new Error("Tambahkan minimal satu barang atau paket.");
@@ -741,14 +963,50 @@ export function RentalWalkIn() {
         lines: draftLines.map((line) => line.input),
       };
       const commandOptions = { idempotencyKey: rentalCommandKey, requestId: createClientId() };
-      return directAfterCreateRef.current
-        ? createDirectRentalAndActivate(context.data.usahaId, directInput, commandOptions)
-        : createDirectRental(context.data.usahaId, directInput, commandOptions);
+      if (saleCartLines.length > 0) {
+        if (saleSubtotal > 0 && !paymentAccountId) throw new Error("Pilih akun operasional penerima pembayaran sebelum checkout.");
+        if (hasBonusLineWithoutReason) throw new Error("Alasan untuk setiap barang bonus wajib diisi.");
+        return createMixedCheckout(context.data.usahaId, {
+          penyewaId: selectedRenterId,
+          jadwalMulai: directInput.jadwal_mulai,
+          jadwalKembali: directInput.jadwal_kembali,
+          rentalLines: directInput.lines,
+          saleLines: saleCartLines.map(({ item, jumlah }) => {
+            const isBonus = Object.prototype.hasOwnProperty.call(saleBonusReasons, item.key);
+            return {
+              barang_id: item.barang_id,
+              varian_barang_id: item.varian_barang_id,
+              jumlah,
+              is_bonus_rental: isBonus,
+              bonus_reason: isBonus ? saleBonusReasons[item.key].trim() : null,
+            };
+          }),
+          akunKeuanganId: paymentAccountId || null,
+          metode: paymentMethod,
+          catatan: "Barang tambahan dibeli pada pembuatan rental.",
+        }, {
+          ...commandOptions,
+          activateRental: directAfterCreateRef.current,
+          discountRequest,
+        });
+      }
+      return createDirectRentalWithDiscount(
+        context.data.usahaId,
+        directInput,
+        discountRequest,
+        commandOptions,
+        directAfterCreateRef.current,
+      );
     },
     onSuccess: async (result) => {
       const id = result.penyewaan_id;
       if (!id) throw new Error("Rental berhasil dibuat tetapi ID penyewaan tidak dikembalikan.");
-      const directActivationCommitted = directAfterCreateRef.current && !isReservationFlow;
+      const directActivationCommitted = directAfterCreateRef.current;
+      if ("penjualan_id" in result && typeof result.penjualan_id === "string") {
+        setMixedSaleId(result.penjualan_id);
+        setSaleCart({});
+        setSaleBonusReasons({});
+      }
       setRentalId(id);
       await queryClient.invalidateQueries({ queryKey: ["penyewaan"] });
 
@@ -771,40 +1029,55 @@ export function RentalWalkIn() {
         return;
       }
       if (isUnknownOutcome(error)) {
-        const directActivationRequested = directAfterCreateRef.current && !isReservationFlow;
+        const directActivationRequested = directAfterCreateRef.current;
+        const commandName = saleCartLines.length > 0
+          ? directActivationRequested
+            ? "create_mixed_checkout_and_activate_with_discount"
+            : "create_mixed_checkout_with_discount"
+          : isReservationFlow
+            ? directActivationRequested
+              ? "create_rental_from_reservation_and_activate_with_discount"
+              : "create_rental_from_reservation_with_discount"
+            : directActivationRequested
+              ? "create_direct_rental_and_activate_with_discount"
+              : "create_direct_rental_with_discount";
         try {
-          const reconciliation = directActivationRequested
-            ? await reconcileDirectRentalActivation(context.data.usahaId, rentalCommandKey)
-            : isReservationFlow
-              ? await reconcileRentalCreation(context.data.usahaId, rentalCommandIdempotencyKey)
-              : await reconcileDirectRentalCreation(context.data.usahaId, rentalCommandKey);
-          if (reconciliation.state === "committed" && reconciliation.response?.penyewaan_id) {
-            const id = reconciliation.response.penyewaan_id;
-            setRentalId(id);
+          const reconciliation = await reconcileEventPromotionCheckout(
+            context.data.usahaId,
+            commandName,
+            saleCartLines.length > 0 ? rentalCommandKey : rentalCommandIdempotencyKey,
+          );
+          if (reconciliation.state === "committed" && reconciliation.response) {
+            const response = reconciliation.response;
+            const committedRentalId = typeof response.penyewaan_id === "string" ? response.penyewaan_id : "";
+            if (!committedRentalId) throw new Error("Hasil rekonsiliasi tidak memuat penyewaan_id.");
+            setRentalId(committedRentalId);
             directAfterCreateRef.current = false;
-            if (directActivationRequested) {
-              setRentalCommandState("idle");
-              setOperationalFeedback("Penyewaan langsung sudah aktif. Status server berhasil diverifikasi tanpa mengulang serah-terima.");
-              await queryClient.invalidateQueries({ queryKey: ["penyewaan"] });
-              await queryClient.invalidateQueries({ queryKey: ["penyewaan", "operational-workspace", context.data.usahaId, id] });
-            } else if (isReservationFlow) {
-              await activateImmediatelyAfterCreate(id);
-            } else {
-              setRentalCommandState("idle");
+            if (saleCartLines.length > 0) {
+              const committedSaleId = typeof response.penjualan_id === "string" ? response.penjualan_id : "";
+              if (committedSaleId) setMixedSaleId(committedSaleId);
+              setSaleCart({});
+              setSaleBonusReasons({});
+              await queryClient.invalidateQueries({ queryKey: ["penjualan"] });
             }
+            setRentalCommandState("idle");
+            if (directActivationRequested) {
+              setOperationalFeedback("Penyewaan langsung aktif. Status transaksi, penetapan unit, dan serah-terima sudah terverifikasi.");
+            }
+            await queryClient.invalidateQueries({ queryKey: ["penyewaan"] });
+            await queryClient.invalidateQueries({ queryKey: ["penyewaan", "operational-workspace", context.data.usahaId, committedRentalId] });
             return;
           }
           if (reconciliation.state === "not_found") {
             directAfterCreateRef.current = false;
             setRentalCommandKey(createClientId());
             setRentalCommandState("error");
-            setOperationalFeedback("Server memastikan transaksi sewa langsung tidak tersimpan. Periksa ketersediaan unit sebelum mencoba kembali.");
+            setOperationalFeedback("Server memastikan transaksi belum tersimpan. Keranjang tetap tersedia; periksa kembali sebelum mengirim ulang.");
             return;
           }
         } catch {
-          // Keep explicit unknown state when the server cannot confirm the outcome.
+          // The server could not confirm the command outcome; keep the explicit unknown state.
         }
-        directAfterCreateRef.current = false;
         setRentalCommandState("unknown");
         return;
       }
@@ -823,6 +1096,8 @@ export function RentalWalkIn() {
       queryClient.invalidateQueries({ queryKey: ["penyewaan"] }),
     ]);
   };
+
+
 
   const paymentMutation = useMutation({
     mutationFn: async () => {
@@ -931,9 +1206,18 @@ export function RentalWalkIn() {
     selectedRenterIsValid &&
     canMoveFromPeriod &&
     selectedLinesExist &&
+    discountInputIsValid &&
+    !hasBonusLineWithoutReason &&
+    (saleSubtotal <= 0 || (Boolean(paymentAccountId) && accounts.isSuccess)) &&
     reservationContinuationIsValid &&
     (!isReservationFlow || !reservationPrefill.isPending),
   );
+
+  const handlePrepareRental = () => {
+    if (!canPrepareRental || createRentalMutation.isPending || activationMutation.isPending) return;
+    directAfterCreateRef.current = false;
+    createRentalMutation.mutate();
+  };
 
   const handleDirectRental = () => {
     if (!canPrepareRental || createRentalMutation.isPending || activationMutation.isPending) return;
@@ -953,23 +1237,30 @@ export function RentalWalkIn() {
 
   const selectedProductImage = itemDialogId
     ? (selectedVariantId
-      ? unitCoverByVariant.get(selectedVariantId) ?? unitCoverByProduct.get(itemDialogId) ?? coverByProduct.get(itemDialogId)
+      ? unitCoverByVariant.get(selectedVariantId) ??
+        selectedVariant?.media?.find((media) => media.is_cover)?.url ??
+        selectedVariant?.media?.[0]?.url ??
+        unitCoverByProduct.get(itemDialogId) ??
+        coverByProduct.get(itemDialogId)
       : unitCoverByProduct.get(itemDialogId) ?? coverByProduct.get(itemDialogId)) ?? null
     : null;
 
   const openItemDialog = (product: CatalogProduct) => {
+    setItemConfigOpen(false);
     setSelectedVariantId("");
     setSelectedQuantity("1");
     setCatalogDialog({ open: true, mode: "item", id: product.barang_id });
   };
 
   const openPackageDialog = (pkg: CatalogPackage) => {
+    setItemConfigOpen(false);
     setSelectedPackageQuantity("1");
     setSelectedPackageNote("");
     setCatalogDialog({ open: true, mode: "package", id: pkg.paket_sewa_id });
   };
 
   const closeCatalogDialog = () => {
+    setItemConfigOpen(false);
     setCatalogDialog({ open: false });
     setSelectedVariantId("");
     setSelectedQuantity("1");
@@ -986,7 +1277,7 @@ export function RentalWalkIn() {
         ? productDetail.data?.tariffs.find(
             (tariff) =>
               tariff.varian_barang_id === lineVariantId &&
-              isActiveCatalogTariff(tariff),
+              isActiveCatalogTariff(tariff, rentalTariffAt),
           )
         : null) ??
       selectedTariff;
@@ -996,14 +1287,23 @@ export function RentalWalkIn() {
         : billingPeriods;
     if (!lineTariff || !lineBillingPeriods) return;
 
+    const linePromotion = lineVariantId
+      ? productDetail.data?.variants.find((variant) => variant.varian_barang_id === lineVariantId)?.rental_promotion ??
+        selectedProduct.rental_variant_promotions?.[lineVariantId] ?? selectedProduct.rental_promotion ?? null
+      : selectedProduct.rental_promotion ?? null;
+    const lineNormalUnitPrice = Number(lineTariff.nominal);
+    const lineEffectiveUnitPrice = linePromotion
+      ? roundMoney(lineNormalUnitPrice * (100 - Number(linePromotion.diskon_persen)) / 100)
+      : lineNormalUnitPrice;
+
     const input: DirectRentalLineInput = {
       barang_id: selectedProduct.barang_id,
       varian_barang_id: lineVariantId || null,
       tarif_sewa_id: lineTariff.tarif_sewa_id,
       duration_periods: lineBillingPeriods,
       jumlah: quantity,
-      unit_price: Number(lineTariff.nominal),
-      subtotal: calculateRentalLineSubtotal(quantity, Number(lineTariff.nominal), lineBillingPeriods),
+      unit_price: lineEffectiveUnitPrice,
+      subtotal: calculateRentalLineSubtotal(quantity, lineEffectiveUnitPrice, lineBillingPeriods),
       currency_code: "IDR",
       catatan: null,
     };
@@ -1017,6 +1317,10 @@ export function RentalWalkIn() {
             ? {
                 ...line,
                 input,
+                normalUnitPrice: lineNormalUnitPrice,
+                promoDiscountPercent: Number(linePromotion?.diskon_persen ?? 0),
+                promoId: linePromotion?.promosi_katalog_id ?? null,
+                stockReadyAtSelection: availabilityPreview.data?.readyPhysicalUnits ?? selectedReadyStock,
                 description: (selectedVariant?.nama ?? "Barang utama") + " · " + quantity + " unit",
               }
             : line,
@@ -1029,6 +1333,10 @@ export function RentalWalkIn() {
           kind: "item",
           label: selectedProduct.nama,
           description: (selectedVariant?.nama ?? "Barang utama") + " · " + quantity + " unit",
+          normalUnitPrice: lineNormalUnitPrice,
+          promoDiscountPercent: Number(linePromotion?.diskon_persen ?? 0),
+          promoId: linePromotion?.promosi_katalog_id ?? null,
+          stockReadyAtSelection: availabilityPreview.data?.readyPhysicalUnits ?? selectedReadyStock,
           input,
         },
       ];
@@ -1057,7 +1365,15 @@ export function RentalWalkIn() {
     setPickerLines((current) => {
       const existing = current.find((line) => line.key === identity);
       if (existing) {
-        return current.map((line) => (line.key === identity ? { ...line, input, description: "Paket × " + quantity } : line));
+        return current.map((line) => (line.key === identity ? {
+          ...line,
+          input,
+          normalUnitPrice: Number(packagePrice.normalPrice ?? packageTariff.nominal),
+          promoDiscountPercent: packagePrice.isPromo && packagePrice.normalPrice ? roundMoney((1 - Number(packagePrice.effectivePrice) / packagePrice.normalPrice) * 100) : 0,
+          promoId: packagePrice.promo?.promosi_paket_id ?? null,
+          stockReadyAtSelection: selectedPackageAvailability?.available_package_quantity ?? null,
+          description: "Paket × " + quantity,
+        } : line));
       }
       return [
         ...current,
@@ -1066,6 +1382,10 @@ export function RentalWalkIn() {
           kind: "package",
           label: selectedPackage.nama,
           description: "Paket × " + quantity,
+          normalUnitPrice: Number(packagePrice.normalPrice ?? packageTariff.nominal),
+          promoDiscountPercent: packagePrice.isPromo && packagePrice.normalPrice ? roundMoney((1 - Number(packagePrice.effectivePrice) / packagePrice.normalPrice) * 100) : 0,
+          promoId: packagePrice.promo?.promosi_paket_id ?? null,
+          stockReadyAtSelection: selectedPackageAvailability?.available_package_quantity ?? null,
           input,
         },
       ];
@@ -1106,32 +1426,81 @@ export function RentalWalkIn() {
     setDraftLines((current) => current.filter((line) => line.key !== key));
   };
 
+  const openCatalogPage = () => {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.set("view", "catalog");
+      return next;
+    });
+  };
+
+  const closeCatalogPage = () => {
+    setCartReviewOpen(false);
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete("view");
+      return next;
+    });
+    setCatalogDialog({ open: false });
+  };
+
+  const switchCatalogMode = (mode: "rental" | "package" | "sale") => {
+    setSelectionMode(mode);
+    setCatalogDialog({ open: false });
+    setItemConfigOpen(false);
+    setSelectedVariantId("");
+    if (mode === "rental") setCategoryId("all");
+    if (mode === "sale") setSaleCategoryId("all");
+  };
+
   const editLine = (line: DraftRentalLine, picker = false) => {
     if (line.kind !== "item") return;
     const parts = line.key.split(":");
     const productId = parts[1] ?? "";
     const variantId = parts[2] === "base" ? "" : parts.slice(2).join(":");
+    setSelectionMode("rental");
     setSelectedVariantId(variantId);
     setSelectedQuantity(String(line.input.jumlah));
     setCatalogDialog({ open: true, mode: "item", id: productId });
-    if (!picker) setCatalogPickerOpen(true);
+    setItemConfigOpen(true);
+    if (!picker) {
+      setPickerLines(draftLines.map((draftLine) => ({
+        ...draftLine,
+        input: { ...draftLine.input },
+      })));
+      openCatalogPage();
+    }
+  };
+
+  const editPackageLine = (line: DraftRentalLine) => {
+    const paketId = line.input.paket_sewa_id;
+    if (!paketId) return;
+    setSelectionMode("package");
+    setSelectedPackageQuantity(String(line.input.jumlah));
+    setSelectedPackageNote(line.input.catatan ?? "");
+    setCatalogDialog({ open: true, mode: "package", id: paketId });
+    setCartReviewOpen(false);
   };
 
   const pickerTotal = pickerLines.reduce((sum, line) => sum + Number(line.input.subtotal), 0);
+  const pickerItemCount =
+    pickerLines.reduce((sum, line) => sum + Number(line.input.jumlah), 0) +
+    saleCartLines.reduce((sum, line) => sum + line.jumlah, 0);
 
   const openCatalogPicker = () => {
     setPickerLines(draftLines.map((line) => ({ ...line, input: { ...line.input } })));
     setProductSearch("");
     setCategoryId("all");
-    setSelectionMode("item");
+    setSaleCategoryId("all");
+    setCartReviewOpen(false);
+    setSelectionMode("rental");
     setCatalogDialog({ open: false });
-    setCatalogPickerOpen(true);
+    openCatalogPage();
   };
 
   const applyCatalogPicker = () => {
     setDraftLines(pickerLines.map((line) => ({ ...line, input: { ...line.input } })));
-    setCatalogPickerOpen(false);
-    setCatalogDialog({ open: false });
+    closeCatalogPage();
   };
 
   const reconcileRenter = async () => {
@@ -1166,6 +1535,146 @@ export function RentalWalkIn() {
   const showOperations = prepared;
   const showOutput = prepared && isActive;
 
+  const saleCartPanel = (
+    <section className="rounded-xl border bg-card">
+      <div className="flex items-center justify-between gap-2 border-b px-3 py-2.5">
+        <div className="flex min-w-0 items-center gap-2">
+          <ShoppingCart className="size-3.5 shrink-0 text-primary" />
+          <div className="min-w-0">
+            <h2 className="truncate text-[11px] font-bold">Keranjang pembelian</h2>
+            <p className="text-[9px] text-muted-foreground">Barang jual dalam checkout yang sama.</p>
+          </div>
+        </div>
+        <span className="shrink-0 text-[9px] font-semibold">{saleCartLines.reduce((sum, line) => sum + line.jumlah, 0)} item</span>
+      </div>
+      {saleCartLines.length ? (
+        <div className="space-y-2 p-3">
+          <div className="space-y-1.5">
+            {saleCartLines.map(({ item, jumlah }) => {
+              const isUntracked = item.inventory_mode === "untracked";
+              const availableStock = Number(item.available_stock ?? 0);
+              return (
+              <div key={item.key} className="flex items-center justify-between gap-2 rounded-lg bg-muted/30 px-2 py-1.5">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[10px] font-semibold">{item.nama}</p>
+                  <p className="text-[9px] text-muted-foreground">
+                    <span>{jumlah} × {Object.prototype.hasOwnProperty.call(saleBonusReasons, item.key) ? "Bonus rental · Rp0" : formatCatalogMoney(item.harga_jual_efektif ?? item.harga_jual ?? 0, "IDR")}</span> · {isUntracked ? "Stok tidak dilacak" : "Stok " + availableStock}
+                  </p>
+                  {!Object.prototype.hasOwnProperty.call(saleBonusReasons, item.key) && item.promo_diskon_persen != null ? (
+                    <div className="mt-0.5 flex items-center gap-1.5 text-[8px]">
+                      <span className="text-muted-foreground line-through">{formatCatalogMoney(item.harga_jual ?? 0, "IDR")}</span>
+                      <span className="font-semibold text-emerald-700">Promo {item.promo_diskon_persen}% · {formatCatalogMoney(Number(item.harga_jual_efektif ?? item.harga_jual ?? 0) * jumlah, "IDR")}</span>
+                    </div>
+                  ) : !Object.prototype.hasOwnProperty.call(saleBonusReasons, item.key) ? (
+                    <p className="mt-0.5 text-[8px] font-semibold">Subtotal {formatCatalogMoney(Number(item.harga_jual_efektif ?? item.harga_jual ?? 0) * jumlah, "IDR")}</p>
+                  ) : null}
+                  {canApplyRetailBonus ? (
+                    <div className="mt-1.5 space-y-1.5">
+                      <Button
+                        type="button"
+                        variant={Object.prototype.hasOwnProperty.call(saleBonusReasons, item.key) ? "secondary" : "outline"}
+                        size="sm"
+                        className="h-6 rounded-lg px-2 text-[8px]"
+                        onClick={() => setSaleBonusReasons((current) => {
+                          const next = { ...current };
+                          if (Object.prototype.hasOwnProperty.call(next, item.key)) delete next[item.key];
+                          else next[item.key] = "";
+                          return next;
+                        })}
+                      >
+                        {Object.prototype.hasOwnProperty.call(saleBonusReasons, item.key) ? "Batalkan bonus" : "Jadikan bonus rental"}
+                      </Button>
+                      {Object.prototype.hasOwnProperty.call(saleBonusReasons, item.key) ? (
+                        <Input
+                          value={saleBonusReasons[item.key]}
+                          onChange={(event) => setSaleBonusReasons((current) => ({ ...current, [item.key]: event.target.value }))}
+                          placeholder="Alasan pemberian bonus (wajib)"
+                          className="h-8 rounded-lg text-[9px]"
+                        />
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  <Button type="button" variant="outline" size="icon" className="size-6 rounded-md" aria-label={"Kurangi " + item.nama}
+                    onClick={() => {
+                      if (jumlah <= 1) {
+                        setSaleBonusReasons((current) => {
+                          const copy = { ...current };
+                          delete copy[item.key];
+                          return copy;
+                        });
+                      }
+                      setSaleCart((current) => {
+                        const copy = { ...current };
+                        const line = copy[item.key];
+                        if (!line || line.jumlah <= 1) delete copy[item.key];
+                        else copy[item.key] = { ...line, jumlah: line.jumlah - 1 };
+                        return copy;
+                      });
+                    }}>−</Button>
+                  <span className="min-w-4 text-center text-[9px] font-bold">{jumlah}</span>
+                  <Button type="button" variant="outline" size="icon" className="size-6 rounded-md" aria-label={"Tambah " + item.nama}
+                    disabled={!isUntracked && jumlah >= availableStock}
+                    onClick={() => setSaleCart((current) => ({
+                      ...current,
+                      [item.key]: { item, jumlah: (current[item.key]?.jumlah ?? 0) + 1 },
+                    }))}>+</Button>
+                  <Button type="button" variant="ghost" size="icon" className="size-6 rounded-md text-destructive" aria-label={"Hapus " + item.nama}
+                    onClick={() => {
+                      setSaleCart((current) => {
+                        const copy = { ...current };
+                        delete copy[item.key];
+                        return copy;
+                      });
+                      setSaleBonusReasons((current) => {
+                        const copy = { ...current };
+                        delete copy[item.key];
+                        return copy;
+                      });
+                    }}><Trash2 className="size-3" /></Button>
+                </div>
+              </div>
+            );
+            })}
+          </div>
+          <div className="flex items-center justify-between border-t pt-2 text-[10px]">
+            <span className="text-muted-foreground">Subtotal pembelian</span>
+            <strong>{formatCatalogMoney(saleSubtotal, "IDR")}</strong>
+          </div>
+          {saleSubtotal > 0 ? (
+            <label className="grid gap-1 text-[9px] font-medium">
+              Pembayaran penjualan masuk ke
+              <Select value={paymentAccountId} onValueChange={setPaymentAccountId}>
+                <SelectTrigger className="h-8 rounded-lg text-[10px]">
+                  <SelectValue placeholder={accounts.isPending ? "Memuat akun…" : "Pilih akun kas/bank"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {(accounts.data ?? []).map((account) => (
+                    <SelectItem key={account.akun_keuangan_id} value={account.akun_keuangan_id}>{account.nama_akun}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </label>
+          ) : (
+            <p className="rounded-lg bg-emerald-500/5 px-2.5 py-2 text-[8px] text-muted-foreground">
+              Keranjang hanya berisi barang bonus. Tidak ada penerimaan kas dari penjualan.
+            </p>
+          )}
+          {accounts.isError ? (
+            <Alert variant="destructive" className="py-2">
+              <AlertDescription className="text-[10px]">{commandMessage(accounts.error, "Akun pembayaran tidak dapat dimuat.")}</AlertDescription>
+            </Alert>
+          ) : null}
+        </div>
+      ) : (
+        <p className="px-3 py-3 text-[9px] text-muted-foreground">
+          Belum ada barang untuk dibeli. Pilih tab Barang jual untuk menambahkan produk.
+        </p>
+      )}
+    </section>
+  );
+
   const paymentActionLabel =
     currentPaymentStatus === "paid"
       ? "Lunas"
@@ -1173,8 +1682,685 @@ export function RentalWalkIn() {
         ? "Catat Pelunasan"
         : "Catat DP";
 
+  const catalogPickerPage = catalogPickerOpen ? (
+        <main className="relative -mx-3 -mt-4 -mb-24 flex h-[calc(100dvh-3.5rem)] min-h-0 w-[calc(100%+1.5rem)] max-w-none flex-col gap-0 overflow-hidden bg-background sm:-mx-5 sm:-mt-5 sm:w-[calc(100%+2.5rem)] lg:-mx-6 lg:-mt-6 lg:-mb-8 lg:h-[calc(100dvh-3.5rem)] lg:w-[calc(100%+3rem)]">
+          <header className="flex min-h-10 shrink-0 items-center justify-between gap-2 border-b px-2.5 py-1 sm:px-3">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-8 shrink-0 rounded-lg"
+              onClick={closeCatalogPage}
+              aria-label="Tutup katalog"
+            >
+              <ArrowLeft className="size-4" />
+            </Button>
+            <div className="flex min-w-0 items-center gap-2">
+              <Badge variant="secondary" className="rounded-full text-[10px]">
+                {pickerItemCount} item
+              </Badge>
+              <Button type="button" variant="ghost" size="icon" className="size-8 shrink-0 rounded-lg" onClick={closeCatalogPage} aria-label="Kembali ke formulir rental">
+                <X className="size-4" />
+              </Button>
+            </div>
+          </header>
+
+          <div className="grid min-h-0 flex-1 overflow-hidden lg:grid-cols-[minmax(0,1fr)_19rem]">
+            <div className="min-h-0 overflow-y-auto px-2.5 pb-24 pt-2.5 sm:px-3 sm:pb-24 sm:pt-3">
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 rounded-2xl border bg-background px-3">
+                  <Search className="size-4 shrink-0 text-muted-foreground" />
+                  <Input
+                    value={productSearch}
+                    onChange={(event) => setProductSearch(event.target.value)}
+                    placeholder="Cari nama barang atau kategori…"
+                    aria-label="Cari barang di katalog"
+                    className="h-10 border-0 px-0 text-[12px] shadow-none focus-visible:ring-0"
+                  />
+                  <Filter className="size-4 shrink-0 text-muted-foreground" />
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex gap-1.5 overflow-x-auto pb-0.5" role="tablist" aria-label="Jenis transaksi katalog">
+                    <Button type="button" size="sm" role="tab" aria-selected={selectionMode === "rental"} variant={selectionMode === "rental" ? "default" : "outline"} className="h-8 shrink-0 rounded-full px-3 text-[10px]" onClick={() => switchCatalogMode("rental")}>Barang sewa</Button>
+                    <Button type="button" size="sm" role="tab" aria-selected={selectionMode === "package"} variant={selectionMode === "package" ? "default" : "outline"} className="h-8 shrink-0 rounded-full px-3 text-[10px]" onClick={() => switchCatalogMode("package")}>Paket rental</Button>
+                    <Button type="button" size="sm" role="tab" aria-selected={selectionMode === "sale"} variant={selectionMode === "sale" ? "default" : "outline"} className="h-8 shrink-0 rounded-full px-3 text-[10px]" onClick={() => switchCatalogMode("sale")}>Barang jual</Button>
+                  </div>
+                  {selectionMode !== "package" ? (
+                    <div className="flex gap-1.5 overflow-x-auto pb-1" aria-label={selectionMode === "sale" ? "Filter kategori barang jual" : "Filter kategori barang sewa"}>
+                      <Button type="button" size="sm" variant={visibleCategoryId === "all" ? "default" : "outline"} className="h-7 shrink-0 rounded-full px-3 text-[9px]" onClick={() => setVisibleCategoryId("all")}>Semua</Button>
+                      {visibleCategories.map((category) => (
+                        <Button key={category.id} type="button" size="sm" variant={visibleCategoryId === category.id ? "default" : "outline"} className="h-7 shrink-0 rounded-full px-3 text-[9px]" onClick={() => setVisibleCategoryId(category.id)}>{category.nama}</Button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+
+                {selectionMode === "rental" ? (
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
+                    {products.isPending ? <div className="col-span-full rounded-xl border border-dashed p-6 text-center text-[10px] text-muted-foreground"><Loader2 className="mx-auto mb-2 size-4 animate-spin" />Memuat katalog sewa…</div> : null}
+                    {products.isError ? <Alert variant="destructive" className="col-span-full"><AlertTitle>Katalog sewa belum dapat dimuat</AlertTitle><AlertDescription>{commandMessage(products.error, "Periksa koneksi dan coba muat ulang.")}</AlertDescription></Alert> : null}
+                    {activeProducts.map((product) => {
+                      const ready = readyStock.data?.byProduct[product.barang_id] ?? 0;
+                      const cover = unitCoverByProduct.get(product.barang_id) ?? coverByProduct.get(product.barang_id);
+                      const isSelected = catalogDialog.open && catalogDialog.mode === "item" && catalogDialog.id === product.barang_id;
+
+                      return (
+                        <button
+                          key={product.barang_id}
+                          type="button"
+                          onClick={() => openItemDialog(product)}
+                          className={cn(
+                            "overflow-hidden rounded-2xl border bg-card text-left transition hover:-translate-y-0.5 hover:shadow-md",
+                            isSelected && "border-primary ring-2 ring-primary/15",
+                          )}
+                        >
+                          <div className="relative aspect-[4/3] overflow-hidden bg-muted">
+                            {cover ? <img src={cover} alt="" className="size-full object-cover" /> : <Package className="absolute left-1/2 top-1/2 size-8 -translate-x-1/2 -translate-y-1/2 text-muted-foreground" />}
+                            <Badge className="absolute left-2 top-2 rounded-full bg-background/90 text-[8px] text-foreground hover:bg-background/90">
+                              {ready > 0 ? "Siap" : "Habis"}
+                            </Badge>
+                          </div>
+                          <div className="space-y-1.5 p-2.5">
+                            <div className="min-w-0">
+                              <p className="truncate text-[11px] font-bold">{product.nama}</p>
+                              <p className="truncate text-[9px] text-muted-foreground">{product.kategori?.nama ?? "Barang"}</p>
+                            </div>
+                            <div className="flex items-center justify-between gap-2">
+                              <span className={cn("text-[9px] font-semibold", ready > 0 ? "text-emerald-600" : "text-muted-foreground")}>Ready {ready}</span>
+                              <span className="flex min-w-0 flex-col items-end text-right">
+                                {product.active_tariff && product.rental_promotion ? (
+                                  <>
+                                    <span className="text-[8px] text-muted-foreground line-through">{formatCatalogMoney(product.active_tariff.nominal, product.active_tariff.currency_code)}</span>
+                                    <span className="text-[9px] font-bold text-emerald-700">{formatCatalogMoney(roundMoney(Number(product.active_tariff.nominal) * (100 - Number(product.rental_promotion.diskon_persen)) / 100), product.active_tariff.currency_code)}</span>
+                                    <span className="text-[8px] font-semibold text-emerald-700">Promo {product.rental_promotion.diskon_persen}%</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <span className="text-[9px] font-semibold text-primary">{product.active_tariff ? formatCatalogMoney(product.active_tariff.nominal, product.active_tariff.currency_code) : "Tarif —"}</span>
+                                    {product.has_variant_promotion ? <span className="text-[8px] font-semibold text-emerald-700">Promo varian tersedia</span> : null}
+                                  </>
+                                )}
+                              </span>
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                    {products.isSuccess && !activeProducts.length ? (
+                      <div className="col-span-full rounded-xl border border-dashed p-8 text-center text-[10px] text-muted-foreground">
+                        Barang sewa tidak ditemukan untuk pencarian atau kategori ini.
+                      </div>
+                    ) : null}
+                  </div>
+                ) : selectionMode === "package" ? (
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
+                    {packages.isPending ? <div className="col-span-full rounded-xl border border-dashed p-6 text-center text-[10px] text-muted-foreground"><Loader2 className="mx-auto mb-2 size-4 animate-spin" />Memuat paket rental…</div> : null}
+                    {packages.isError ? <Alert variant="destructive" className="col-span-full"><AlertDescription>{commandMessage(packages.error, "Katalog paket gagal dimuat.")}</AlertDescription></Alert> : null}
+                    {packages.isSuccess && !packages.data?.length ? (
+                      <div className="col-span-full rounded-xl border border-dashed p-8 text-center text-[10px] text-muted-foreground">
+                        Belum ada paket rental aktif. Barang sewa dan barang jual tetap tersedia melalui tab masing-masing.
+                      </div>
+                    ) : null}
+                    {(packages.data ?? [])
+                      .filter((pkg) => matchesCatalogTerm(catalogSearch, pkg.nama, "Paket rental", pkg.slug))
+                      .map((pkg) => {
+                        const availability = packageAvailability.data?.find((item) => item.paket_sewa_id === pkg.paket_sewa_id);
+                        const isSelected = catalogDialog.open && catalogDialog.mode === "package" && catalogDialog.id === pkg.paket_sewa_id;
+                        const availabilityLabel = !canMoveFromPeriod
+                          ? "Atur periode rental"
+                          : packageAvailability.isPending
+                            ? "Memeriksa stok…"
+                            : packageAvailability.isError
+                              ? "Stok belum dapat diverifikasi"
+                              : availability?.status === "available"
+                                ? "Ready " + (availability.available_package_quantity ?? 0)
+                                : availability
+                                  ? packageAvailabilityHint(availability) ?? "Belum siap"
+                                  : "Data stok tidak tersedia";
+                        const availabilityTone = availability?.status === "available"
+                          ? "text-emerald-600"
+                          : !canMoveFromPeriod || packageAvailability.isPending
+                            ? "text-muted-foreground"
+                            : "text-amber-700";
+                        return (
+                          <button
+                            key={pkg.paket_sewa_id}
+                            type="button"
+                            onClick={() => openPackageDialog(pkg)}
+                            className={cn(
+                              "overflow-hidden rounded-2xl border bg-card text-left transition hover:-translate-y-0.5 hover:shadow-md",
+                              isSelected && "border-primary ring-2 ring-primary/15",
+                            )}
+                          >
+                            <div className="flex aspect-[4/3] items-center justify-center bg-primary/5 text-primary">
+                              <PackageCheck className="size-10" />
+                            </div>
+                            <div className="space-y-1.5 p-2.5">
+                              <p className="truncate text-[11px] font-bold">{pkg.nama}</p>
+                              <p className="truncate text-[9px] text-muted-foreground">Paket rental</p>
+                              <div className="mt-1 flex min-w-0 flex-col items-start gap-1">
+                                <span className={cn(
+                                  "max-w-full break-words text-[9px] font-semibold leading-tight",
+                                  availabilityTone,
+                                )}>
+                                  {availabilityLabel}
+                                </span>
+                                {(() => {
+                                  const price = resolvePackagePrice(pkg.active_tariff ?? null, pkg.active_promo);
+                                  return (
+                                    <div className="flex min-w-0 max-w-full flex-col items-start gap-0.5">
+                                      {price.isPromo ? (
+                                        <div className="flex flex-wrap items-center gap-1">
+                                          <Badge variant="secondary" className="h-4 rounded-full px-1.5 py-0 text-[8px] leading-none">Promo</Badge>
+                                          <span className="break-words text-[8px] font-medium leading-tight text-muted-foreground line-through">
+                                            {formatCatalogMoney(price.normalPrice, pkg.active_tariff?.currency_code)}
+                                          </span>
+                                        </div>
+                                      ) : null}
+                                      <span className={cn(
+                                        "max-w-full break-words text-[10px] font-bold leading-tight",
+                                        price.isPromo ? "text-emerald-700 dark:text-emerald-300" : "text-primary",
+                                      )}>
+                                        {pkg.active_tariff
+                                          ? formatCatalogMoney(price.effectivePrice, pkg.active_tariff.currency_code)
+                                          : "Tarif belum ditentukan"}
+                                      </span>
+                                    </div>
+                                  );
+                                })()}
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
+                    {saleCatalog.isPending ? (
+                      <div className="col-span-full rounded-xl border border-dashed p-6 text-center text-[10px] text-muted-foreground">
+                        <Loader2 className="mx-auto mb-2 size-4 animate-spin" />Memuat barang jual…
+                      </div>
+                    ) : null}
+                    {saleCatalog.isError ? (
+                      <Alert variant="destructive" className="col-span-full">
+                        <AlertTitle>Katalog barang jual belum dapat dimuat</AlertTitle>
+                        <AlertDescription>{commandMessage(saleCatalog.error, "Periksa koneksi dan coba muat ulang.")}</AlertDescription>
+                      </Alert>
+                    ) : null}
+                    {saleCatalogItems.map((item) => {
+                      const quantity = saleCart[item.key]?.jumlah ?? 0;
+                      const isUntracked = item.inventory_mode === "untracked";
+                      const availableStock = Number(item.available_stock ?? 0);
+                      const canSell = (isUntracked || availableStock > 0) && item.harga_jual != null && item.harga_jual > 0;
+                      return (
+                        <article key={item.key} className="min-w-0 overflow-hidden rounded-2xl border bg-card">
+                          <div className="relative aspect-[4/3] overflow-hidden bg-muted">
+                            {item.cover_url ? <img src={item.cover_url} alt="" loading="lazy" className="size-full object-cover" /> : <Package className="absolute left-1/2 top-1/2 size-8 -translate-x-1/2 -translate-y-1/2 text-muted-foreground" />}
+                            <Badge className="absolute left-2 top-2 rounded-full bg-background/90 text-[8px] text-foreground hover:bg-background/90">
+                              {isUntracked ? "Stok bebas" : availableStock > 0 ? "Stok " + availableStock : "Habis"}
+                            </Badge>
+                          </div>
+                          <div className="space-y-1.5 p-2.5">
+                            <div className="min-w-0">
+                              <p className="truncate text-[11px] font-bold">{item.nama}</p>
+                              <p className="truncate text-[9px] text-muted-foreground">{item.kategori_nama}</p>
+                            </div>
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex min-w-0 flex-col items-start">
+                                {item.harga_jual == null ? (
+                                  <span className="text-[9px] font-semibold text-muted-foreground">Harga belum diatur</span>
+                                ) : (
+                                  <>
+                                    <span className="text-[9px] font-semibold text-primary">
+                                      {formatCatalogMoney(item.harga_jual_efektif ?? item.harga_jual, "IDR")}
+                                    </span>
+                                    {item.promo_diskon_persen != null ? (
+                                      <span className="text-[8px] text-emerald-700 dark:text-emerald-300">
+                                        Promo {item.promo_diskon_persen}% · <span className="line-through text-muted-foreground">{formatCatalogMoney(item.harga_jual, "IDR")}</span>
+                                      </span>
+                                    ) : null}
+                                  </>
+                                )}
+                              </div>
+                              {quantity > 0 ? <span className="text-[8px] font-semibold text-emerald-700">Dipilih {quantity}</span> : null}
+                            </div>
+                            <Button
+                              type="button"
+                              size="sm"
+                              className="h-7 w-full rounded-lg text-[9px]"
+                              disabled={!canSell || (!isUntracked && quantity >= availableStock)}
+                              onClick={() => setSaleCart((current) => ({
+                                ...current,
+                                [item.key]: { item, jumlah: (current[item.key]?.jumlah ?? 0) + 1 },
+                              }))}
+                            >
+                              <Plus className="size-3" />{quantity ? "Tambah lagi" : "Tambah ke pembelian"}
+                            </Button>
+                          </div>
+                        </article>
+                      );
+                    })}
+                    {saleCatalog.isSuccess && !saleCatalogItems.length ? (
+                      <div className="col-span-full rounded-xl border border-dashed p-8 text-center text-[10px] text-muted-foreground">
+                        Barang jual tidak ditemukan untuk pencarian atau kategori ini.
+                      </div>
+                    ) : null}
+                  </div>
+                )}
+
+                {catalogDialog.open ? (
+                  <div className="lg:hidden">
+                    {catalogDialog.mode === "item" ? null : (
+                      <div className="mt-3 rounded-2xl border bg-card p-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="truncate text-[12px] font-bold">{selectedPackage?.nama ?? "Paket"}</p>
+                            <p className="mt-0.5 text-[9px] text-muted-foreground">
+                              {!canMoveFromPeriod
+                                ? "Atur periode rental untuk cek stok"
+                                : packageAvailability.isPending
+                                  ? "Memeriksa ketersediaan paket…"
+                                  : packageAvailability.isError
+                                    ? "Stok belum dapat diverifikasi"
+                                    : selectedPackageAvailability?.status === "available"
+                                      ? (selectedPackageAvailability.available_package_quantity ?? 0) + " paket siap"
+                                      : selectedPackageAvailability
+                                        ? packageAvailabilityHint(selectedPackageAvailability) ?? "Belum siap"
+                                        : "Data stok tidak tersedia"}
+                            </p>
+                          </div>
+                          <Button type="button" variant="ghost" size="icon" className="size-8 rounded-lg" onClick={() => closeCatalogDialog()} aria-label="Tutup detail paket">
+                            <ChevronDown className="size-4" />
+                          </Button>
+                        </div>
+                        <div className="mt-3 flex items-center justify-between rounded-xl border px-3 py-2.5">
+                          <span className="text-[9px] text-muted-foreground">Jumlah paket</span>
+                          <div className="flex items-center gap-1.5">
+                            <Button type="button" variant="outline" size="icon" className="size-8 rounded-lg" onClick={() => setSelectedPackageQuantity(String(Math.max(1, selectedPackageQuantityNumber - 1)))} disabled={selectedPackageQuantityNumber <= 1}>−</Button>
+                            <span className="min-w-7 text-center text-xs font-bold">{selectedPackageQuantityNumber}</span>
+                            <Button type="button" variant="outline" size="icon" className="size-8 rounded-lg" onClick={() => setSelectedPackageQuantity(String(selectedPackageQuantityNumber + 1))}>+</Button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : null}
+
+              </div>
+            </div>
+
+            <aside className="hidden min-h-0 overflow-y-auto border-l bg-muted/10 p-3 lg:block">
+              {catalogDialog.open && catalogDialog.mode === "item" ? (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-3 rounded-2xl border bg-card p-3">
+                    <div className="grid size-20 shrink-0 place-items-center overflow-hidden rounded-xl bg-muted">
+                      {selectedProductImage ? <img src={selectedProductImage} alt="" className="size-full object-cover" /> : <Package className="size-7 text-muted-foreground" />}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="truncate text-[13px] font-bold">{selectedProduct?.nama ?? "Barang"}</p>
+                      <p className="mt-0.5 text-[9px] text-muted-foreground">{selectedVariant?.nama ?? "Pilih varian melalui dialog"}</p>
+                      <p className="mt-1 text-[9px] font-semibold text-emerald-600">Ready {selectedReadyStock}</p>
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-dashed p-4 text-center">
+                    <p className="text-[10px] font-semibold">Atur pilihan sebelum menambahkan</p>
+                    <p className="mt-1 text-[9px] text-muted-foreground">Tekan tombol Tambah di bawah untuk menentukan varian, jumlah unit, dan tarif.</p>
+                    <Button type="button" size="sm" className="mt-3 h-8 rounded-lg text-[9px]" disabled={!canOpenItemConfig} onClick={() => setItemConfigOpen(true)}>
+                      Atur jumlah & tarif
+                    </Button>
+                  </div>
+                </div>
+              ) : catalogDialog.open && catalogDialog.mode === "package" ? (
+                <div className="space-y-3">
+                  <div className="rounded-2xl border bg-card p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-[13px] font-bold">{selectedPackage?.nama ?? "Paket"}</p>
+                        <p className="mt-0.5 text-[9px] text-muted-foreground">Paket rental dengan komponen tervalidasi server</p>
+                        {packageAvailabilityHint(selectedPackageAvailability ?? undefined) ? (
+                          <p className="mt-1 truncate text-[9px] font-semibold text-amber-700">
+                            {packageAvailabilityHint(selectedPackageAvailability ?? undefined)}
+                          </p>
+                        ) : null}
+                      </div>
+                      <Badge variant="secondary" className="rounded-full text-[9px]">
+                        {!canMoveFromPeriod
+                          ? "Periode belum diatur"
+                          : packageAvailability.isPending
+                            ? "Memeriksa stok"
+                            : packageAvailability.isError
+                              ? "Gagal cek stok"
+                              : selectedPackageAvailability?.status === "available"
+                                ? (selectedPackageAvailability.available_package_quantity ?? 0) + " siap"
+                                : selectedPackageAvailability
+                                  ? packageAvailabilityHint(selectedPackageAvailability) ?? "Belum siap"
+                                  : "Data stok tidak tersedia"}
+                      </Badge>
+                    </div>
+                    <div className="mt-2 space-y-1.5">
+                      {(packageDetail.data?.components ?? []).map((component) => (
+                        <div key={component.komponen_paket_id} className="flex items-center justify-between gap-3 rounded-lg bg-muted/20 px-2.5 py-2">
+                          <span className="truncate text-[9px]">{component.varian?.nama ?? component.barang?.nama ?? "Komponen"}</span>
+                          <span className="shrink-0 text-[8px] text-muted-foreground">× {component.jumlah}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between rounded-xl border bg-card p-3">
+                    <span className="text-[9px] font-medium text-muted-foreground">Jumlah Paket</span>
+                    <div className="flex items-center gap-1.5">
+                      <Button type="button" variant="outline" size="icon" className="size-8 rounded-lg" onClick={() => setSelectedPackageQuantity(String(Math.max(1, selectedPackageQuantityNumber - 1)))} disabled={selectedPackageQuantityNumber <= 1}>−</Button>
+                      <span className="min-w-7 text-center text-xs font-bold">{selectedPackageQuantityNumber}</span>
+                      <Button type="button" variant="outline" size="icon" className="size-8 rounded-lg" onClick={() => setSelectedPackageQuantity(String(selectedPackageQuantityNumber + 1))}>+</Button>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl bg-primary/5 p-3">
+                    <p className="text-[9px] font-semibold text-primary">Perhitungan tarif</p>
+                    <p className="mt-1 text-[11px] font-bold">
+                      {selectedPackageQuantityNumber} paket × {packageBillingPeriods || 0} periode × {packageTariff ? formatCatalogMoney(packagePrice.effectivePrice, packageTariff.currency_code) : "Rp0"}
+                    </p>
+                    {packagePrice.isPromo && packagePrice.normalPrice != null && packageTariff ? (
+                      <p className="mt-1 text-[10px] text-muted-foreground line-through">
+                        Harga normal {formatCatalogMoney(packagePrice.normalPrice, packageTariff.currency_code)} / periode
+                      </p>
+                    ) : null}
+                    <p className="mt-1 text-[14px] font-black">
+                      {packageTariff && packageBillingPeriods
+                        ? formatCatalogMoney(
+                            calculateRentalLineSubtotal(
+                              selectedPackageQuantityNumber,
+                              Number(packagePrice.effectivePrice ?? packageTariff.nominal),
+                              packageBillingPeriods,
+                            ),
+                            "IDR",
+                          )
+                        : "—"}
+                    </p>
+                  </div>
+
+                </div>
+              ) : (
+                <div className="flex min-h-40 items-center justify-center rounded-2xl border border-dashed p-5 text-center">
+                  <div>
+                    <ShoppingBag className="mx-auto size-8 text-muted-foreground" />
+                    <p className="mt-2 text-sm font-semibold">
+                      {selectionMode === "sale" ? "Pilih barang jual" : "Pilih barang atau paket"}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {selectionMode === "sale"
+                        ? "Pilih barang untuk ditambahkan ke keranjang pembelian."
+                        : "Detail foto, varian, stok, periode, dan harga akan muncul di sini."}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </aside>
+          </div>
+
+          <div data-testid="catalog-sticky-actions" className="absolute inset-x-0 bottom-0 z-30 flex items-center gap-2 border-t bg-background/95 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-[0_-6px_24px_rgba(15,23,42,.08)] backdrop-blur">
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-[9px] text-muted-foreground">{pickerItemCount} barang dipilih</p>
+              <p className="truncate text-[12px] font-bold">{formatRentalMoney(pickerTotal + saleSubtotal, "IDR")}</p>
+            </div>
+            {catalogDialog.open && catalogDialog.mode === "item" ? (
+              <Button type="button" className="h-10 shrink-0 rounded-xl px-3 text-[10px] sm:px-4" disabled={!canOpenItemConfig} onClick={() => setItemConfigOpen(true)}>
+                <Plus className="size-3.5" /> Tambah ke Keranjang Sementara
+              </Button>
+            ) : catalogDialog.open && catalogDialog.mode === "package" ? (
+              <Button type="button" className="h-10 shrink-0 rounded-xl px-3 text-[10px] sm:px-4" disabled={!canAddPackage} onClick={addCurrentPackage}>
+                <Plus className="size-3.5" /> Tambah Paket
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              variant="default"
+              className="h-10 shrink-0 rounded-xl px-3 text-[10px] shadow-sm"
+              aria-label="Tinjau keranjang"
+              onClick={() => setCartReviewOpen(true)}
+            >
+              <ShoppingCart className="size-4" />
+              <span className="hidden sm:inline">Keranjang</span>
+              <Badge variant="secondary" className="ml-0.5 h-5 min-w-5 rounded-full px-1 text-[9px]">
+                {pickerItemCount}
+              </Badge>
+            </Button>
+          </div>
+
+          <Dialog open={itemConfigOpen} onOpenChange={setItemConfigOpen}>
+            <DialogContent
+              showCloseButton={false}
+              className="flex max-h-[min(88dvh,720px)] w-[calc(100%-1rem)] max-w-lg flex-col gap-0 overflow-hidden rounded-2xl p-0"
+            >
+              <DialogHeader className="shrink-0 border-b px-4 py-3 text-left">
+                <div className="flex items-start justify-between gap-3 pr-7">
+                  <div className="min-w-0">
+                    <DialogTitle className="text-[15px]">Atur barang sewa</DialogTitle>
+                    <DialogDescription className="mt-1 text-[10px]">
+                      Pilih varian dan jumlah unit, lalu periksa ketersediaan serta tarif sebelum menambahkan.
+                    </DialogDescription>
+                  </div>
+                  <Button type="button" variant="ghost" size="icon" className="absolute right-3 top-3 size-8 rounded-lg" onClick={() => setItemConfigOpen(false)} aria-label="Tutup pengaturan barang">
+                    <X className="size-4" />
+                  </Button>
+                </div>
+              </DialogHeader>
+              <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3 sm:p-4">
+                <div className="flex items-center gap-3 rounded-xl border bg-card p-3">
+                  <div className="grid size-20 shrink-0 place-items-center overflow-hidden rounded-xl bg-muted">
+                    {selectedProductImage ? <img src={selectedProductImage} alt="" className="size-full object-cover" /> : <Package className="size-7 text-muted-foreground" />}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[13px] font-bold">{selectedProduct?.nama ?? "Barang"}</p>
+                    <p className="mt-0.5 truncate text-[10px] text-muted-foreground">{selectedVariant?.nama ?? "Varian utama"}</p>
+                    <p className="mt-1 text-[10px] font-semibold text-emerald-600">
+                      {availabilityPreview.data
+                        ? "Ready " + selectedReadyStock + " untuk periode ini"
+                        : "Ready " + selectedReadyStock + " unit fisik"}
+                    </p>
+                  </div>
+                </div>
+                {productDetail.isPending ? (
+                  <div className="rounded-xl border border-dashed p-4 text-center text-[10px] text-muted-foreground">
+                    <Loader2 className="mx-auto mb-2 size-4 animate-spin" />Memuat pilihan varian dan tarif…
+                  </div>
+                ) : null}
+                {productDetail.isError ? (
+                  <Alert variant="destructive">
+                    <AlertTitle>Detail barang belum dapat dimuat</AlertTitle>
+                    <AlertDescription>{commandMessage(productDetail.error, "Coba tutup lalu pilih barang kembali.")}</AlertDescription>
+                  </Alert>
+                ) : null}
+                {productDetail.data?.variants?.filter((variant) => variant.is_rentable ?? productDetail.data?.is_rentable).length ? (
+                  <label className="block space-y-1">
+                    <span className="text-[10px] font-medium text-muted-foreground">Varian / unit barang</span>
+                    <Select value={selectedVariantId || "__base"} onValueChange={(value) => setSelectedVariantId(value === "__base" ? "" : value)}>
+                      <SelectTrigger className="h-10 rounded-xl text-[11px]"><SelectValue placeholder="Pilih varian" /></SelectTrigger>
+                      <SelectContent>
+                        {productDetail.data.is_rentable ? <SelectItem value="__base">Tanpa varian</SelectItem> : null}
+                        {productDetail.data.variants.filter((variant) => variant.is_rentable ?? productDetail.data?.is_rentable).map((variant) => <SelectItem key={variant.varian_barang_id} value={variant.varian_barang_id}>{variant.nama}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </label>
+                ) : null}
+                <div className="flex items-center justify-between gap-3 rounded-xl border px-3 py-3">
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-semibold">Jumlah unit</p>
+                    <p className="mt-0.5 text-[9px] text-muted-foreground">
+                      {canMoveFromPeriod ? (billingPeriods || 0) + " periode tarif" : "Atur periode rental terlebih dahulu"}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <Button type="button" variant="outline" size="icon" className="size-9 rounded-lg" onClick={() => setSelectedQuantity(String(Math.max(1, selectedQuantityNumber - 1)))} disabled={selectedQuantityNumber <= 1}>−</Button>
+                    <span className="min-w-6 text-center text-sm font-bold">{selectedQuantityNumber}</span>
+                    <Button type="button" variant="outline" size="icon" className="size-9 rounded-lg" onClick={() => setSelectedQuantity(String(selectedQuantityNumber + 1))}>+</Button>
+                  </div>
+                </div>
+                <div className="rounded-xl bg-primary/5 p-3">
+                  <div className="flex items-center justify-between gap-2 text-[10px]">
+                    <span className="font-semibold text-primary">Perhitungan tarif</span>
+                    <span className="text-muted-foreground">{selectedReadyStock} unit siap</span>
+                  </div>
+                  <p className="mt-1 text-[10px] font-semibold">
+                    {selectedQuantityNumber} unit × {billingPeriods || 0} periode × {selectedTariff ? formatCatalogMoney(selectedRentalEffectiveUnitPrice, selectedTariff.currency_code) : "Tarif belum tersedia"}
+                  </p>
+                  {selectedRentalPromotion && selectedTariff ? (
+                    <div className="mt-1 flex items-center gap-1.5 text-[9px]">
+                      <span className="text-muted-foreground line-through">{formatCatalogMoney(selectedRentalNormalSubtotal, selectedTariff.currency_code)}</span>
+                      <Badge variant="secondary" className="rounded-full px-1.5 py-0 text-[8px] text-emerald-700">Promo {selectedRentalPromotion.diskon_persen}%</Badge>
+                    </div>
+                  ) : null}
+                  <p className="mt-1 text-[17px] font-black">
+                    {selectedTariff && billingPeriods ? formatCatalogMoney(selectedRentalEffectiveSubtotal, "IDR") : "—"}
+                  </p>
+                </div>
+                {!canMoveFromPeriod ? (
+                  <Alert>
+                    <AlertDescription className="text-[10px]">Atur tanggal mulai dan kembali pada formulir rental untuk menghitung tarif dan memeriksa stok.</AlertDescription>
+                  </Alert>
+                ) : availabilityPreview.isPending ? (
+                  <p className="text-[10px] text-muted-foreground">Memeriksa unit siap dan benturan jadwal…</p>
+                ) : availabilityPreview.error ? (
+                  <Alert variant="destructive" className="rounded-xl">
+                    <AlertTitle>Ketersediaan belum dapat diverifikasi</AlertTitle>
+                    <AlertDescription className="text-[10px]">Barang tidak dapat ditambahkan sebelum status unit dan jadwal berhasil diperiksa.</AlertDescription>
+                  </Alert>
+                ) : availabilityPreview.data && availabilityPreview.data.readyPhysicalUnits < selectedQuantityNumber ? (
+                  <Alert variant="destructive" className="rounded-xl">
+                    <AlertTitle>Unit tersedia tidak cukup</AlertTitle>
+                    <AlertDescription className="text-[10px]">{availabilityPreview.data.readyPhysicalUnits} unit siap dan tidak berbenturan, sementara diminta {selectedQuantityNumber}.</AlertDescription>
+                  </Alert>
+                ) : availabilityPreview.isSuccess ? (
+                  <p className="text-[10px] font-medium text-emerald-700">Ketersediaan terverifikasi untuk periode rental ini.</p>
+                ) : null}
+              </div>
+              <div className="flex shrink-0 items-center justify-between gap-3 border-t bg-background px-3 py-3 sm:px-4">
+                <div className="min-w-0">
+                  <p className="text-[9px] text-muted-foreground">Subtotal</p>
+                  {selectedRentalPromotion && selectedTariff ? <p className="truncate text-[9px] text-muted-foreground line-through">{formatCatalogMoney(selectedRentalNormalSubtotal, "IDR")}</p> : null}
+                  <p className="truncate text-[13px] font-black">
+                    {selectedTariff && billingPeriods ? formatCatalogMoney(selectedRentalEffectiveSubtotal, "IDR") : "—"}
+                  </p>
+                </div>
+                <Button type="button" className="h-10 shrink-0 rounded-xl px-4 text-[10px]" disabled={!canAddItem} onClick={addCurrentItem}>
+                  <Plus className="size-4" /> Tambahkan
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog open={cartReviewOpen} onOpenChange={setCartReviewOpen}>
+            <DialogContent
+              showCloseButton={false}
+              className="flex max-h-[86dvh] w-[calc(100%-1rem)] max-w-xl flex-col gap-0 overflow-hidden rounded-2xl p-0"
+            >
+              <DialogHeader className="shrink-0 border-b px-4 py-3 text-left">
+                <div className="flex items-start justify-between gap-3 pr-7">
+                  <div className="min-w-0">
+                    <DialogTitle className="text-[15px]">Tinjau pilihan</DialogTitle>
+                    <DialogDescription className="mt-1 text-[10px]">
+                      Periksa barang sewa, pembelian tambahan, jumlah, stok, dan tujuan pembayaran sebelum selesai.
+                    </DialogDescription>
+                  </div>
+                  <Button type="button" variant="ghost" size="icon" className="absolute right-3 top-3 size-8 rounded-lg" onClick={() => setCartReviewOpen(false)} aria-label="Tutup keranjang">
+                    <X className="size-4" />
+                  </Button>
+                </div>
+              </DialogHeader>
+              <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3 sm:p-4">
+                <section className="rounded-xl border bg-card">
+                  <div className="flex items-center justify-between gap-2 border-b px-3 py-2.5">
+                    <div className="min-w-0">
+                      <h2 className="text-[11px] font-bold">Keranjang sewa</h2>
+                      <p className="text-[9px] text-muted-foreground">Barang dan paket yang akan disewa.</p>
+                    </div>
+                    <Badge variant="secondary" className="rounded-full text-[9px]">
+                      {pickerLines.reduce((sum, line) => sum + Number(line.input.jumlah), 0)} unit
+                    </Badge>
+                  </div>
+                  {pickerLines.length ? (
+                    <div className="space-y-1.5 p-2.5">
+                      {pickerLines.map((line) => (
+                        <div key={line.key} className="flex items-center justify-between gap-2 rounded-lg bg-muted/30 px-2.5 py-2">
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-[10px] font-semibold">{line.label}</p>
+                            <p className="mt-0.5 truncate text-[9px] text-muted-foreground">{line.description}</p>
+                            <p className="mt-0.5 text-[9px] text-muted-foreground">
+                              {line.stockReadyAtSelection == null
+                                ? "Stok diverifikasi saat dipilih"
+                                : line.kind === "package"
+                                  ? line.stockReadyAtSelection + " paket siap saat dipilih"
+                                  : line.stockReadyAtSelection + " unit siap saat dipilih"}
+                              {" · "}{line.input.duration_periods} periode
+                            </p>
+                            {Number(line.promoDiscountPercent ?? 0) > 0 ? <p className="mt-1 text-[8px] text-muted-foreground line-through">{formatCatalogMoney(calculateRentalLineSubtotal(Number(line.input.jumlah), Number(line.normalUnitPrice ?? line.input.unit_price), Number(line.input.duration_periods)), line.input.currency_code ?? "IDR")}</p> : null}
+                            <p className="mt-0.5 text-[9px] font-semibold">{formatCatalogMoney(line.input.subtotal, line.input.currency_code ?? "IDR")}</p>
+                            {Number(line.promoDiscountPercent ?? 0) > 0 ? <Badge variant="secondary" className="mt-1 rounded-full px-1.5 py-0 text-[8px] text-emerald-700">Promo {line.promoDiscountPercent}%</Badge> : null}
+                          </div>
+                          <div className="flex shrink-0 items-center gap-1">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-7 rounded-lg px-2 text-[9px]"
+                              onClick={() => {
+                                if (line.kind === "item") editLine(line, true);
+                                else editPackageLine(line);
+                              }}
+                            >
+                              Ubah
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="size-7 rounded-lg text-destructive"
+                              aria-label={"Hapus " + line.label}
+                              onClick={() => setPickerLines((current) => current.filter((entry) => entry.key !== line.key))}
+                            >
+                              <Trash2 className="size-3.5" />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                      <div className="flex items-center justify-between border-t pt-2 text-[10px]">
+                        <span className="text-muted-foreground">Subtotal sewa</span>
+                        <strong>{formatRentalMoney(pickerTotal, "IDR")}</strong>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="px-3 py-3 text-[9px] text-muted-foreground">Belum ada barang atau paket sewa dipilih.</p>
+                  )}
+                </section>
+                {saleCartPanel}
+                <div className="flex items-center justify-between rounded-xl bg-primary/5 px-3 py-2.5">
+                  <span className="text-[10px] font-semibold">Total pilihan</span>
+                  <strong className="text-[13px]">{formatRentalMoney(pickerTotal + saleSubtotal, "IDR")}</strong>
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center justify-between gap-2 border-t bg-background px-3 py-3 sm:px-4">
+                <Button type="button" variant="outline" className="h-9 rounded-xl text-[10px]" onClick={() => setCartReviewOpen(false)}>
+                  Kembali ke katalog
+                </Button>
+                <Button type="button" className="h-9 rounded-xl px-4 text-[10px]" onClick={() => {
+                  setCartReviewOpen(false);
+                  applyCatalogPicker();
+                }}>
+                  Selesai memilih <Check className="size-3.5" />
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+
+        </main>
+  ) : null;
+
+  if (catalogPickerPage) return catalogPickerPage;
+
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-3 pb-28 lg:space-y-4 lg:pb-10">
+    <div className="mx-auto w-full max-w-7xl space-y-3 pb-28 lg:space-y-4 lg:pb-24">
       <header className="rounded-2xl border bg-card px-3 py-3 shadow-[0_3px_14px_rgba(23,61,51,.05)] sm:px-4">
         <div className="flex items-center gap-2.5">
           <Button asChild variant="ghost" size="icon" className="size-8 shrink-0 rounded-xl" aria-label={isReservationFlow ? "Kembali ke reservasi" : "Kembali ke penyewaan"}>
@@ -1295,6 +2481,11 @@ export function RentalWalkIn() {
                           <div className="min-w-0">
                             <p className="truncate text-[11px] font-semibold">{selectedRenter.nama_lengkap}</p>
                             <p className="mt-0.5 truncate text-[9px] text-muted-foreground">{selectedRenter.nomor_telepon || "Nomor telepon tidak tersedia"}</p>
+                            {!isReservationFlow ? (
+                              <p className="mt-1 truncate text-[9px] font-medium text-muted-foreground">
+                                {walkInLoyaltyPreview.isPending ? "Memuat riwayat rental…" : walkInLoyaltyPreview.isError ? "Riwayat loyalitas belum dapat dimuat" : !walkInLoyaltyPreview.data?.is_enabled ? `${walkInLoyaltyPreview.data?.completed_rental_count ?? 0} rental selesai · Program loyalitas belum diaktifkan` : !walkInLoyaltyPreview.data?.is_in_period ? `${walkInLoyaltyPreview.data.completed_rental_count} rental selesai · Program belum berlaku` : walkInLoyaltyPreview.data.eligible ? `${walkInLoyaltyPreview.data.completed_rental_count} rental selesai · Layak loyalitas` : `${walkInLoyaltyPreview.data.completed_rental_count} dari ${walkInLoyaltyPreview.data.minimum_completed_rentals ?? 0} rental selesai`}
+                              </p>
+                            ) : null}
                           </div>
                           <Button type="button" variant="ghost" size="sm" className="h-8 rounded-lg text-[10px]" onClick={() => setSelectedRenterId("")}>Ganti</Button>
                         </div>
@@ -1453,7 +2644,7 @@ export function RentalWalkIn() {
                     </div>
                   </div>
                   <Badge variant="secondary" className="rounded-full text-[9px]">
-                    {draftLines.length} item
+                    {draftLines.length + saleCartLines.reduce((sum, line) => sum + line.jumlah, 0)} item
                   </Badge>
                 </div>
 
@@ -1468,9 +2659,9 @@ export function RentalWalkIn() {
                       <Search className="size-4" />
                     </span>
                     <span className="min-w-0 text-left">
-                      <span className="block truncate text-[10px] font-semibold">Buka Katalog Rental</span>
+                      <span className="block truncate text-[10px] font-semibold">Buka Katalog</span>
                       <span className="mt-0.5 block truncate text-[9px] text-muted-foreground">
-                        Cari foto, kategori, varian, ready stock, dan tarif
+                        Pilih sewa, paket, dan pembelian tambahan dalam satu alur
                       </span>
                     </span>
                   </span>
@@ -1493,6 +2684,32 @@ export function RentalWalkIn() {
                 ) : (
                   <p className="mt-2 text-[9px] text-muted-foreground">Belum ada barang. Pilih barang atau paket melalui katalog.</p>
                 )}
+                {saleCartLines.length ? (
+                  <div className="mt-3 rounded-xl border bg-emerald-500/[0.04] px-3 py-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-[9px] font-semibold">Pembelian tambahan · {saleCartLines.reduce((sum, line) => sum + line.jumlah, 0)} item</p>
+                      <span className="text-[9px] font-bold">{formatCatalogMoney(saleSubtotal, "IDR")}</span>
+                    </div>
+                    <div className="mt-2 space-y-1.5 border-t border-emerald-500/15 pt-2">
+                      {saleCartLines.map(({ item, jumlah }) => {
+                        const isBonus = Object.prototype.hasOwnProperty.call(saleBonusReasons, item.key);
+                        const normalPrice = Number(item.harga_jual ?? 0) * jumlah;
+                        const effectivePrice = isBonus ? 0 : Number(item.harga_jual_efektif ?? item.harga_jual ?? 0) * jumlah;
+                        return (
+                          <div key={item.key} className="flex items-center justify-between gap-2 text-[8px]">
+                            <div className="min-w-0">
+                              <p className="truncate font-medium">{item.nama} × {jumlah}</p>
+                              {isBonus ? <p className="text-emerald-700">Bonus rental</p> : item.promo_diskon_persen != null ? (
+                                <p className="text-emerald-700">{item.promo_diskon_persen}% · <span className="text-muted-foreground line-through">{formatCatalogMoney(normalPrice, "IDR")}</span></p>
+                              ) : null}
+                            </div>
+                            <span className="shrink-0 font-semibold">{formatCatalogMoney(effectivePrice, "IDR")}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
               </CardContent>
             </section>
             )
@@ -1510,9 +2727,21 @@ export function RentalWalkIn() {
               </CardContent>
             </section>
           )}
+
+
+
         </div>
 
         <aside className="order-2 space-y-3 lg:order-2">
+          {mixedSaleId ? (
+            <section className="rounded-2xl border border-emerald-300/70 bg-emerald-50/40 dark:bg-emerald-950/10">
+              <CardContent className="space-y-2 p-3.5">
+                <div className="flex items-center gap-2"><Check className="size-4 text-emerald-600"/><p className="text-[11px] font-bold">Checkout rental + pembelian tersimpan</p></div>
+                {mixedReceipt.isPending ? <p className="text-[9px] text-muted-foreground">Menyiapkan ringkasan checkout…</p> : mixedReceipt.error ? <Alert variant="destructive"><AlertDescription>{commandMessage(mixedReceipt.error,"Ringkasan checkout belum dapat dimuat.")}</AlertDescription></Alert> : mixedReceipt.data ? <><p className="text-[10px] font-semibold">{mixedReceipt.data.nomor_checkout}</p><p className="text-[9px] text-muted-foreground">Total {formatRentalMoney(mixedReceipt.data.total_amount,"IDR")} · diterima {formatRentalMoney(mixedReceipt.data.amount_paid,"IDR")}</p><Button type="button" className="h-9 w-full rounded-xl text-[10px]" disabled={!receiptData} onClick={()=>setReceiptOpen(true)}><ReceiptText className="size-3.5"/>Cetak Struk 58 mm</Button></> : null}
+                {receiptQuery.error ? <Alert variant="destructive"><AlertDescription>{commandMessage(receiptQuery.error,"Struk gabungan belum dapat disiapkan.")}</AlertDescription></Alert> : null}
+              </CardContent>
+            </section>
+          ) : null}
           <section className="rounded-2xl border bg-card">
             <CardHeader className="px-3.5 pb-2.5 pt-3.5 sm:px-4">
               <div className="flex items-center justify-between gap-2">
@@ -1572,7 +2801,9 @@ export function RentalWalkIn() {
                         </div>
                         <div className="shrink-0 text-right">
                           <p className="text-[8px] text-muted-foreground">Subtotal</p>
+                          {Number(line.promoDiscountPercent ?? 0) > 0 ? <p className="text-[8px] text-muted-foreground line-through">{formatRentalMoney(calculateRentalLineSubtotal(Number(line.input.jumlah), Number(line.normalUnitPrice ?? line.input.unit_price), Number(line.input.duration_periods)), line.input.currency_code ?? "IDR")}</p> : null}
                           <p className="mt-0.5 text-[11px] font-bold">{formatRentalMoney(line.input.subtotal, line.input.currency_code ?? "IDR")}</p>
+                          {Number(line.promoDiscountPercent ?? 0) > 0 ? <p className="text-[8px] font-semibold text-emerald-700">Promo {line.promoDiscountPercent}%</p> : null}
                         </div>
                       </div>
                       <div className="mt-2 border-t pt-2 text-[9px] text-muted-foreground">
@@ -1585,15 +2816,214 @@ export function RentalWalkIn() {
                 <div className="rounded-xl border border-dashed p-5 text-center text-[10px] text-muted-foreground">Belum ada barang di keranjang.</div>
               )}
 
+              {!rentalCreated && selectedLinesExist && isReservationFlow ? (
+                <div className="mt-3 space-y-2 rounded-xl border bg-muted/15 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-[10px] font-bold">Diskon rental</p>
+                    <Badge variant="outline" className="rounded-full text-[8px]">Bukan diskon barang jual</Badge>
+                  </div>
+                  <Select
+                    value={checkoutDiscountMode}
+                    onValueChange={(value) => setCheckoutDiscountMode(value as CheckoutDiscountRequest["mode"])}
+                  >
+                    <SelectTrigger className="h-9 rounded-lg text-[10px]">
+                      <SelectValue placeholder="Pilih diskon" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Tanpa diskon</SelectItem>
+                      <SelectItem value="loyalty" disabled={!canApplyCheckoutDiscount || loyaltyPreview.data?.eligible !== true}>
+                        Loyalitas berkelanjutan
+                      </SelectItem>
+                      <SelectItem
+                        value="manual"
+                        disabled={!canApplyCheckoutDiscount || checkoutDiscountPolicy.data?.manual_discount_enabled !== true}
+                      >
+                        Diskon manual
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {checkoutDiscountMode === "loyalty" ? (
+                    loyaltyPreview.isPending ? (
+                      <p className="text-[9px] text-muted-foreground">Memeriksa kelayakan loyalitas penyewa…</p>
+                    ) : loyaltyPreview.isError ? (
+                      <p className="text-[9px] text-destructive">{commandMessage(loyaltyPreview.error, "Kelayakan loyalitas belum dapat diperiksa.")}</p>
+                    ) : loyaltyPreview.data?.eligible ? (
+                      <div className="rounded-lg bg-emerald-500/5 px-2.5 py-2 text-[9px]">
+                        <p className="font-semibold text-emerald-700 dark:text-emerald-300">
+                          {loyaltyPreview.data.completed_rental_count} rental selesai · rekomendasi {loyaltyPreview.data.recommended_discount_percent}%
+                        </p>
+                        <p className="mt-0.5 text-muted-foreground">
+                          Potongan {formatRentalMoney(loyaltyPreview.data.recommended_amount, "IDR")} berdasarkan kelayakan yang dihitung server.
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-[9px] text-muted-foreground">Penyewa belum memenuhi kelayakan program loyalitas aktif.</p>
+                    )
+                  ) : null}
+                  {checkoutDiscountMode === "manual" ? (
+                    <div className="grid gap-2">
+                      <label className="grid gap-1 text-[9px]">
+                        Nominal diskon
+                        <Input
+                          type="number"
+                          min={1}
+                          max={totalRental}
+                          value={manualDiscountAmount}
+                          onChange={(event) => setManualDiscountAmount(event.target.value)}
+                          placeholder="Nominal dalam rupiah"
+                          className="h-9 rounded-lg text-[10px]"
+                        />
+                      </label>
+                      <label className="grid gap-1 text-[9px]">
+                        Kategori alasan
+                        <Select value={manualDiscountReasonCode} onValueChange={setManualDiscountReasonCode}>
+                          <SelectTrigger className="h-9 rounded-lg text-[10px]"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            {allowedManualReasons.map((reason) => (
+                              <SelectItem key={reason} value={reason}>{reason.replaceAll("_", " ")}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </label>
+                      <label className="grid gap-1 text-[9px]">
+                        Catatan alasan {checkoutDiscountPolicy.data?.require_reason ? "(wajib)" : "(opsional)"}
+                        <Input
+                          value={manualDiscountReasonNote}
+                          onChange={(event) => setManualDiscountReasonNote(event.target.value)}
+                          placeholder="Contoh: kompensasi keterlambatan layanan"
+                          className="h-9 rounded-lg text-[10px]"
+                        />
+                      </label>
+                      {checkoutDiscountPolicy.data?.max_discount_percent != null || checkoutDiscountPolicy.data?.max_discount_amount != null ? (
+                        <p className="text-[8px] text-muted-foreground">
+                          Batas kebijakan: {checkoutDiscountPolicy.data.max_discount_percent != null ? checkoutDiscountPolicy.data.max_discount_percent + "%" : "—"} · {checkoutDiscountPolicy.data.max_discount_amount != null ? formatRentalMoney(Number(checkoutDiscountPolicy.data.max_discount_amount), "IDR") : "tanpa batas nominal"}
+                          {canOverrideLoyalty ? " · override loyalitas diizinkan untuk akun ini" : ""}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {!canApplyCheckoutDiscount && checkoutDiscountMode !== "none" ? (
+                    <p className="text-[9px] text-destructive">Akun ini tidak memiliki hak menerapkan diskon checkout.</p>
+                  ) : null}
+                  {checkoutDiscountMode === "manual" && manualDiscountExceedsPercentCap ? (
+                    <p className="text-[9px] text-destructive">Persentase diskon melebihi batas kebijakan usaha.</p>
+                  ) : null}
+                  {checkoutDiscountMode === "manual" && manualDiscountExceedsAmountCap ? (
+                    <p className="text-[9px] text-destructive">Nominal diskon melebihi batas kebijakan usaha.</p>
+                  ) : null}
+                  {checkoutDiscountMode === "manual" && manualDiscountExceedsLoyalty && !manualDiscountOverrideAllowed ? (
+                    <p className="text-[9px] text-destructive">Diskon di atas rekomendasi loyalitas tidak diizinkan oleh kebijakan atau hak akses akun ini.</p>
+                  ) : null}
+                  {checkoutDiscountMode === "manual" && loyaltyPreview.isPending ? (
+                    <p className="text-[9px] text-muted-foreground">Tunggu verifikasi rekomendasi loyalitas sebelum menerapkan diskon manual.</p>
+                  ) : null}
+                  {checkoutDiscountMode === "manual" && loyaltyPreview.isError ? (
+                    <p className="text-[9px] text-destructive">Rekomendasi loyalitas tidak dapat diverifikasi. Diskon manual belum dapat diterapkan.</p>
+                  ) : null}
+                  <div className="flex items-center justify-between border-t pt-2 text-[9px]">
+                    <span className="text-muted-foreground">Potongan rental</span>
+                    <strong>{formatRentalMoney(effectiveDiscountAmount, "IDR")}</strong>
+                  </div>
+                  <div className="flex items-center justify-between text-[10px]">
+                    <span className="text-muted-foreground">Rental setelah diskon</span>
+                    <strong className="text-[12px]">{formatRentalMoney(discountedRentalTotal, "IDR")}</strong>
+                  </div>
+                </div>
+              ) : null}
+
+              {!rentalCreated && selectedLinesExist && !isReservationFlow ? (
+                <div className="mt-3 space-y-2.5 rounded-xl border bg-muted/15 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-[10px] font-bold">Diskon & pembayaran</p>
+                    <Badge variant="outline" className="rounded-full text-[8px]">Walk-in</Badge>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2 rounded-lg bg-background px-2.5 py-2">
+                    <div className="min-w-0">
+                      <p className="text-[9px] font-semibold">Diskon manual rental</p>
+                      {manualDiscountApplied ? (
+                        <p className="mt-0.5 text-[10px] font-bold text-emerald-700">−{formatRentalMoney(walkInManualAmountValue, "IDR")}</p>
+                      ) : (
+                        <p className="mt-0.5 text-[8px] text-muted-foreground">Belum diterapkan</p>
+                      )}
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1">
+                      {manualDiscountApplied ? (
+                        <>
+                          <Button type="button" variant="ghost" size="sm" className="h-7 rounded-lg px-2 text-[9px]" onClick={() => {
+                            setManualDiscountDraftAmount(manualDiscountAmount);
+                            setManualDiscountDraftReasonCode(manualDiscountReasonCode);
+                            setManualDiscountDraftReasonNote(manualDiscountReasonNote);
+                            setManualDiscountDialogOpen(true);
+                          }}>Ubah</Button>
+                          <Button type="button" variant="ghost" size="sm" className="h-7 rounded-lg px-2 text-[9px] text-destructive" onClick={() => {
+                            setManualDiscountApplied(false);
+                            setManualDiscountAmount("");
+                            setManualDiscountReasonCode("other");
+                            setManualDiscountReasonNote("");
+                          }}>Hapus</Button>
+                        </>
+                      ) : (
+                        <Button type="button" variant="outline" size="sm" className="h-7 rounded-lg px-2.5 text-[9px]" disabled={!canApplyCheckoutDiscount || checkoutDiscountPolicy.data?.manual_discount_enabled !== true || totalRental <= 0} onClick={() => {
+                          setManualDiscountDraftAmount("");
+                          setManualDiscountDraftReasonCode(allowedManualReasons[0] ?? "other");
+                          setManualDiscountDraftReasonNote("");
+                          setManualDiscountDialogOpen(true);
+                        }}><Plus className="mr-1 size-3"/>Tambah diskon</Button>
+                      )}
+                    </div>
+                  </div>
+                  {manualDiscountApplied && (!directDiscountInputIsValid || walkInManualAmountValue > totalRental) ? (
+                    <p className="text-[8px] text-destructive">Diskon manual tidak lagi sesuai total rental atau kebijakan. Ubah diskon sebelum checkout.</p>
+                  ) : null}
+                  {!canApplyCheckoutDiscount ? <p className="text-[8px] text-muted-foreground">Akun ini tidak memiliki izin menerapkan diskon checkout.</p> : null}
+                  {checkoutDiscountPolicy.isSuccess && checkoutDiscountPolicy.data?.manual_discount_enabled !== true ? <p className="text-[8px] text-muted-foreground">Diskon manual belum diaktifkan pada kebijakan usaha.</p> : null}
+
+                  <div className="flex items-center justify-between gap-3 border-t pt-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[9px] font-semibold">Diskon loyalitas</p>
+                      {walkInLoyaltyPreview.isPending ? (
+                        <p className="mt-0.5 text-[8px] text-muted-foreground">Memeriksa kelayakan penyewa…</p>
+                      ) : walkInLoyaltyPreview.isError ? (
+                        <p className="mt-0.5 text-[8px] text-destructive">Rekomendasi loyalitas tidak dapat diverifikasi.</p>
+                      ) : !walkInLoyaltyPreview.data?.is_enabled ? (
+                        <p className="mt-0.5 text-[8px] text-muted-foreground">Program loyalitas belum diaktifkan.</p>
+                      ) : !walkInLoyaltyPreview.data?.is_in_period ? (
+                        <p className="mt-0.5 text-[8px] text-muted-foreground">Program loyalitas belum berada dalam periode berlaku.</p>
+                      ) : walkInLoyaltyPreview.data.eligible ? (
+                        <p className="mt-0.5 text-[8px] text-emerald-700">Rekomendasi {walkInLoyaltyPreview.data.recommended_discount_percent}% · {formatRentalMoney(walkInLoyaltyRecommended, "IDR")}</p>
+                      ) : (
+                        <p className="mt-0.5 text-[8px] text-muted-foreground">{walkInLoyaltyPreview.data.completed_rental_count} dari {walkInLoyaltyPreview.data.minimum_completed_rentals ?? 0} rental selesai.</p>
+                      )}
+                    </div>
+                    <Switch
+                      checked={applyLoyaltyDiscount}
+                      onCheckedChange={setApplyLoyaltyDiscount}
+                      disabled={!canApplyCheckoutDiscount || walkInLoyaltyPreview.isPending || walkInLoyaltyPreview.data?.eligible !== true || walkInLoyaltyRecommended <= 0}
+                      aria-label="Terapkan diskon loyalitas"
+                    />
+                  </div>
+                  {applyLoyaltyDiscount && !directDiscountInputIsValid ? <p className="text-[8px] text-destructive">Kelayakan diskon loyalitas berubah. Periksa kembali sebelum checkout.</p> : null}
+
+                  <div className="space-y-1.5 border-t pt-2 text-[9px]">
+                    <div className="flex items-center justify-between gap-2"><span className="text-muted-foreground">Subtotal rental (setelah promo)</span><span className="font-semibold">{formatRentalMoney(totalRental, "IDR")}</span></div>
+                    {saleSubtotal > 0 ? <div className="flex items-center justify-between gap-2"><span className="text-muted-foreground">Subtotal pembelian (setelah promo)</span><span className="font-semibold">{formatRentalMoney(saleSubtotal, "IDR")}</span></div> : null}
+                    {walkInManualAmountValue > 0 ? <div className="flex items-center justify-between gap-2"><span className="text-muted-foreground">Diskon manual rental</span><span className="font-semibold text-emerald-700">−{formatRentalMoney(walkInManualAmountValue, "IDR")}</span></div> : null}
+                    {walkInLoyaltyActual > 0 ? <div className="flex items-center justify-between gap-2"><span className="text-muted-foreground">Diskon loyalitas checkout</span><span className="font-semibold text-emerald-700">−{formatRentalMoney(walkInLoyaltyActual, "IDR")}</span></div> : null}
+                    <div className="flex items-center justify-between gap-2 border-t pt-2 text-[10px]"><span className="font-bold">Total checkout</span><strong className="text-[14px]">{formatRentalMoney(checkoutTotal, "IDR")}</strong></div>
+                  </div>
+                </div>
+              ) : null}
+
               <div className="border-t pt-2.5">
                 <div className="flex items-center justify-between gap-2 text-[10px]">
-                  <span className="text-muted-foreground">Total rental</span>
-                  <span className="text-[16px] font-bold">{formatRentalMoney(prepared ? operationalTotal : totalRental, isReservationFlow && !prepared ? rentalCurrencyCode : "IDR")}</span>
+                  <span className="text-muted-foreground">{prepared && mixedSaleId ? "Total checkout" : isReservationFlow ? "Total rental" : "Total checkout"}</span>
+                  <span className="text-[16px] font-bold">{formatRentalMoney(prepared ? (mixedSaleId ? Number(mixedReceipt.data?.total_amount ?? operationalTotal) : operationalTotal) : isReservationFlow ? discountedRentalTotal : checkoutTotal, isReservationFlow && !prepared ? rentalCurrencyCode : "IDR")}</span>
                 </div>
                 {!rentalCreated ? (
-                  <Button className="mt-2.5 h-10 w-full rounded-xl text-[11px]" disabled={!canPrepareRental || createRentalMutation.isPending} onClick={() => createRentalMutation.mutate()}>
-                    {createRentalMutation.isPending || rentalCommandState === "processing" ? <><Loader2 className="animate-spin" /> Menyiapkan…</> : <>{isReservationFlow ? "Buat Penyewaan" : "Siapkan Rental"} <ArrowRight /></>}
-                  </Button>
+                  <p className="mt-2 text-[9px] text-muted-foreground">
+                    Pilih mode tindakan pada tombol bawah. Transaksi penjualan ikut dibuat otomatis bila keranjang memuat barang jual.
+                  </p>
                 ) : null}
               </div>
 
@@ -1820,6 +3250,7 @@ export function RentalWalkIn() {
                   </div>
                 </div>
 
+                {receiptQuery.error ? <Alert variant="destructive" className="mt-2 rounded-xl"><AlertDescription>{commandMessage(receiptQuery.error, "Struk belum dapat disiapkan.")}</AlertDescription></Alert> : null}
                 <div className="mt-2 grid grid-cols-2 gap-1.5">
                   <Button type="button" variant="outline" className="h-9 rounded-xl text-[9px]" disabled={!rentalQr.data} onClick={() => setQrOpen(true)}>
                     <QrCode className="size-3.5" /> QR Penyewaan
@@ -1856,9 +3287,9 @@ export function RentalWalkIn() {
       <div className="sticky bottom-2 z-30 rounded-2xl border bg-background/95 p-2 shadow-lg backdrop-blur">
         <div className="flex items-center gap-2.5">
           <div className="min-w-0 flex-1">
-            <p className="text-[8px] uppercase tracking-[0.12em] text-muted-foreground">{prepared ? "Total Rental" : "Total"}</p>
-            <p className="truncate text-[14px] font-black">{formatRentalMoney(prepared ? operationalTotal : totalRental, isReservationFlow && !prepared ? rentalCurrencyCode : "IDR")}</p>
-            {prepared ? <p className="truncate text-[8px] text-muted-foreground">{formatRentalMoney(paymentRecorded, "IDR")} dibayar · {formatRentalMoney(paymentRemaining, "IDR")} sisa</p> : null}
+            <p className="text-[8px] uppercase tracking-[0.12em] text-muted-foreground">{prepared && mixedSaleId ? "Total Checkout" : prepared ? "Total Rental" : isReservationFlow ? "Total Rental" : "Total Checkout"}</p>
+            <p className="truncate text-[14px] font-black">{formatRentalMoney(prepared ? (mixedSaleId ? Number(mixedReceipt.data?.total_amount ?? operationalTotal) : operationalTotal) : isReservationFlow ? discountedRentalTotal : checkoutTotal, isReservationFlow && !prepared ? rentalCurrencyCode : "IDR")}</p>
+            {prepared ? <p className="truncate text-[8px] text-muted-foreground">{formatRentalMoney(paymentRecorded, "IDR")} dibayar untuk rental · {formatRentalMoney(paymentRemaining, "IDR")} sisa rental</p> : null}
           </div>
 
           {!rentalCreated ? (
@@ -1868,7 +3299,7 @@ export function RentalWalkIn() {
                 variant="outline"
                 className="h-10 rounded-xl px-3 text-[9px]"
                 disabled={!canPrepareRental || createRentalMutation.isPending || activationMutation.isPending}
-                onClick={() => createRentalMutation.mutate()}
+                onClick={handlePrepareRental}
               >
                 {createRentalMutation.isPending && !directAfterCreateRef.current ? <Loader2 className="animate-spin" /> : <ArrowRight />}
                 {createRentalMutation.isPending && !directAfterCreateRef.current ? "Menyiapkan…" : isReservationFlow ? "Buat Penyewaan" : "Siapkan Rental"}
@@ -1901,483 +3332,52 @@ export function RentalWalkIn() {
         </div>
       </div>
 
-      <Dialog
-        open={catalogPickerOpen}
-        onOpenChange={(open) => {
-          if (!open) {
-            setCatalogPickerOpen(false);
-            setCatalogDialog({ open: false });
-          }
-        }}
-      >
-        <DialogContent
-          style={{ width: "92vw", height: "90vh", maxWidth: "1400px" }}
-          className="!flex !max-w-none flex-col gap-0 overflow-hidden rounded-3xl p-0"
-        >
-          <DialogHeader className="shrink-0 border-b px-4 py-3 sm:px-6">
-            <div className="flex items-center gap-2.5">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="size-9 shrink-0 rounded-xl"
-                onClick={() => {
-                  setCatalogPickerOpen(false);
-                  setCatalogDialog({ open: false });
-                }}
-                aria-label="Tutup katalog"
-              >
-                <ArrowLeft className="size-4" />
-              </Button>
-              <div className="min-w-0 flex-1">
-                <DialogTitle className="text-[16px]">Katalog Rental</DialogTitle>
-                <DialogDescription className="mt-0.5 text-[10px]">
-                  Pilih foto, produk, varian, ready stock, dan jumlah. Pilihan disimpan sementara sampai diterapkan ke Rental.
-                </DialogDescription>
-              </div>
-              <Badge variant="secondary" className="rounded-full">
-                {pickerLines.length} item
-              </Badge>
-            </div>
+
+
+      <Dialog open={manualDiscountDialogOpen} onOpenChange={setManualDiscountDialogOpen}>
+        <DialogContent className="flex max-h-[82dvh] w-[calc(100%-1rem)] max-w-md flex-col gap-0 overflow-hidden rounded-2xl p-0">
+          <DialogHeader className="shrink-0 border-b px-4 py-3 text-left">
+            <DialogTitle className="text-[14px]">Diskon manual rental</DialogTitle>
+            <DialogDescription className="text-[9px]">Diskon ini mengurangi subtotal rental, lalu rekomendasi loyalitas dihitung dari total checkout setelahnya.</DialogDescription>
           </DialogHeader>
-
-          <div className="grid min-h-0 flex-1 overflow-hidden lg:grid-cols-[minmax(0,1fr)_22rem]">
-            <div className="min-h-0 overflow-y-auto p-3 sm:p-5">
-              <div className="space-y-3">
-                <div className="flex items-center gap-2 rounded-2xl border bg-background px-3">
-                  <Search className="size-4 shrink-0 text-muted-foreground" />
-                  <Input
-                    value={productSearch}
-                    onChange={(event) => setProductSearch(event.target.value)}
-                    placeholder="Cari barang, kategori, atau kode unit…"
-                    aria-label="Cari barang di katalog"
-                    className="h-11 border-0 px-0 text-sm shadow-none focus-visible:ring-0"
-                  />
-                  <Filter className="size-4 shrink-0 text-muted-foreground" />
-                </div>
-
-                <div className="flex gap-1.5 overflow-x-auto pb-1">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={categoryId === "all" ? "default" : "outline"}
-                    className="h-8 shrink-0 rounded-full px-3 text-[10px]"
-                    onClick={() => setCategoryId("all")}
-                  >
-                    Semua
-                  </Button>
-                  {categories.map((category) => (
-                    <Button
-                      key={category.id}
-                      type="button"
-                      size="sm"
-                      variant={categoryId === category.id ? "default" : "outline"}
-                      className="h-8 shrink-0 rounded-full px-3 text-[10px]"
-                      onClick={() => setCategoryId(category.id)}
-                    >
-                      {category.nama}
-                    </Button>
-                  ))}
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={selectionMode === "package" ? "default" : "outline"}
-                    className="h-8 shrink-0 rounded-full px-3 text-[10px]"
-                    onClick={() => setSelectionMode(selectionMode === "item" ? "package" : "item")}
-                  >
-                    {selectionMode === "item" ? "Paket" : "Barang"}
-                  </Button>
-                </div>
-
-                {selectionMode === "item" ? (
-                  <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-4">
-                    {activeProducts.map((product) => {
-                      const ready = readyStock.data?.byProduct[product.barang_id] ?? 0;
-                      const cover = unitCoverByProduct.get(product.barang_id) ?? coverByProduct.get(product.barang_id);
-                      const isSelected = catalogDialog.open && catalogDialog.mode === "item" && catalogDialog.id === product.barang_id;
-
-                      return (
-                        <button
-                          key={product.barang_id}
-                          type="button"
-                          onClick={() => openItemDialog(product)}
-                          className={cn(
-                            "overflow-hidden rounded-2xl border bg-card text-left transition hover:-translate-y-0.5 hover:shadow-md",
-                            isSelected && "border-primary ring-2 ring-primary/15",
-                          )}
-                        >
-                          <div className="relative aspect-[4/3] overflow-hidden bg-muted">
-                            {cover ? <img src={cover} alt="" className="size-full object-cover" /> : <Package className="absolute left-1/2 top-1/2 size-8 -translate-x-1/2 -translate-y-1/2 text-muted-foreground" />}
-                            <Badge className="absolute left-2 top-2 rounded-full bg-background/90 text-[8px] text-foreground hover:bg-background/90">
-                              {ready > 0 ? "Siap" : "Habis"}
-                            </Badge>
-                          </div>
-                          <div className="space-y-1.5 p-2.5">
-                            <div className="min-w-0">
-                              <p className="truncate text-[11px] font-bold">{product.nama}</p>
-                              <p className="truncate text-[9px] text-muted-foreground">{product.kategori?.nama ?? "Barang"}</p>
-                            </div>
-                            <div className="flex items-center justify-between gap-2">
-                              <span className={cn("text-[9px] font-semibold", ready > 0 ? "text-emerald-600" : "text-muted-foreground")}>Ready {ready}</span>
-                              <span className="text-[9px] font-semibold text-primary">
-                                {product.active_tariff ? formatCatalogMoney(product.active_tariff.nominal, product.active_tariff.currency_code) : "Tarif —"}
-                              </span>
-                            </div>
-                          </div>
-                        </button>
-                      );
-                    })}
-                    {!activeProducts.length ? (
-                      <div className="col-span-full rounded-2xl border border-dashed p-10 text-center text-xs text-muted-foreground">
-                        Barang tidak ditemukan untuk pencarian/filter ini.
-                      </div>
-                    ) : null}
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-4">
-                    {(packages.data ?? [])
-                      .filter((pkg) => pkg.nama.toLowerCase().includes(productSearch.trim().toLowerCase()))
-                      .map((pkg) => {
-                        const availability = packageAvailability.data?.find((item) => item.paket_sewa_id === pkg.paket_sewa_id);
-                        const isSelected = catalogDialog.open && catalogDialog.mode === "package" && catalogDialog.id === pkg.paket_sewa_id;
-                        const availabilityLabel = !canMoveFromPeriod
-                          ? "Atur periode rental"
-                          : packageAvailability.isPending
-                            ? "Memeriksa stok…"
-                            : packageAvailability.isError
-                              ? "Stok belum dapat diverifikasi"
-                              : availability?.status === "available"
-                                ? "Ready " + (availability.available_package_quantity ?? 0)
-                                : availability
-                                  ? packageAvailabilityHint(availability) ?? "Belum siap"
-                                  : "Data stok tidak tersedia";
-                        const availabilityTone = availability?.status === "available"
-                          ? "text-emerald-600"
-                          : !canMoveFromPeriod || packageAvailability.isPending
-                            ? "text-muted-foreground"
-                            : "text-amber-700";
-                        return (
-                          <button
-                            key={pkg.paket_sewa_id}
-                            type="button"
-                            onClick={() => openPackageDialog(pkg)}
-                            className={cn(
-                              "overflow-hidden rounded-2xl border bg-card text-left transition hover:-translate-y-0.5 hover:shadow-md",
-                              isSelected && "border-primary ring-2 ring-primary/15",
-                            )}
-                          >
-                            <div className="flex aspect-[4/3] items-center justify-center bg-primary/5 text-primary">
-                              <PackageCheck className="size-10" />
-                            </div>
-                            <div className="space-y-1.5 p-2.5">
-                              <p className="truncate text-[11px] font-bold">{pkg.nama}</p>
-                              <p className="truncate text-[9px] text-muted-foreground">Paket rental</p>
-                              <div className="mt-1 flex min-w-0 flex-col items-start gap-1">
-                                <span className={cn(
-                                  "max-w-full break-words text-[9px] font-semibold leading-tight",
-                                  availabilityTone,
-                                )}>
-                                  {availabilityLabel}
-                                </span>
-                                {(() => {
-                                  const price = resolvePackagePrice(pkg.active_tariff ?? null, pkg.active_promo);
-                                  return (
-                                    <div className="flex min-w-0 max-w-full flex-col items-start gap-0.5">
-                                      {price.isPromo ? (
-                                        <div className="flex flex-wrap items-center gap-1">
-                                          <Badge variant="secondary" className="h-4 rounded-full px-1.5 py-0 text-[8px] leading-none">Promo</Badge>
-                                          <span className="break-words text-[8px] font-medium leading-tight text-muted-foreground line-through">
-                                            {formatCatalogMoney(price.normalPrice, pkg.active_tariff?.currency_code)}
-                                          </span>
-                                        </div>
-                                      ) : null}
-                                      <span className={cn(
-                                        "max-w-full break-words text-[10px] font-bold leading-tight",
-                                        price.isPromo ? "text-emerald-700 dark:text-emerald-300" : "text-primary",
-                                      )}>
-                                        {pkg.active_tariff
-                                          ? formatCatalogMoney(price.effectivePrice, pkg.active_tariff.currency_code)
-                                          : "Tarif belum ditentukan"}
-                                      </span>
-                                    </div>
-                                  );
-                                })()}
-                              </div>
-                            </div>
-                          </button>
-                        );
-                      })}
-                  </div>
-                )}
-
-                {catalogDialog.open ? (
-                  <div className="lg:hidden">
-                    {catalogDialog.mode === "item" ? (
-                      <div className="mt-3 rounded-2xl border bg-card p-3">
-                        <div className="flex items-center gap-3">
-                          <div className="grid size-16 shrink-0 place-items-center overflow-hidden rounded-xl bg-muted">
-                            {selectedProductImage ? <img src={selectedProductImage} alt="" className="size-full object-cover" /> : <Package className="size-6 text-muted-foreground" />}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-[12px] font-bold">{selectedProduct?.nama ?? "Barang"}</p>
-                            <p className="mt-0.5 text-[9px] text-muted-foreground">{selectedVariant?.nama ?? "Varian utama"} · Ready {selectedReadyStock}</p>
-                          </div>
-                          <Button type="button" variant="ghost" size="icon" className="size-8 rounded-lg" onClick={() => closeCatalogDialog()} aria-label="Tutup detail barang">
-                            <ChevronDown className="size-4" />
-                          </Button>
-                        </div>
-
-                        {productDetail.data?.variants?.length ? (
-                          <label className="mt-3 block space-y-1">
-                            <span className="text-[9px] font-medium text-muted-foreground">Varian</span>
-                            <Select value={selectedVariantId || "__base"} onValueChange={(value) => setSelectedVariantId(value === "__base" ? "" : value)}>
-                              <SelectTrigger className="h-9 rounded-xl text-[10px]"><SelectValue placeholder="Pilih varian" /></SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="__base">Tanpa varian</SelectItem>
-                                {productDetail.data.variants.map((variant) => <SelectItem key={variant.varian_barang_id} value={variant.varian_barang_id}>{variant.nama}</SelectItem>)}
-                              </SelectContent>
-                            </Select>
-                          </label>
-                        ) : null}
-
-                        <div className="mt-3 flex items-center justify-between gap-2 rounded-xl border px-3 py-2.5">
-                          <div>
-                            <p className="text-[9px] text-muted-foreground">Jumlah unit</p>
-                            <p className="text-[9px] font-semibold">{billingPeriods || 0} periode tarif</p>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            <Button type="button" variant="outline" size="icon" className="size-8 rounded-lg" onClick={() => setSelectedQuantity(String(Math.max(1, selectedQuantityNumber - 1)))} disabled={selectedQuantityNumber <= 1}>−</Button>
-                            <span className="min-w-7 text-center text-xs font-bold">{selectedQuantityNumber}</span>
-                            <Button type="button" variant="outline" size="icon" className="size-8 rounded-lg" onClick={() => setSelectedQuantity(String(selectedQuantityNumber + 1))}>+</Button>
-                          </div>
-                        </div>
-
-                        <div className="mt-3 rounded-xl bg-primary/5 p-3">
-                          <p className="text-[9px] font-semibold text-primary">Subtotal</p>
-                          <p className="mt-1 text-sm font-black">
-                            {selectedTariff && billingPeriods ? formatCatalogMoney(calculateRentalLineSubtotal(selectedQuantityNumber, Number(selectedTariff.nominal), billingPeriods), "IDR") : "—"}
-                          </p>
-                        </div>
-
-                        <Button
-                          type="button"
-                          className="mt-3 h-10 w-full rounded-xl text-[10px]"
-                          disabled={!canAddItem}
-                          onClick={addCurrentItem}
-                        >
-                          <Plus className="size-4" /> Tambah ke Keranjang Sementara
-                        </Button>
-                      </div>
-                    ) : (
-                      <div className="mt-3 rounded-2xl border bg-card p-3">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="min-w-0">
-                            <p className="truncate text-[12px] font-bold">{selectedPackage?.nama ?? "Paket"}</p>
-                            <p className="mt-0.5 text-[9px] text-muted-foreground">
-                              {!canMoveFromPeriod
-                                ? "Atur periode rental untuk cek stok"
-                                : packageAvailability.isPending
-                                  ? "Memeriksa ketersediaan paket…"
-                                  : packageAvailability.isError
-                                    ? "Stok belum dapat diverifikasi"
-                                    : selectedPackageAvailability?.status === "available"
-                                      ? (selectedPackageAvailability.available_package_quantity ?? 0) + " paket siap"
-                                      : selectedPackageAvailability
-                                        ? packageAvailabilityHint(selectedPackageAvailability) ?? "Belum siap"
-                                        : "Data stok tidak tersedia"}
-                            </p>
-                          </div>
-                          <Button type="button" variant="ghost" size="icon" className="size-8 rounded-lg" onClick={() => closeCatalogDialog()} aria-label="Tutup detail paket">
-                            <ChevronDown className="size-4" />
-                          </Button>
-                        </div>
-                        <div className="mt-3 flex items-center justify-between rounded-xl border px-3 py-2.5">
-                          <span className="text-[9px] text-muted-foreground">Jumlah paket</span>
-                          <div className="flex items-center gap-1.5">
-                            <Button type="button" variant="outline" size="icon" className="size-8 rounded-lg" onClick={() => setSelectedPackageQuantity(String(Math.max(1, selectedPackageQuantityNumber - 1)))} disabled={selectedPackageQuantityNumber <= 1}>−</Button>
-                            <span className="min-w-7 text-center text-xs font-bold">{selectedPackageQuantityNumber}</span>
-                            <Button type="button" variant="outline" size="icon" className="size-8 rounded-lg" onClick={() => setSelectedPackageQuantity(String(selectedPackageQuantityNumber + 1))}>+</Button>
-                          </div>
-                        </div>
-                        <Button type="button" className="mt-3 h-10 w-full rounded-xl text-[10px]" disabled={!canAddPackage} onClick={addCurrentPackage}>
-                          <Plus className="size-4" /> Tambah Paket ke Keranjang
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                ) : null}
-              </div>
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
+            <div className="rounded-xl bg-muted/40 px-3 py-2 text-[9px]">
+              <div className="flex justify-between"><span className="text-muted-foreground">Subtotal rental</span><strong>{formatRentalMoney(totalRental, "IDR")}</strong></div>
+              {checkoutDiscountPolicy.data?.max_discount_percent != null || checkoutDiscountPolicy.data?.max_discount_amount != null ? (
+                <p className="mt-1 text-muted-foreground">Batas {checkoutDiscountPolicy.data.max_discount_percent != null ? `${checkoutDiscountPolicy.data.max_discount_percent}%` : "—"} · {checkoutDiscountPolicy.data.max_discount_amount != null ? formatRentalMoney(Number(checkoutDiscountPolicy.data.max_discount_amount), "IDR") : "tanpa batas nominal"}</p>
+              ) : null}
             </div>
-
-            <aside className="hidden min-h-0 overflow-y-auto border-l bg-muted/10 p-4 lg:block">
-              {catalogDialog.open && catalogDialog.mode === "item" ? (
-                <div className="space-y-3">
-                  <div className="flex items-center gap-3 rounded-2xl border bg-card p-3">
-                    <div className="grid size-20 shrink-0 place-items-center overflow-hidden rounded-xl bg-muted">
-                      {selectedProductImage ? <img src={selectedProductImage} alt="" className="size-full object-cover" /> : <Package className="size-7 text-muted-foreground" />}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="truncate text-[13px] font-bold">{selectedProduct?.nama ?? "Barang"}</p>
-                      <p className="mt-0.5 text-[9px] text-muted-foreground">{selectedVariant?.nama ?? "Varian utama"}</p>
-                      <p className="mt-1 text-[9px] font-semibold text-emerald-600">Ready {selectedReadyStock}</p>
-                    </div>
-                  </div>
-
-                  {productDetail.data?.variants?.length ? (
-                    <label className="block space-y-1">
-                      <span className="text-[9px] font-medium text-muted-foreground">Varian</span>
-                      <Select value={selectedVariantId || "__base"} onValueChange={(value) => setSelectedVariantId(value === "__base" ? "" : value)}>
-                        <SelectTrigger className="h-9 rounded-xl text-[10px]"><SelectValue placeholder="Pilih varian" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__base">Tanpa varian</SelectItem>
-                          {productDetail.data.variants.map((variant) => <SelectItem key={variant.varian_barang_id} value={variant.varian_barang_id}>{variant.nama}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                    </label>
-                  ) : null}
-
-                  <div className="flex items-center justify-between rounded-xl border bg-card p-3">
-                    <div>
-                      <p className="text-[9px] text-muted-foreground">Jumlah</p>
-                      <p className="mt-0.5 text-[11px] font-semibold">Unit fisik dipilih server saat assignment.</p>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <Button type="button" variant="outline" size="icon" className="size-8 rounded-lg" onClick={() => setSelectedQuantity(String(Math.max(1, selectedQuantityNumber - 1)))} disabled={selectedQuantityNumber <= 1}>−</Button>
-                      <span className="min-w-7 text-center text-xs font-bold">{selectedQuantityNumber}</span>
-                      <Button type="button" variant="outline" size="icon" className="size-8 rounded-lg" onClick={() => setSelectedQuantity(String(selectedQuantityNumber + 1))}>+</Button>
-                    </div>
-                  </div>
-
-                  <div className="rounded-xl bg-primary/5 p-3">
-                    <p className="text-[9px] font-semibold text-primary">Perhitungan tarif</p>
-                    <p className="mt-1 text-[11px] font-bold">
-                      {selectedQuantityNumber} unit × {billingPeriods || 0} periode × {selectedTariff ? formatCatalogMoney(selectedTariff.nominal, selectedTariff.currency_code) : "Rp0"}
-                    </p>
-                    <p className="mt-1 text-[14px] font-black">
-                      {selectedTariff && billingPeriods ? formatCatalogMoney(calculateRentalLineSubtotal(selectedQuantityNumber, Number(selectedTariff.nominal), billingPeriods), "IDR") : "—"}
-                    </p>
-                  </div>
-
-                  {availabilityPreview.isPending ? (
-                    <p className="text-[9px] text-muted-foreground">Memeriksa unit siap dan benturan jadwal…</p>
-                  ) : availabilityPreview.error ? (
-                    <Alert variant="destructive" className="rounded-xl">
-                      <AlertTitle>Ketersediaan belum dapat diverifikasi</AlertTitle>
-                      <AlertDescription>Item tidak bisa ditambahkan sebelum status unit dan jadwal berhasil diperiksa.</AlertDescription>
-                    </Alert>
-                  ) : availabilityPreview.data && availabilityPreview.data.readyPhysicalUnits < selectedQuantityNumber ? (
-                    <Alert variant="destructive" className="rounded-xl">
-                      <AlertTitle>Unit tersedia tidak cukup</AlertTitle>
-                      <AlertDescription>{availabilityPreview.data.readyPhysicalUnits} unit siap dan tidak berbenturan pada jadwal ini, sementara diminta {selectedQuantityNumber}.</AlertDescription>
-                    </Alert>
-                  ) : null}
-
-                  <Button
-                    type="button"
-                    className="h-10 w-full rounded-xl text-[10px]"
-                    disabled={!canAddItem}
-                    onClick={addCurrentItem}
-                  >
-                    <Plus className="size-4" /> Tambah ke Keranjang Sementara
-                  </Button>
-                </div>
-              ) : catalogDialog.open && catalogDialog.mode === "package" ? (
-                <div className="space-y-3">
-                  <div className="rounded-2xl border bg-card p-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-[13px] font-bold">{selectedPackage?.nama ?? "Paket"}</p>
-                        <p className="mt-0.5 text-[9px] text-muted-foreground">Paket rental dengan komponen tervalidasi server</p>
-                        {packageAvailabilityHint(selectedPackageAvailability ?? undefined) ? (
-                          <p className="mt-1 truncate text-[9px] font-semibold text-amber-700">
-                            {packageAvailabilityHint(selectedPackageAvailability ?? undefined)}
-                          </p>
-                        ) : null}
-                      </div>
-                      <Badge variant="secondary" className="rounded-full text-[9px]">
-                        {!canMoveFromPeriod
-                          ? "Periode belum diatur"
-                          : packageAvailability.isPending
-                            ? "Memeriksa stok"
-                            : packageAvailability.isError
-                              ? "Gagal cek stok"
-                              : selectedPackageAvailability?.status === "available"
-                                ? (selectedPackageAvailability.available_package_quantity ?? 0) + " siap"
-                                : selectedPackageAvailability
-                                  ? packageAvailabilityHint(selectedPackageAvailability) ?? "Belum siap"
-                                  : "Data stok tidak tersedia"}
-                      </Badge>
-                    </div>
-                    <div className="mt-2 space-y-1.5">
-                      {(packageDetail.data?.components ?? []).map((component) => (
-                        <div key={component.komponen_paket_id} className="flex items-center justify-between gap-3 rounded-lg bg-muted/20 px-2.5 py-2">
-                          <span className="truncate text-[9px]">{component.varian?.nama ?? component.barang?.nama ?? "Komponen"}</span>
-                          <span className="shrink-0 text-[8px] text-muted-foreground">× {component.jumlah}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between rounded-xl border bg-card p-3">
-                    <span className="text-[9px] font-medium text-muted-foreground">Jumlah Paket</span>
-                    <div className="flex items-center gap-1.5">
-                      <Button type="button" variant="outline" size="icon" className="size-8 rounded-lg" onClick={() => setSelectedPackageQuantity(String(Math.max(1, selectedPackageQuantityNumber - 1)))} disabled={selectedPackageQuantityNumber <= 1}>−</Button>
-                      <span className="min-w-7 text-center text-xs font-bold">{selectedPackageQuantityNumber}</span>
-                      <Button type="button" variant="outline" size="icon" className="size-8 rounded-lg" onClick={() => setSelectedPackageQuantity(String(selectedPackageQuantityNumber + 1))}>+</Button>
-                    </div>
-                  </div>
-
-                  <div className="rounded-xl bg-primary/5 p-3">
-                    <p className="text-[9px] font-semibold text-primary">Perhitungan tarif</p>
-                    <p className="mt-1 text-[11px] font-bold">
-                      {selectedPackageQuantityNumber} paket × {packageBillingPeriods || 0} periode × {packageTariff ? formatCatalogMoney(packagePrice.effectivePrice, packageTariff.currency_code) : "Rp0"}
-                    </p>
-                    {packagePrice.isPromo && packagePrice.normalPrice != null && packageTariff ? (
-                      <p className="mt-1 text-[10px] text-muted-foreground line-through">
-                        Harga normal {formatCatalogMoney(packagePrice.normalPrice, packageTariff.currency_code)} / periode
-                      </p>
-                    ) : null}
-                    <p className="mt-1 text-[14px] font-black">
-                      {packageTariff && packageBillingPeriods
-                        ? formatCatalogMoney(
-                            calculateRentalLineSubtotal(
-                              selectedPackageQuantityNumber,
-                              Number(packagePrice.effectivePrice ?? packageTariff.nominal),
-                              packageBillingPeriods,
-                            ),
-                            "IDR",
-                          )
-                        : "—"}
-                    </p>
-                  </div>
-
-                  <Button type="button" className="h-10 w-full rounded-xl text-[10px]" disabled={!canAddPackage} onClick={addCurrentPackage}>
-                    <Plus className="size-4" /> Tambah Paket ke Keranjang Sementara
-                  </Button>
-                </div>
-              ) : (
-                <div className="flex h-full min-h-64 items-center justify-center rounded-2xl border border-dashed p-8 text-center">
-                  <div>
-                    <ShoppingBag className="mx-auto size-8 text-muted-foreground" />
-                    <p className="mt-2 text-sm font-semibold">Pilih barang atau paket</p>
-                    <p className="mt-1 text-xs text-muted-foreground">Detail foto, varian, stok, periode, dan harga akan muncul di sini.</p>
-                  </div>
-                </div>
-              )}
-            </aside>
+            <label className="grid gap-1.5 text-[10px] font-medium">
+              Nominal diskon (Rp)
+              <Input type="number" min={1} max={totalRental} value={manualDiscountDraftAmount} onChange={(event) => setManualDiscountDraftAmount(event.target.value)} placeholder="Masukkan nominal diskon" className="h-10 rounded-xl text-[11px]" />
+            </label>
+            <label className="grid gap-1.5 text-[10px] font-medium">
+              Kategori alasan
+              <Select value={manualDiscountDraftReasonCode} onValueChange={setManualDiscountDraftReasonCode}>
+                <SelectTrigger className="h-10 rounded-xl text-[11px]"><SelectValue /></SelectTrigger>
+                <SelectContent>{allowedManualReasons.map((reason) => <SelectItem key={reason} value={reason}>{reason.replaceAll("_", " ")}</SelectItem>)}</SelectContent>
+              </Select>
+            </label>
+            <label className="grid gap-1.5 text-[10px] font-medium">
+              Catatan alasan {checkoutDiscountPolicy.data?.require_reason ? "(wajib)" : "(opsional)"}
+              <Input value={manualDiscountDraftReasonNote} onChange={(event) => setManualDiscountDraftReasonNote(event.target.value)} placeholder="Contoh: kompensasi layanan" className="h-10 rounded-xl text-[11px]" />
+            </label>
+            {!canApplyCheckoutDiscount ? <p className="text-[9px] text-destructive">Akun ini tidak memiliki izin diskon checkout.</p> : null}
+            {checkoutDiscountPolicy.data?.manual_discount_enabled !== true ? <p className="text-[9px] text-destructive">Kebijakan usaha belum mengaktifkan diskon manual.</p> : null}
+            {manualDraftExceedsPercentCap ? <p className="text-[9px] text-destructive">Persentase diskon melebihi batas kebijakan usaha.</p> : null}
+            {manualDraftExceedsAmountCap ? <p className="text-[9px] text-destructive">Nominal diskon melebihi batas kebijakan usaha.</p> : null}
+            {Number.isFinite(manualDraftAmountValue) && manualDraftAmountValue > totalRental ? <p className="text-[9px] text-destructive">Diskon tidak boleh melebihi subtotal rental.</p> : null}
           </div>
-
-          <DialogClose asChild>
-            <Button
-              type="button"
-              className="absolute bottom-4 right-4 z-20 h-12 rounded-2xl px-4 text-[10px] shadow-lg transition-transform active:scale-[0.98]"
-              onClick={applyCatalogPicker}
-            >
-              <ShoppingCart className="size-4" />
-              {pickerLines.length} · {formatRentalMoney(pickerTotal, "IDR")}
-            </Button>
-          </DialogClose>
-
+          <div className="sticky bottom-0 flex shrink-0 justify-end gap-2 border-t bg-background px-4 py-3">
+            <Button type="button" variant="outline" className="h-9 rounded-xl text-[10px]" onClick={() => setManualDiscountDialogOpen(false)}>Batal</Button>
+            <Button type="button" className="h-9 rounded-xl text-[10px]" disabled={!manualDiscountDraftIsValid} onClick={() => {
+              setManualDiscountAmount(String(manualDraftAmountValue));
+              setManualDiscountReasonCode(manualDiscountDraftReasonCode);
+              setManualDiscountReasonNote(manualDiscountDraftReasonNote.trim());
+              setManualDiscountApplied(true);
+              setManualDiscountDialogOpen(false);
+            }}>Terapkan diskon</Button>
+          </div>
         </DialogContent>
       </Dialog>
 
@@ -2492,20 +3492,18 @@ export function RentalWalkIn() {
         </DialogContent>
       </Dialog>
 
-      {rentalQr.data && receiptData ? (
-        <>
-          <QrPreviewDialog
-            open={qrOpen}
-            onOpenChange={setQrOpen}
-            title="QR Penyewaan"
-            description="QR ini membuka detail rental. Token tidak memuat data sensitif."
-            code={rentalQr.data.token_qr}
-            kind="penyewaan"
-            url={buildPenyewaanQrUrl(window.location.origin, rentalQr.data.token_qr)}
-          />
-          <RentalReceiptDialog open={receiptOpen} onOpenChange={setReceiptOpen} receipt={receiptData} />
-        </>
+      {rentalQr.data ? (
+        <QrPreviewDialog
+          open={qrOpen}
+          onOpenChange={setQrOpen}
+          title="QR Penyewaan"
+          description="QR ini membuka detail rental. Token tidak memuat data sensitif."
+          code={rentalQr.data.token_qr}
+          kind="penyewaan"
+          url={buildPenyewaanQrUrl(window.location.origin, rentalQr.data.token_qr)}
+        />
       ) : null}
+      {receiptData ? <RentalReceiptDialog open={receiptOpen} onOpenChange={setReceiptOpen} receipt={receiptData} /> : null}
     </div>
   );
 }

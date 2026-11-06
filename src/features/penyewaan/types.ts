@@ -1,3 +1,13 @@
+export type CheckoutDiscountRequest =
+  | { mode: "none" }
+  | { mode: "loyalty" }
+  | { mode: "manual"; amount: number; reason_code: string; reason_note: string | null }
+  | {
+      mode: "combined";
+      manual: { enabled: boolean; amount: number; reason_code: string; reason_note: string | null };
+      loyalty: { apply: boolean };
+    };
+
 export type RentalTenantContext = {
   akunAdminId: string;
   usahaId: string;
@@ -113,6 +123,13 @@ export type RentalDetailLine = {
   currency_code: string;
   subtotal: string | number;
   catatan: string | null;
+  harga_normal_snapshot?: string | number | null;
+  diskon_persen_snapshot?: string | number | null;
+  nominal_diskon_snapshot?: string | number | null;
+  promosi_paket_id?: string | null;
+  promosi_katalog_id?: string | null;
+  durasi_unit_snapshot?: string | null;
+  durasi_nilai_snapshot?: string | number | null;
   barang_nama: string | null;
   varian_nama: string | null;
   paket_nama: string | null;
@@ -204,6 +221,8 @@ export type RentalComponent = {
 };
 
 export type RentalDetail = Omit<RentalListItem, "lines"> & {
+  subtotal_amount: string | number;
+  discount_amount: string | number;
   penyewa_telepon: string | null;
   lines: RentalDetailLine[];
   components: RentalComponent[];

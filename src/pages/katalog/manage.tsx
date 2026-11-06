@@ -19,7 +19,6 @@ import {
   addCatalogPackageComponent,
   createCatalogCategory,
   createCatalogPackage,
-  createCatalogProduct,
   createCatalogTariff,
   createCatalogVariant,
   getCatalogContext,
@@ -32,7 +31,7 @@ import {
   setCatalogPackageState,
   updateCatalogPackage,
 } from "@/features/katalog";
-import type { CreateCatalogProductInput, CreateCatalogVariantInput } from "@/features/katalog/service";
+import type { CreateCatalogVariantInput } from "@/features/katalog/service";
 import { catalogErrorMessage, catalogStatusLabel, catalogVariantCapacity, catalogVariantColor, formatCatalogMoney } from "@/features/katalog/utils";
 import { paths } from "@/routes/paths";
 import { VariantMediaManager } from "@/components/katalog/variant-media-manager";
@@ -69,7 +68,6 @@ export function CatalogManage() {
   const [unknownCommand, setUnknownCommand] = useState<UnknownCommand | null>(null);
 
   const [category, setCategory] = useState({ name: "", description: "" });
-  const [product, setProduct] = useState({ categoryId: "", name: "", slug: "", description: "", publicSummary: "" });
   const [variant, setVariant] = useState({ productId: "", name: "", code: "", description: "", color: "", capacityLiters: "" });
   const [pkg, setPkg] = useState({ name: "", slug: "", description: "", price: "" });
   const [packageEdit, setPackageEdit] = useState({ name: "", slug: "", description: "", price: "" });
@@ -115,7 +113,6 @@ export function CatalogManage() {
   const runCommand = async <T,>(operation: string, fn: (key: string) => Promise<T>) => {
     const commandNames: Record<string, string> = {
       "create-kategori": "create_kategori_barang",
-      "create-barang": "create_barang",
       "create-varian": "create_varian_barang",
       "create-paket": "create_paket_sewa",
       "update-paket": "update_paket_sewa",
@@ -138,15 +135,6 @@ export function CatalogManage() {
   const createCategory = useMutation({
     mutationFn: () => runCommand("create-kategori", (key) => createCatalogCategory(context.data!.usahaId, { nama: category.name, deskripsi: category.description || null }, { idempotencyKey: key })),
     onSuccess: async () => { setCategory({ name: "", description: "" }); toast.success("Kategori berhasil ditambahkan."); await invalidate(); },
-    onError: (error) => { if (!isUnknown(error)) toast.error(messageOf(error)); },
-  });
-
-  const createProduct = useMutation({
-    mutationFn: () => runCommand("create-barang", (key) => {
-      const input: CreateCatalogProductInput = { kategoriBarangId: product.categoryId, nama: product.name, slug: product.slug, deskripsi: product.description || null, ringkasanPublik: product.publicSummary || null, status: "active", isPublic: false };
-      return createCatalogProduct(context.data!.usahaId, input, { idempotencyKey: key });
-    }),
-    onSuccess: async () => { setProduct({ categoryId: "", name: "", slug: "", description: "", publicSummary: "" }); toast.success("Barang berhasil ditambahkan."); await invalidate(); },
     onError: (error) => { if (!isUnknown(error)) toast.error(messageOf(error)); },
   });
 
@@ -220,7 +208,7 @@ export function CatalogManage() {
     onError: (error) => { if (!isUnknown(error)) toast.error(messageOf(error)); },
   });
 
-  const busy = createCategory.isPending || createProduct.isPending || createVariant.isPending || createPackage.isPending || packageState.isPending || updatePackage.isPending || addComponent.isPending || createTariff.isPending;
+  const busy = createCategory.isPending || createVariant.isPending || createPackage.isPending || packageState.isPending || updatePackage.isPending || addComponent.isPending || createTariff.isPending;
 
   const reconcile = async () => {
     if (!context.data || !unknownCommand) return;
@@ -265,13 +253,13 @@ export function CatalogManage() {
 
       <Tabs value={tab} onValueChange={setTab} className="space-y-4">
         <TabsList className="w-full justify-start overflow-x-auto sm:w-fit">
-          <TabsTrigger value="product">Produk</TabsTrigger>
+          <TabsTrigger value="product">Kategori</TabsTrigger>
           <TabsTrigger value="variant">Varian</TabsTrigger>
           <TabsTrigger value="package">Paket Sewa</TabsTrigger>
           <TabsTrigger value="tariff">Tarif</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="product" className="grid gap-4 lg:grid-cols-[.85fr_1.15fr]">
+        <TabsContent value="product" className="max-w-2xl space-y-4">
           <Card className="rounded-2xl shadow-sm">
             <CardHeader><CardTitle className="text-base">Kategori</CardTitle><p className="text-sm text-muted-foreground">Satu kategori utama untuk setiap barang pada baseline.</p></CardHeader>
             <CardContent className="space-y-3">
@@ -282,17 +270,7 @@ export function CatalogManage() {
             </CardContent>
           </Card>
 
-          <Card className="rounded-2xl shadow-sm">
-            <CardHeader><CardTitle className="text-base">Barang</CardTitle><p className="text-sm text-muted-foreground">Buat barang yang dapat disewakan dan nantinya dapat memiliki varian, tarif, media, dan relasi paket.</p></CardHeader>
-            <CardContent className="grid gap-4 sm:grid-cols-2">
-              <label className="grid gap-2 text-sm font-medium sm:col-span-2">Kategori<Select value={product.categoryId} onValueChange={(value) => setProduct((v) => ({ ...v, categoryId: value }))}><SelectTrigger className="h-11 rounded-xl"><SelectValue placeholder="Pilih kategori" /></SelectTrigger><SelectContent>{categoryOptions.map((c) => <SelectItem key={c.kategori_barang_id} value={c.kategori_barang_id}>{c.nama}</SelectItem>)}</SelectContent></Select></label>
-              <label className="grid gap-2 text-sm font-medium">Nama barang<Input className="h-11 rounded-xl" value={product.name} onChange={(e) => setProduct((v) => ({ ...v, name: e.target.value }))} placeholder="Tenda Dome 4P" /></label>
-              <label className="grid gap-2 text-sm font-medium">Slug<Input className="h-11 rounded-xl" value={product.slug} onChange={(e) => setProduct((v) => ({ ...v, slug: e.target.value }))} placeholder="tenda-dome-4p" /></label>
-              <label className="grid gap-2 text-sm font-medium sm:col-span-2">Deskripsi<Textarea className="rounded-xl" rows={4} value={product.description} onChange={(e) => setProduct((v) => ({ ...v, description: e.target.value }))} /></label>
-              <label className="grid gap-2 text-sm font-medium sm:col-span-2">Ringkasan publik<Textarea className="rounded-xl" rows={3} value={product.publicSummary} onChange={(e) => setProduct((v) => ({ ...v, publicSummary: e.target.value }))} /></label>
-              <div className="sm:col-span-2 flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between"><p className="text-xs leading-5 text-muted-foreground">Barang baru dimulai Aktif + Internal. Tampilan publik ditentukan setelah informasi publik siap.</p><Button className="h-11 rounded-xl" disabled={!product.categoryId || !product.name.trim() || !product.slug.trim() || busy} onClick={() => createProduct.mutate()}>{createProduct.isPending ? <Loader2 className="animate-spin" /> : <Plus />}Tambah Barang</Button></div>
-            </CardContent>
-          </Card>
+
         </TabsContent>
 
         <TabsContent value="variant" className="space-y-4">

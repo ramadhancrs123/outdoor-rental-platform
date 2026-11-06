@@ -264,7 +264,7 @@ export function InventoryList() {
                 value={productSearch}
                 onChange={(event) => { setProductSearch(event.target.value); setProductPage(1); }}
                 placeholder="Cari nama barang atau kategori…"
-                className="h-12 rounded-2xl border-none bg-muted/45 pl-10 shadow-none"
+                className="h-10 rounded-xl border-none bg-muted/45 pl-10 shadow-none"
                 autoComplete="off"
                 aria-label="Cari nama barang atau kategori"
               />
@@ -277,14 +277,14 @@ export function InventoryList() {
                 { label: "Disewa", value: filteredProductSummary.rented, Icon: CalendarClock, bg: "bg-amber-50/55 text-amber-700 dark:bg-amber-950/15 dark:text-amber-300" },
                 { label: "Perhatian", value: filteredProductSummary.attention, Icon: CircleAlert, bg: "bg-rose-50/65 text-rose-700 dark:bg-rose-950/15 dark:text-rose-300" },
               ].map(({ label, value, Icon, bg }) => (
-                <div key={label} className={"rounded-2xl px-3.5 py-3 " + bg}>
+                <div key={label} className={"rounded-xl px-3 py-2.5 " + bg}>
                   <div className="flex items-center gap-2 text-xs font-medium">
-                    <span className="grid size-8 place-items-center rounded-full bg-white/70 dark:bg-black/10">
+                    <span className="grid size-7 place-items-center rounded-full bg-white/70 dark:bg-black/10">
                       <Icon className="size-4" />
                     </span>
                     <span>{label}</span>
                   </div>
-                  <p className="mt-1 text-xl font-bold leading-none">{value}</p>
+                  <p className="mt-1 text-lg font-bold leading-none">{value}</p>
                 </div>
               ))}
             </div>
@@ -344,7 +344,7 @@ export function InventoryList() {
                   type="button"
                   onClick={() => { setProductCategory("all"); setProductPage(1); }}
                   className={[
-                    "h-10 shrink-0 rounded-xl px-4 text-sm font-semibold transition",
+                    "h-9 shrink-0 rounded-lg px-3 text-[13px] font-semibold transition",
                     productCategory === "all"
                       ? "bg-primary text-primary-foreground shadow-sm"
                       : "bg-muted/55 text-foreground hover:bg-muted",
@@ -358,7 +358,7 @@ export function InventoryList() {
                     type="button"
                     onClick={() => { setProductCategory(category); setProductPage(1); }}
                     className={[
-                      "h-10 shrink-0 rounded-xl bg-muted/55 px-4 text-sm font-medium transition hover:bg-muted",
+                      "h-9 shrink-0 rounded-lg bg-muted/55 px-3 text-[13px] font-medium transition hover:bg-muted",
                       productCategory === category ? "bg-primary text-primary-foreground shadow-sm hover:bg-primary" : "",
                     ].join(" ")}
                   >
@@ -456,9 +456,9 @@ export function InventoryList() {
 
       {viewMode === "products" ? (
         productOverview.isPending ? (
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3" aria-busy="true">
+          <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5" aria-busy="true">
             {Array.from({ length: 6 }).map((_, index) => (
-              <Skeleton key={index} className="h-64 rounded-[24px]" />
+              <Skeleton key={index} className="h-52 rounded-[20px]" />
             ))}
           </div>
         ) : productOverview.error ? (
@@ -513,7 +513,7 @@ export function InventoryList() {
                 ))}
               </div>
             ) : (
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5" data-testid="inventory-product-grid">
                 {paginatedProducts.map((product) => {
                   const displayState =
                     product.attention_unit > 0 && product.attention_unit >= Math.min(product.ready_unit || 1, product.rented_unit || product.attention_unit)
@@ -523,16 +523,16 @@ export function InventoryList() {
                         : { label: "Siap", badge: "bg-emerald-500 text-white" };
 
                   return (
-                    <Card key={product.barang_id} className="group overflow-hidden rounded-[20px] border-border/70 bg-card shadow-[0_2px_10px_rgba(0,0,0,0.04)]">
+                    <Card key={product.barang_id} className="group min-w-0 overflow-hidden rounded-[18px] border-border/70 bg-card shadow-[0_2px_10px_rgba(0,0,0,0.04)]">
                       <CardContent className="p-0">
-                        <div className="relative aspect-[1.08] overflow-hidden bg-muted">
+                        <div className="relative aspect-[4/3] overflow-hidden bg-muted">
                           <Link to={paths.inventarisBarang + "/" + product.barang_id} className="absolute inset-0">
                             {product.cover_url ? <img src={product.cover_url} alt={product.nama} className="size-full object-cover transition duration-300 group-hover:scale-[1.02]" /> : <div className="grid size-full place-items-center bg-primary/[0.035] text-primary/70"><ImagePlus className="size-10" /></div>}
                           </Link>
-                          <span className={"absolute left-2.5 top-2.5 rounded-xl px-3 py-1.5 text-[11px] font-semibold shadow-sm " + displayState.badge}>{displayState.label}</span>
+                          <span className={"absolute left-2 top-2 rounded-lg px-2.5 py-1 text-[10px] font-semibold shadow-sm " + displayState.badge}>{displayState.label}</span>
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
-                              <Button type="button" variant="secondary" size="icon" className="absolute right-2.5 top-2.5 size-9 rounded-xl bg-background/95 shadow-sm" aria-label={"Menu " + product.nama}>
+                              <Button type="button" variant="secondary" size="icon" className="absolute right-2 top-2 size-8 rounded-lg bg-background/95 shadow-sm" aria-label={"Menu " + product.nama}>
                                 <EllipsisVertical />
                               </Button>
                             </DropdownMenuTrigger>
@@ -544,15 +544,15 @@ export function InventoryList() {
                             </DropdownMenuContent>
                           </DropdownMenu>
                         </div>
-                        <Link to={paths.inventarisBarang + "/" + product.barang_id} className="block px-3.5 pb-3.5 pt-3 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset">
-                          <p className="truncate text-[14px] font-bold leading-5">{product.nama}</p>
-                          <p className="truncate text-xs text-muted-foreground">{product.kategori_nama ?? "Tanpa kategori"}</p>
-                          <div className="mt-2.5 flex items-center gap-2 rounded-xl bg-muted/45 px-2.5 py-2">
+                        <Link to={paths.inventarisBarang + "/" + product.barang_id} className="block px-2.5 pb-2.5 pt-2 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset">
+                          <p className="truncate text-[13px] font-bold leading-5">{product.nama}</p>
+                          <p className="truncate text-[11px] text-muted-foreground">{product.kategori_nama ?? "Tanpa kategori"}</p>
+                          <div className="mt-2 flex items-center gap-2 rounded-lg bg-muted/45 px-2 py-1.5">
                             <Boxes className="size-4 shrink-0" />
                             <span className="text-xs font-semibold">{product.total_unit} unit</span>
                             <ArrowRight className="ml-auto size-4 text-muted-foreground" />
                           </div>
-                          <div className="mt-2.5 grid grid-cols-3 gap-1.5 text-[11px]">
+                          <div className="mt-2 grid grid-cols-3 gap-1 text-[10px]">
                             <span className="flex items-center gap-1 font-semibold text-emerald-600"><CheckCircle2 className="size-3.5" /> {product.ready_unit}</span>
                             <span className="flex items-center gap-1 font-semibold text-amber-600"><CalendarClock className="size-3.5" /> {product.rented_unit}</span>
                             <span className="flex items-center gap-1 font-semibold text-rose-600"><CircleAlert className="size-3.5" /> {product.attention_unit}</span>

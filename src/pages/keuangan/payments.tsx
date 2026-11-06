@@ -142,7 +142,7 @@ export function PaymentList() {
               <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-white/80">Keuangan</p>
               <h1 className="mt-1 text-[29px] font-bold leading-8 tracking-[-0.035em] sm:text-4xl">Pembayaran</h1>
               <p className="mt-1 max-w-xl text-[11px] leading-5 text-white/90 sm:text-sm">
-                Catat dan telusuri pembayaran yang diterima untuk Reservasi atau Penyewaan.
+                Telusuri penerimaan dari Reservasi, Penyewaan, dan Penjualan Retail.
               </p>
             </div>
             <span className="shrink-0 rounded-full border border-white/25 bg-white/12 px-2.5 py-1 text-[9px] font-semibold backdrop-blur">
@@ -201,14 +201,14 @@ export function PaymentList() {
             <ChevronDown className="size-4 text-muted-foreground transition-transform group-open:rotate-180" />
           </summary>
           <div className="border-t border-border/60 px-3.5 py-3 text-[10px] leading-4 text-muted-foreground">
-            Pembayaran dicatat sebagai fakta uang dan dapat ditelusuri ke Reservasi atau Penyewaan.
+            Riwayat ini menggabungkan tampilan pembayaran rental dan retail tanpa menyatukan tabel sumber transaksinya.
           </div>
         </details>
       </section>
 
       <section className="rounded-[22px] border border-border/60 bg-card p-2.5 shadow-[0_4px_16px_rgba(30,68,57,.05)]">
         <Button asChild className="h-12 w-full rounded-xl bg-[#0a6b55] text-xs font-semibold shadow-[0_8px_18px_rgba(10,107,85,.14)] hover:bg-[#075944]">
-          <Link to={paths.keuangan + "/pembayaran/create"}><Plus className="size-4.5" />Catat Pembayaran</Link>
+          <Link to={paths.keuangan + "/pembayaran/create"}><Plus className="size-4.5" />Catat Pembayaran Rental</Link>
         </Button>
       </section>
 
@@ -227,7 +227,7 @@ export function PaymentList() {
           <p className="mx-auto mt-1 max-w-sm text-[10px] leading-5 text-muted-foreground">
             Belum ada pembayaran tercatat pada periode yang dipilih.
           </p>
-          <Button asChild className="mt-4 rounded-xl"><Link to={paths.keuangan + "/pembayaran/create"}>Catat Pembayaran</Link></Button>
+          <Button asChild className="mt-4 rounded-xl"><Link to={paths.keuangan + "/pembayaran/create"}>Catat Pembayaran Rental</Link></Button>
         </section>
       ) : data ? (
         <>
@@ -249,7 +249,11 @@ export function PaymentList() {
           </section>
           <div className="grid gap-2.5 md:hidden">
             {data.items.map((item) => (
-              <Link key={item.pembayaran_id} to={paths.keuangan + "/pembayaran/" + item.pembayaran_id} className="block">
+              <Link
+                key={item.payment_source_type + ":" + item.pembayaran_id}
+                to={item.payment_source_type === "sale" ? paths.penjualan : paths.keuangan + "/pembayaran/" + item.pembayaran_id}
+                className="block"
+              >
                 <article className="rounded-[18px] border border-border/60 bg-background px-3 py-3 transition-colors hover:bg-muted/20">
                   <div className="flex items-start gap-2.5">
                     <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/25 dark:text-emerald-300">
@@ -293,8 +297,8 @@ export function PaymentList() {
                   <thead className="border-b bg-muted/25 text-left"><tr><th className="px-5 py-3 font-medium">Pembayaran</th><th className="px-5 py-3 font-medium">Sumber</th><th className="px-5 py-3 font-medium">Nominal</th><th className="px-5 py-3 font-medium">Metode</th><th className="px-5 py-3 font-medium">Status</th></tr></thead>
                   <tbody>
                     {data.items.map((item) => (
-                      <tr key={item.pembayaran_id} className="border-b last:border-0">
-                        <td className="px-5 py-4"><Link to={paths.keuangan + "/pembayaran/" + item.pembayaran_id} className="font-semibold hover:text-primary hover:underline"><span className="block">{item.nomor_pembayaran}</span><span className="mt-0.5 block text-xs font-normal text-muted-foreground">{paymentDateLabel(item.dibayar_at, data.timezone)}</span></Link></td>
+                      <tr key={item.payment_source_type + ":" + item.pembayaran_id} className="border-b last:border-0">
+                        <td className="px-5 py-4"><Link to={item.payment_source_type === "sale" ? paths.penjualan : paths.keuangan + "/pembayaran/" + item.pembayaran_id} className="font-semibold hover:text-primary hover:underline"><span className="block">{item.nomor_pembayaran}</span><span className="mt-0.5 block text-xs font-normal text-muted-foreground">{paymentDateLabel(item.dibayar_at, data.timezone)}</span></Link></td>
                         <td className="px-5 py-4">{item.source_label ?? "Sumber belum ditautkan"}</td>
                         <td className="px-5 py-4 font-semibold tabular-nums">{formatFinanceMoney(item.amount, item.currency_code)}</td>
                         <td className="px-5 py-4">{paymentMethodLabel(item.metode)}</td>

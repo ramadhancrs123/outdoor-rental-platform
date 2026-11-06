@@ -1,7 +1,7 @@
 import { createClientId } from "@/lib/client-id";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, Check, CircleAlert, FileText, Search, ShieldCheck, Truck, Wrench, Building2, ReceiptText } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { supabase } from "@/app/providers/supabase/client";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -10,10 +10,25 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { getFinanceAccountSummary, getFinanceCapabilities, getKeuanganContext, listFinanceSuppliers, recordExpense, recordExpenseWithFinanceCashout, reconcileExpenseCashoutCommand, reconcileExpenseCommand, getFinanceBusinessDateOnly, useFinanceRealtime, type RecordExpenseInput, type SupplierOption } from "@/features/keuangan";
 import { FinanceCashout } from "@/components/keuangan/finance-cashout";
-import { getPurchase, listPurchases, type PurchaseListItem } from "@/features/pemasok";
+import {
+  createPurchaseWithFinanceCashout,
+  getPurchase,
+  getPurchaseNumberPreview,
+  listPurchases,
+  reconcileProcurementMutation,
+  type PurchaseListItem,
+} from "@/features/pemasok";
 import { listMaintenanceQueue, semanticMaintenanceLabel } from "@/features/perawatan";
 import { paths } from "@/routes/paths";
 import { AmountDisplay, FinanceShell, FinanceStateScreen, SourcePreview } from "@/components/keuangan/finance-ui";
+
+type UntrackedPurchaseOption = {
+  key: string;
+  barangId: string;
+  varianBarangId: string | null;
+  nama: string;
+  hargaBeli: number | null;
+};
 
 const sourceTypes: Array<[RecordExpenseInput["sourceType"], string, string]> = [
   ["purchase", "Pembelian", "Terkait pembelian inventaris"],
@@ -47,6 +62,10 @@ export function ExpenseCreate() {
   const [feedback, setFeedback] = useState("");
   const [result, setResult] = useState<{ id: string; number: string } | null>(null);
   const [accountAllocations, setAccountAllocations] = useState<Record<string, string>>({});
+  const [retailPurchaseEnabled, setRetailPurchaseEnabled] = useState(false);
+  const [retailPurchaseItemKey, setRetailPurchaseItemKey] = useState("");
+  const [retailPurchaseQuantity, setRetailPurchaseQuantity] = useState("1");
+  const [retailPurchaseUnitCost, setRetailPurchaseUnitCost] = useState("");
   const commandRef = useRef<string | null>(null);
   const context = useQuery({ queryKey: ["keuangan", "context"], queryFn: getKeuanganContext, staleTime: 60_000 });
   useEffect(() => {
@@ -94,6 +113,74 @@ export function ExpenseCreate() {
     enabled: Boolean(context.data?.usahaId) && sourceType === "maintenance",
     staleTime: 15_000,
   });
+  const untrackedCatalog = useQuery({
+    queryKey: ["keuangan", "expense-untracked-sale-catalog", context.data?.usahaId],
+    queryFn: async () => {
+      const [productsResult, variantsResult] = await Promise.all([
+        supabase.from("barang")
+          .select("barang_id,nama,is_sellable,inventory_mode,harga_beli")
+          .eq("usaha_id", context.data!.usahaId)
+          .eq("status", "active"),
+        supabase.from("varian_barang")
+          .select("varian_barang_id,barang_id,nama,is_sellable,inventory_mode,harga_beli")
+          .eq("usaha_id", context.data!.usahaId)
+          .eq("status", "active"),
+      ]);
+      if (productsResult.error) throw productsResult.error;
+      if (variantsResult.error) throw variantsResult.error;
+      return {
+        products: productsResult.data ?? [],
+        variants: variantsResult.data ?? [],
+      };
+    },
+    enabled: Boolean(context.data?.usahaId && retailPurchaseEnabled && step === 2),
+    staleTime: 15_000,
+  });
+  const untrackedPurchaseOptions = useMemo<UntrackedPurchaseOption[]>(() => {
+    const products = untrackedCatalog.data?.products ?? [];
+    const variants = untrackedCatalog.data?.variants ?? [];
+    const productById = new Map(products.map((product) => [product.barang_id, product]));
+    const options: UntrackedPurchaseOption[] = [];
+
+    for (const product of products) {
+      if (product.is_sellable === true && product.inventory_mode === "untracked") {
+        options.push({
+          key: "product:" + product.barang_id,
+          barangId: product.barang_id,
+          varianBarangId: null,
+          nama: product.nama,
+          hargaBeli: product.harga_beli == null ? null : Number(product.harga_beli),
+        });
+      }
+    }
+
+    for (const variant of variants) {
+      const parent = productById.get(variant.barang_id);
+      if (!parent) continue;
+      const effectiveSellable = variant.is_sellable ?? parent.is_sellable;
+      const effectiveMode = variant.inventory_mode ?? parent.inventory_mode;
+      if (effectiveSellable !== true || effectiveMode !== "untracked") continue;
+      options.push({
+        key: "variant:" + variant.varian_barang_id,
+        barangId: parent.barang_id,
+        varianBarangId: variant.varian_barang_id,
+        nama: parent.nama + " · " + variant.nama,
+        hargaBeli: variant.harga_beli == null
+          ? (parent.harga_beli == null ? null : Number(parent.harga_beli))
+          : Number(variant.harga_beli),
+      });
+    }
+    return options.sort((a, b) => a.nama.localeCompare(b.nama, "id"));
+  }, [untrackedCatalog.data]);
+  const selectedUntrackedPurchaseItem = untrackedPurchaseOptions.find((item) => item.key === retailPurchaseItemKey) ?? null;
+  const retailQuantityNumber = Number(retailPurchaseQuantity);
+  const retailUnitCostNumber = Number(retailPurchaseUnitCost);
+  const retailPurchaseTotal = Number.isFinite(retailQuantityNumber) && retailQuantityNumber > 0
+    && Number.isFinite(retailUnitCostNumber) && retailUnitCostNumber > 0
+    ? Math.round(retailQuantityNumber * retailUnitCostNumber * 100) / 100
+    : 0;
+  const expenseAmount = retailPurchaseEnabled ? retailPurchaseTotal : Number(form.amount) || 0;
+
   const capabilities = getFinanceCapabilities();
 
   useEffect(() => {
@@ -131,7 +218,13 @@ export function ExpenseCreate() {
   }, [directPurchase.data, directPurchase.error]);
 
   const sourceRequiresId = sourceType === "purchase" || sourceType === "maintenance";
-  const detailReady = Boolean(form.kategoriBiaya.trim()) && Boolean(form.deskripsi.trim()) && Number(form.amount) > 0 && Boolean(form.tanggalPengeluaran);
+  const retailPurchaseReady = Boolean(selectedUntrackedPurchaseItem)
+    && Number.isFinite(retailQuantityNumber) && retailQuantityNumber > 0
+    && Number.isFinite(retailUnitCostNumber) && retailUnitCostNumber > 0
+    && retailPurchaseTotal > 0;
+  const detailReady = retailPurchaseEnabled
+    ? retailPurchaseReady && Boolean(form.tanggalPengeluaran)
+    : Boolean(form.kategoriBiaya.trim()) && Boolean(form.deskripsi.trim()) && Number(form.amount) > 0 && Boolean(form.tanggalPengeluaran);
   const confirmReady = detailReady && !evidenceUploading && !selectedEvidenceFile && (!sourceRequiresId || Boolean(form.sourceId));
 
   const selectExpenseEvidence = (file?: File) => {
@@ -218,6 +311,37 @@ export function ExpenseCreate() {
     mutationFn: async () => {
       if (!context.data) throw new Error("Konteks Finance belum siap.");
       if (!commandRef.current) commandRef.current = createClientId();
+
+      if (retailPurchaseEnabled) {
+        if (!selectedUntrackedPurchaseItem || !retailPurchaseReady) {
+          throw new Error("Pilih produk POS tanpa stok dan isi jumlah serta harga beli yang valid.");
+        }
+        if (!cashoutRequired) throw new Error("Pembelian barang jual harus dibayar dari akun uang operasional.");
+        const purchaseDate = form.tanggalPengeluaran;
+        if (!purchaseDate) throw new Error("Tanggal pembelian wajib diisi.");
+        const nomorPembelian = await getPurchaseNumberPreview(context.data.usahaId, purchaseDate);
+        return createPurchaseWithFinanceCashout(
+          context.data.usahaId,
+          {
+            pemasokId: supplier?.id ?? null,
+            nomorPembelian,
+            tanggalPembelian: purchaseDate,
+            catatan: form.catatan?.trim() || "Pembelian barang jual tanpa stok: " + selectedUntrackedPurchaseItem.nama,
+            lines: [{
+              barangId: selectedUntrackedPurchaseItem.barangId,
+              varianBarangId: selectedUntrackedPurchaseItem.varianBarangId,
+              deskripsi: "Pembelian tanpa stok · " + selectedUntrackedPurchaseItem.nama,
+              jumlah: String(retailQuantityNumber),
+              unitPrice: String(retailUnitCostNumber),
+            }],
+          },
+          Object.entries(accountAllocations)
+            .map(([akunKeuanganId, amount]) => ({ akunKeuanganId, amount: Number(amount) }))
+            .filter((item) => Number.isFinite(item.amount) && item.amount > 0),
+          { idempotencyKey: commandRef.current, requestId: createClientId() },
+        );
+      }
+
       const input: RecordExpenseInput = {
         ...form,
         pemasokId: supplier?.id ?? null,
@@ -240,16 +364,18 @@ export function ExpenseCreate() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["keuangan"] }),
         queryClient.invalidateQueries({ queryKey: ["pembelian"] }),
+        queryClient.invalidateQueries({ queryKey: ["inventaris"] }),
+        queryClient.invalidateQueries({ queryKey: ["katalog"] }),
       ]);
     },
     onError: async (error) => {
       const rawMessage = error instanceof Error ? error.message : "Pengeluaran gagal dicatat.";
-      if (/saldo.{0,80}tidak cukup|tidak cukup.{0,80}saldo|VALIDATION_ERROR:|akun uang tidak boleh|total alokasi akun harus sama|source id hanya digunakan|pilih pembelian yang akan diselesaikan|pembelian ini sudah dibayar|pembelian ini sudah diselesaikan/i.test(rawMessage)) {
+      if (/saldo.{0,80}tidak cukup|tidak cukup.{0,80}saldo|VALIDATION_ERROR:|PRICE_REQUIRED:|BUSINESS_CONFLICT:|akun uang tidak boleh|total alokasi akun harus sama|source id hanya digunakan|pilih pembelian yang akan diselesaikan|pembelian ini sudah dibayar|pembelian ini sudah diselesaikan|STOCK_NOT_CONFIGURED|NOT_FOUND:/i.test(rawMessage)) {
         const friendlyMessage = rawMessage
-          .replace(/^(BUSINESS_CONFLICT|VALIDATION_ERROR|Error):\s*/i, "")
+          .replace(/^(BUSINESS_CONFLICT|VALIDATION_ERROR|PRICE_REQUIRED|NOT_FOUND|Error):\s*/i, "")
           .replace(/\s+/g, " ")
           .trim();
-        setFeedback(friendlyMessage + ( /saldo.{0,80}tidak cukup|tidak cukup.{0,80}saldo/i.test(rawMessage) ? " Pilih akun lain atau gunakan Bagi otomatis setelah saldo diperbarui." : ""));
+        setFeedback(friendlyMessage + (/saldo.{0,80}tidak cukup|tidak cukup.{0,80}saldo/i.test(rawMessage) ? " Pilih akun lain atau gunakan Bagi otomatis setelah saldo diperbarui." : ""));
         setMode("form");
         setStep(3);
         commandRef.current = null;
@@ -258,19 +384,41 @@ export function ExpenseCreate() {
       }
       if (!context.data || !commandRef.current) { setMode("unknown"); return; }
       try {
-        const reconciliation = cashoutRequired
-          ? await reconcileExpenseCashoutCommand(context.data.usahaId, commandRef.current)
-          : await reconcileExpenseCommand(context.data.usahaId, commandRef.current);
-        if (reconciliation.state === "committed" && reconciliation.response) {
-          setResult({ id: reconciliation.response.pengeluaran_id ?? "", number: reconciliation.response.nomor_pengeluaran ?? "Pengeluaran baru" });
-          setMode("success");
-          commandRef.current = null;
-          return;
+        if (retailPurchaseEnabled) {
+          const reconciliation = await reconcileProcurementMutation(
+            context.data.usahaId,
+            "create_purchase_with_finance_cashout",
+            commandRef.current,
+          );
+          if (reconciliation.state === "committed" && reconciliation.response) {
+            const response = reconciliation.response as Record<string, unknown>;
+            setResult({ id: String(response.pengeluaran_id ?? ""), number: String(response.nomor_pengeluaran ?? "Pengeluaran baru") });
+            setMode("success");
+            commandRef.current = null;
+            return;
+          }
+          if (reconciliation.state === "not_found") {
+            setFeedback(rawMessage);
+            setMode("form");
+            setStep(3);
+            commandRef.current = null;
+            return;
+          }
+        } else {
+          const reconciliation = cashoutRequired
+            ? await reconcileExpenseCashoutCommand(context.data.usahaId, commandRef.current)
+            : await reconcileExpenseCommand(context.data.usahaId, commandRef.current);
+          if (reconciliation.state === "committed" && reconciliation.response) {
+            setResult({ id: reconciliation.response.pengeluaran_id ?? "", number: reconciliation.response.nomor_pengeluaran ?? "Pengeluaran baru" });
+            setMode("success");
+            commandRef.current = null;
+            return;
+          }
         }
       } catch {
         // Keep unknown outcome. No blind retry.
       }
-      setFeedback(error instanceof Error ? error.message : "Status pengeluaran belum dapat dipastikan. Sistem sedang memeriksa kembali status pencatatan.");
+      setFeedback(error instanceof Error ? error.message : "Status transaksi belum dapat dipastikan. Periksa riwayat sebelum mencoba ulang.");
       setMode("unknown");
     },
   });
@@ -287,7 +435,7 @@ export function ExpenseCreate() {
     {step===1 ? <div className="space-y-4">
       <section><h2 className="text-base font-semibold">Jenis Sumber Pengeluaran</h2><p className="mt-1 text-xs text-muted-foreground">Pengeluaran dari Pembelian dan Perawatan memerlukan sumber. Operasional, Lainnya, dan Manual tidak memerlukannya.</p></section>
       {feedback ? <Alert variant="destructive"><CircleAlert className="size-4"/><AlertTitle>Sumber belum siap</AlertTitle><AlertDescription>{feedback}</AlertDescription></Alert> : null}
-      <div className="grid gap-2">{sourceTypes.map(([key,label,desc]) => { const Icon=key==="purchase"?Truck:key==="maintenance"?Wrench:key==="operational"?Building2:key==="other"?ReceiptText:FileText; return <button key={key} type="button" onClick={() => { if (sourceType === key) return; setSourceType(key); setSourceSearch(""); setAccountAllocations({}); setSelectedPurchaseInfo(null); setSupplier(null); const defaultCategory = key === "purchase" ? "Pembelian" : key === "maintenance" ? "Perawatan" : key === "operational" ? "Operasional" : key === "other" ? "Lainnya" : "Manual"; setForm((c)=>({...c,sourceType:key,sourceId:null,pemasokId:null,kategoriBiaya:defaultCategory,deskripsi:"",amount:0,tanggalPengeluaran:c.tanggalPengeluaran,buktiStoragePath:null,catatan:""})); setFeedback(""); }} className={sourceType===key ? "flex items-center gap-3 rounded-2xl border border-primary bg-primary/[0.035] p-4 text-left ring-1 ring-primary/20" : "flex items-center gap-3 rounded-2xl border bg-card p-4 text-left hover:bg-muted/40"}><div className="grid size-11 place-items-center rounded-xl bg-primary/10 text-primary"><Icon className="size-5"/></div><div className="min-w-0 flex-1"><p className="text-sm font-semibold">{label}</p><p className="mt-0.5 text-xs text-muted-foreground">{desc}</p></div>{sourceType===key ? <Check className="size-4 text-primary"/> : null}</button>; })}</div>
+      <div className="grid gap-2">{sourceTypes.map(([key,label,desc]) => { const Icon=key==="purchase"?Truck:key==="maintenance"?Wrench:key==="operational"?Building2:key==="other"?ReceiptText:FileText; return <button key={key} type="button" onClick={() => { if (sourceType === key) return; setSourceType(key); setRetailPurchaseEnabled(false); setRetailPurchaseItemKey(""); setRetailPurchaseQuantity("1"); setRetailPurchaseUnitCost(""); setSourceSearch(""); setAccountAllocations({}); setSelectedPurchaseInfo(null); setSupplier(null); const defaultCategory = key === "purchase" ? "Pembelian" : key === "maintenance" ? "Perawatan" : key === "operational" ? "Operasional" : key === "other" ? "Lainnya" : "Manual"; setForm((c)=>({...c,sourceType:key,sourceId:null,pemasokId:null,kategoriBiaya:defaultCategory,deskripsi:"",amount:0,tanggalPengeluaran:c.tanggalPengeluaran,buktiStoragePath:null,catatan:""})); setFeedback(""); }} className={sourceType===key ? "flex items-center gap-3 rounded-2xl border border-primary bg-primary/[0.035] p-4 text-left ring-1 ring-primary/20" : "flex items-center gap-3 rounded-2xl border bg-card p-4 text-left hover:bg-muted/40"}><div className="grid size-11 place-items-center rounded-xl bg-primary/10 text-primary"><Icon className="size-5"/></div><div className="min-w-0 flex-1"><p className="text-sm font-semibold">{label}</p><p className="mt-0.5 text-xs text-muted-foreground">{desc}</p></div>{sourceType===key ? <Check className="size-4 text-primary"/> : null}</button>; })}</div>
       {(sourceType==="purchase"||sourceType==="maintenance") ? <><Card className="shadow-sm"><CardContent className="space-y-3 p-4">
         <div><p className="text-xs font-semibold">Pilih sumber {sourceType==="purchase" ? "Pembelian" : "Perawatan"}</p><p className="mt-1 text-[11px] text-muted-foreground">Pilih dari data yang sudah tercatat. Anda tidak perlu memasukkan ID teknis.</p></div>
         <div className="relative"><Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"/><Input value={sourceSearch} onChange={(e)=>setSourceSearch(e.target.value)} placeholder={sourceType==="purchase" ? "Cari nomor pembelian atau pemasok…" : "Cari kode unit, jenis, atau pelaksana…"} className="h-11 rounded-xl pl-9"/></div>
@@ -330,20 +478,85 @@ export function ExpenseCreate() {
 
     {step===2 ? <div className="space-y-4">
       <section><h2 className="text-base font-semibold">Detail Pengeluaran</h2><p className="mt-1 text-xs text-muted-foreground">Nominal, tanggal, deskripsi, bukti, dan catatan.</p></section>
-      <Card className="shadow-sm"><CardContent className="space-y-4 p-4"><div className="space-y-1.5"><label className="text-xs font-semibold" htmlFor="expense-category">Kategori Biaya</label><Input id="expense-category" value={form.kategoriBiaya} readOnly={sourceType === "purchase"} onChange={(e)=>setForm((c)=>({...c,kategoriBiaya:e.target.value}))} className={sourceType === "purchase" ? "h-12 rounded-xl bg-muted/40" : "h-12 rounded-xl"} placeholder="Operasional"/></div><div className="space-y-1.5"><label className="text-xs font-semibold" htmlFor="expense-description">Deskripsi</label><Input id="expense-description" value={form.deskripsi} readOnly={sourceType === "purchase"} onChange={(e)=>setForm((c)=>({...c,deskripsi:e.target.value}))} className={sourceType === "purchase" ? "h-12 rounded-xl bg-muted/40" : "h-12 rounded-xl"} placeholder="Uang digunakan untuk apa?" /></div><div className="space-y-1.5"><label className="text-xs font-semibold" htmlFor="expense-amount">Nominal{sourceType === "purchase" ? " (otomatis dari pembelian)" : ""}</label><div className="flex items-center rounded-xl border px-3"><span className="text-sm font-semibold text-muted-foreground">Rp</span><Input id="expense-amount" type="number" min="1" value={form.amount||""} readOnly={sourceType === "purchase"} onChange={(e)=>setForm((c)=>({...c,amount:Number(e.target.value)}))} className={sourceType === "purchase" ? "h-12 border-0 bg-muted/40 text-right text-lg font-bold shadow-none focus-visible:ring-0" : "h-12 border-0 text-right text-lg font-bold shadow-none focus-visible:ring-0"}/></div>{sourceType === "purchase" ? <p className="text-[11px] text-muted-foreground">Nominal diambil dari total pembelian yang tersimpan dan diverifikasi kembali oleh server.</p> : null}</div><div className="space-y-1.5"><label className="text-xs font-semibold" htmlFor="expense-date">Tanggal Pengeluaran</label><Input id="expense-date" type="date" value={form.tanggalPengeluaran??""} readOnly={sourceType === "purchase"} onChange={(e)=>setForm((c)=>({...c,tanggalPengeluaran:e.target.value}))} className={sourceType === "purchase" ? "h-12 rounded-xl bg-muted/40" : "h-12 rounded-xl"}/></div><div className="space-y-1.5"><label className="text-xs font-semibold" htmlFor="expense-evidence">Bukti</label><input ref={evidenceInputRef} id="expense-evidence" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,application/pdf" className="sr-only" onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; selectExpenseEvidence(file); }} /><div className="flex gap-2"><Button type="button" variant="outline" disabled={evidenceUploading} className="h-12 flex-1 justify-between rounded-xl" onClick={() => evidenceInputRef.current?.click()}><span>{evidenceUploading ? "Memproses bukti…" : selectedEvidenceFile ? "Pilih bukti lain" : form.buktiStoragePath ? evidenceFilename ?? "Bukti tersedia" : "Pilih Bukti"}</span><FileText className="size-4"/></Button>{form.buktiStoragePath && !selectedEvidenceFile ? <Button type="button" variant="ghost" disabled={evidenceUploading} className="h-12 rounded-xl" onClick={() => void removeExpenseEvidence()}>Hapus</Button> : null}</div>{selectedEvidenceFile ? <div className="space-y-3 rounded-xl border p-3"><div className="flex items-start gap-3">{evidencePreviewUrl ? <img src={evidencePreviewUrl} alt="Pratinjau bukti pengeluaran" className="size-20 rounded-lg border object-cover" /> : <div className="grid size-20 shrink-0 place-items-center rounded-lg bg-muted"><FileText className="size-7" /></div>}<div className="min-w-0 flex-1"><p className="break-words text-sm font-semibold">{selectedEvidenceFile.name}</p><p className="mt-1 text-xs text-muted-foreground">{(selectedEvidenceFile.size / 1024 / 1024).toFixed(2)} MB · Pratinjau lokal, belum diunggah.</p></div></div><div className="flex gap-2"><Button type="button" className="flex-1 rounded-xl" disabled={evidenceUploading || !context.data?.usahaId} onClick={() => void uploadExpenseEvidence()}>{evidenceUploading ? "Mengunggah…" : "Unggah Bukti"}</Button><Button type="button" variant="outline" className="rounded-xl" disabled={evidenceUploading} onClick={cancelEvidencePreview}>Batal</Button></div></div> : form.buktiStoragePath ? <p className="text-xs text-emerald-700">Bukti terunggah: {evidenceFilename ?? "berkas privat"}</p> : null}{evidenceError ? <Alert variant="destructive"><AlertTitle>Bukti belum siap</AlertTitle><AlertDescription>{evidenceError}</AlertDescription></Alert> : null}<p className="text-[11px] text-muted-foreground">Pratinjau sebelum unggah. File disimpan di penyimpanan privat Usaha. JPG, PNG, WebP, HEIC, HEIF, atau PDF; maksimal 10 MB.</p></div><div className="space-y-1.5"><label className="text-xs font-semibold" htmlFor="expense-note">Catatan</label><Input id="expense-note" value={form.catatan??""} onChange={(e)=>setForm((c)=>({...c,catatan:e.target.value}))} className="h-12 rounded-xl" placeholder="Catatan tambahan (opsional)"/></div></CardContent></Card>
+
+      {sourceType === "operational" || sourceType === "other" || sourceType === "manual" ? (
+        <Card className="border-primary/20 shadow-sm">
+          <CardContent className="space-y-3 p-4">
+            <label className="flex items-start gap-3">
+              <input
+                type="checkbox"
+                checked={retailPurchaseEnabled}
+                disabled={Boolean(form.buktiStoragePath || selectedEvidenceFile)}
+                onChange={(event) => {
+                  setRetailPurchaseEnabled(event.target.checked);
+                  setRetailPurchaseItemKey("");
+                  setRetailPurchaseQuantity("1");
+                  setRetailPurchaseUnitCost("");
+                }}
+                className="mt-1 size-4 accent-primary"
+              />
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-semibold">Ini pembelian barang jual tanpa stok</span>
+                <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">Untuk mencatat pembelian isi ulang atau barang jual yang tidak memerlukan hitung stok fisik, seperti isi ulang gas.</span>
+              </span>
+            </label>
+            {Boolean(form.buktiStoragePath || selectedEvidenceFile) ? <p className="text-[11px] text-muted-foreground">Selesaikan atau hapus lampiran pengeluaran terlebih dahulu sebelum mengubahnya menjadi pembelian barang jual.</p> : null}
+            {retailPurchaseEnabled ? (
+              <div className="space-y-3 rounded-xl border bg-muted/15 p-3">
+                <label className="grid gap-1.5 text-xs font-semibold">Produk POS tanpa stok
+                  <select
+                    value={retailPurchaseItemKey}
+                    onChange={(event) => {
+                      const selected = untrackedPurchaseOptions.find((item) => item.key === event.target.value);
+                      setRetailPurchaseItemKey(event.target.value);
+                      setRetailPurchaseUnitCost(selected?.hargaBeli == null ? "" : String(selected.hargaBeli));
+                    }}
+                    className="h-11 rounded-xl border bg-background px-3 text-sm font-normal"
+                    disabled={untrackedCatalog.isPending || untrackedPurchaseOptions.length === 0}
+                  >
+                    <option value="">{untrackedCatalog.isPending ? "Memuat katalog..." : "Pilih produk isi ulang / tanpa stok"}</option>
+                    {untrackedPurchaseOptions.map((item) => <option key={item.key} value={item.key}>{item.nama}</option>)}
+                  </select>
+                </label>
+                {!untrackedCatalog.isPending && untrackedPurchaseOptions.length === 0 ? (
+                  <Alert><AlertTitle>Belum ada produk tanpa stok</AlertTitle><AlertDescription>Buat atau konfigurasi produk/varian di Katalog menjadi Dapat dijual dan mode inventaris Tanpa stok. Contoh: Isi Ulang LPG.</AlertDescription></Alert>
+                ) : null}
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="grid gap-1.5 text-xs font-semibold">Jumlah pembelian
+                    <Input className="h-11 rounded-xl" type="number" min="0.01" step="0.01" value={retailPurchaseQuantity} onChange={(event) => setRetailPurchaseQuantity(event.target.value)} />
+                  </label>
+                  <label className="grid gap-1.5 text-xs font-semibold">Harga beli / unit (IDR)
+                    <Input className="h-11 rounded-xl" type="number" min="0.01" step="0.01" value={retailPurchaseUnitCost} onChange={(event) => setRetailPurchaseUnitCost(event.target.value)} placeholder="Contoh: 25000" />
+                  </label>
+                </div>
+                <div className="flex items-center justify-between rounded-xl bg-background px-3 py-2.5">
+                  <span className="text-xs text-muted-foreground">Total pengeluaran</span>
+                  <span className="text-sm font-bold tabular-nums">{new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(retailPurchaseTotal)}</span>
+                </div>
+                <Alert>
+                  <AlertTitle>Isi ulang dan tabung utuh berbeda</AlertTitle>
+                  <AlertDescription>Isi ulang hanya mencatat gas yang dijual; tabung tetap kembali kepada pelanggan. Tabung LPG utuh dicatat sebagai unit fisik pada Pembelian agar jumlahnya berkurang ketika terjual.</AlertDescription>
+                </Alert>
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
+
+      <Card className="shadow-sm"><CardContent className="space-y-4 p-4"><div className="space-y-1.5"><label className="text-xs font-semibold" htmlFor="expense-category">Kategori Biaya</label><Input id="expense-category" value={retailPurchaseEnabled ? "Pembelian" : form.kategoriBiaya} readOnly={sourceType === "purchase" || retailPurchaseEnabled} onChange={(e)=>setForm((c)=>({...c,kategoriBiaya:e.target.value}))} className={sourceType === "purchase" ? "h-12 rounded-xl bg-muted/40" : "h-12 rounded-xl"} placeholder="Operasional"/></div><div className="space-y-1.5"><label className="text-xs font-semibold" htmlFor="expense-description">Deskripsi</label><Input id="expense-description" value={retailPurchaseEnabled ? "Pembelian " + (selectedUntrackedPurchaseItem?.nama ?? "barang jual tanpa stok") : form.deskripsi} readOnly={sourceType === "purchase" || retailPurchaseEnabled} onChange={(e)=>setForm((c)=>({...c,deskripsi:e.target.value}))} className={sourceType === "purchase" ? "h-12 rounded-xl bg-muted/40" : "h-12 rounded-xl"} placeholder="Uang digunakan untuk apa?" /></div><div className="space-y-1.5"><label className="text-xs font-semibold" htmlFor="expense-amount">Nominal{sourceType === "purchase" ? " (otomatis dari pembelian)" : ""}</label><div className="flex items-center rounded-xl border px-3"><span className="text-sm font-semibold text-muted-foreground">Rp</span><Input id="expense-amount" type="number" min="1" value={retailPurchaseEnabled ? (expenseAmount || "") : (form.amount || "")} readOnly={sourceType === "purchase" || retailPurchaseEnabled} onChange={(e)=>setForm((c)=>({...c,amount:Number(e.target.value)}))} className={sourceType === "purchase" ? "h-12 border-0 bg-muted/40 text-right text-lg font-bold shadow-none focus-visible:ring-0" : "h-12 border-0 text-right text-lg font-bold shadow-none focus-visible:ring-0"}/></div>{sourceType === "purchase" ? <p className="text-[11px] text-muted-foreground">Nominal diambil dari total pembelian yang tersimpan dan diverifikasi kembali oleh server.</p> : null}</div><div className="space-y-1.5"><label className="text-xs font-semibold" htmlFor="expense-date">Tanggal Pengeluaran</label><Input id="expense-date" type="date" value={form.tanggalPengeluaran??""} readOnly={sourceType === "purchase"} onChange={(e)=>setForm((c)=>({...c,tanggalPengeluaran:e.target.value}))} className={sourceType === "purchase" ? "h-12 rounded-xl bg-muted/40" : "h-12 rounded-xl"}/></div><div className="space-y-1.5"><label className="text-xs font-semibold" htmlFor="expense-evidence">Bukti</label><input ref={evidenceInputRef} id="expense-evidence" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,application/pdf" className="sr-only" onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; selectExpenseEvidence(file); }} /><div className="flex gap-2"><Button type="button" variant="outline" disabled={evidenceUploading || retailPurchaseEnabled} className="h-12 flex-1 justify-between rounded-xl" onClick={() => evidenceInputRef.current?.click()}><span>{evidenceUploading ? "Memproses bukti…" : selectedEvidenceFile ? "Pilih bukti lain" : form.buktiStoragePath ? evidenceFilename ?? "Bukti tersedia" : "Pilih Bukti"}</span><FileText className="size-4"/></Button>{form.buktiStoragePath && !selectedEvidenceFile ? <Button type="button" variant="ghost" disabled={evidenceUploading} className="h-12 rounded-xl" onClick={() => void removeExpenseEvidence()}>Hapus</Button> : null}</div>{selectedEvidenceFile ? <div className="space-y-3 rounded-xl border p-3"><div className="flex items-start gap-3">{evidencePreviewUrl ? <img src={evidencePreviewUrl} alt="Pratinjau bukti pengeluaran" className="size-20 rounded-lg border object-cover" /> : <div className="grid size-20 shrink-0 place-items-center rounded-lg bg-muted"><FileText className="size-7" /></div>}<div className="min-w-0 flex-1"><p className="break-words text-sm font-semibold">{selectedEvidenceFile.name}</p><p className="mt-1 text-xs text-muted-foreground">{(selectedEvidenceFile.size / 1024 / 1024).toFixed(2)} MB · Pratinjau lokal, belum diunggah.</p></div></div><div className="flex gap-2"><Button type="button" className="flex-1 rounded-xl" disabled={evidenceUploading || !context.data?.usahaId} onClick={() => void uploadExpenseEvidence()}>{evidenceUploading ? "Mengunggah…" : "Unggah Bukti"}</Button><Button type="button" variant="outline" className="rounded-xl" disabled={evidenceUploading} onClick={cancelEvidencePreview}>Batal</Button></div></div> : form.buktiStoragePath ? <p className="text-xs text-emerald-700">Bukti terunggah: {evidenceFilename ?? "berkas privat"}</p> : null}{evidenceError ? <Alert variant="destructive"><AlertTitle>Bukti belum siap</AlertTitle><AlertDescription>{evidenceError}</AlertDescription></Alert> : null}<p className="text-[11px] text-muted-foreground">Pratinjau sebelum unggah. File disimpan di penyimpanan privat Usaha. JPG, PNG, WebP, HEIC, HEIF, atau PDF; maksimal 10 MB.</p></div><div className="space-y-1.5"><label className="text-xs font-semibold" htmlFor="expense-note">Catatan</label><Input id="expense-note" value={form.catatan??""} onChange={(e)=>setForm((c)=>({...c,catatan:e.target.value}))} className="h-12 rounded-xl" placeholder="Catatan tambahan (opsional)"/></div></CardContent></Card>
       <div className="flex gap-2"><Button variant="ghost" className="h-11" onClick={()=>setStep(1)}>Sebelumnya</Button><Button className="h-11 flex-1 rounded-xl" disabled={!detailReady || evidenceUploading || Boolean(selectedEvidenceFile)} onClick={()=>setStep(3)}>Lanjutkan <ArrowRight/></Button></div>
       <StickyFinanceAction><Button className="h-12 w-full rounded-xl" disabled={!detailReady || evidenceUploading || Boolean(selectedEvidenceFile)} onClick={()=>setStep(3)}>Lanjutkan <ArrowRight/></Button></StickyFinanceAction>
     </div> : null}
 
     {step===3 ? <div className="space-y-4">
       <section><h2 className="text-base font-semibold">Tinjauan Pengeluaran</h2><p className="mt-1 text-xs text-muted-foreground">Pastikan sumber dan nominal benar sebelum dicatat.</p></section>
-      <Card className="shadow-sm"><CardContent className="space-y-4 p-4">{sourceRequiresId && form.sourceId ? <SourcePreview type={sourceType==="purchase"?"Pembelian":"Perawatan"} number={sourceType === "purchase" ? selectedPurchaseInfo?.nomor_pembelian ?? form.sourceId : form.sourceId} meta="Hubungan Sumber" /> : null}<div className="grid gap-3 rounded-2xl bg-muted/40 p-4 sm:grid-cols-2"><ReviewRow label="Jenis Sumber" value={sourceTypes.find(([key])=>key===sourceType)?.[1]??sourceType}/><ReviewRow label="Kategori" value={form.kategoriBiaya}/><ReviewRow label="Tanggal" value={form.tanggalPengeluaran??"-"}/><ReviewRow label="Pemasok" value={supplier?.name??"Tidak ditautkan"}/><ReviewRow label="Bukti" value={evidenceFilename ?? (form.buktiStoragePath ? "Bukti tersedia" : "Tidak dilampirkan")}/></div><AmountDisplay amount={form.amount} label="Total Pengeluaran" direction="expense"/><div className="rounded-2xl border p-4"><p className="text-xs text-muted-foreground">Deskripsi</p><p className="mt-1 text-sm font-medium">{form.deskripsi}</p></div></CardContent></Card>
+      <Card className="shadow-sm"><CardContent className="space-y-4 p-4">{sourceRequiresId && form.sourceId ? <SourcePreview type={sourceType==="purchase"?"Pembelian":"Perawatan"} number={sourceType === "purchase" ? selectedPurchaseInfo?.nomor_pembelian ?? form.sourceId : form.sourceId} meta="Hubungan Sumber" /> : null}<div className="grid gap-3 rounded-2xl bg-muted/40 p-4 sm:grid-cols-2"><ReviewRow label="Jenis Sumber" value={retailPurchaseEnabled ? "Pembelian barang jual · tanpa stok" : sourceTypes.find(([key])=>key===sourceType)?.[1]??sourceType}/><ReviewRow label="Kategori" value={form.kategoriBiaya}/><ReviewRow label="Tanggal" value={form.tanggalPengeluaran??"-"}/><ReviewRow label="Pemasok" value={supplier?.name??"Tidak ditautkan"}/><ReviewRow label="Bukti" value={evidenceFilename ?? (form.buktiStoragePath ? "Bukti tersedia" : "Tidak dilampirkan")}/></div><AmountDisplay amount={expenseAmount} label="Total Pengeluaran" direction="expense"/><div className="rounded-2xl border p-4"><p className="text-xs text-muted-foreground">Deskripsi</p><p className="mt-1 text-sm font-medium">{retailPurchaseEnabled ? "Pembelian " + (selectedUntrackedPurchaseItem?.nama ?? "barang jual tanpa stok") : form.deskripsi}</p></div></CardContent></Card>
       <Alert className="border-primary/10 bg-primary/[0.03]"><ShieldCheck className="size-4"/><AlertTitle>Pengeluaran → Transaksi Keuangan</AlertTitle><AlertDescription>Pengeluaran akan dicatat sebagai fakta Keuangan. Pembelian/Perawatan tetap menjadi sumber pengeluaran, bukan pembayaran.</AlertDescription></Alert>
       {feedback && step === 3 ? <Alert variant="destructive"><CircleAlert className="size-4"/><AlertTitle>Pengeluaran belum dapat diselesaikan</AlertTitle><AlertDescription>{feedback}</AlertDescription></Alert> : null}
       {cashoutRequired && financeAccounts.error ? <Alert variant="destructive"><CircleAlert className="size-4"/><AlertTitle>Akun uang belum dapat dimuat</AlertTitle><AlertDescription>{financeAccounts.error instanceof Error ? financeAccounts.error.message : "Saldo akun uang belum dapat diverifikasi."}</AlertDescription></Alert> : null}
       {cashoutRequired ? <FinanceCashout
         accounts={financeAccounts.data?.accounts ?? []}
-        amount={Number(form.amount) || 0}
+        amount={expenseAmount}
         allocations={accountAllocations}
         onAllocationsChange={setAccountAllocations}
         onProceed={() => mutation.mutate()}

@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowLeft, ArrowRight, Calculator, ChevronDown, Clock3, CreditCard, Filter, Handshake, History, MessageCircle, MoreHorizontal, Package, PackageCheck, Phone, Plus, QrCode, ReceiptText, RefreshCw, Search, ShieldCheck, WalletCards } from "lucide-react";
 import { Link, useParams } from "react-router";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -13,7 +13,7 @@ import { getPenyewaanContext, getRentalCapabilities, getRental, listRentalTolera
 import { listRentalConsequenceReviews } from "@/features/keuangan";
 import { formatRentalDateTime, formatRentalMoney, semanticRentalLabel, rentalStatusVariant } from "@/features/penyewaan";
 import { QrPreviewDialog, RentalReceiptDialog } from "@/components/qr-operasional/qr-operasional";
-import { buildPenyewaanQrUrl, getQrPenyewaanRecord, getRentalReceiptSupport } from "@/features/qr-operasional";
+import { buildPenyewaanQrUrl, getQrPenyewaanRecord, getRentalReceiptData } from "@/features/qr-operasional";
 import { paths } from "@/routes/paths";
 import { RentalFinanceCard } from "@/components/penyewaan/rental-finance-card";
 import { RentalHeaderCountdown } from "@/components/penyewaan/rental-header-countdown";
@@ -63,51 +63,13 @@ export function RentalShow() {
     enabled: Boolean(context.data?.usahaId && id),
     staleTime: 5 * 60_000,
   });
-  const receiptSupport = useQuery({
-    queryKey: ["qr-operasional", "rental-receipt-support", context.data?.usahaId, id, query.data?.penyewa_id],
-    queryFn: () => getRentalReceiptSupport(context.data!.usahaId, id!, query.data!.penyewa_id),
-    enabled: Boolean(context.data?.usahaId && id && query.data?.penyewa_id),
+  const receiptQuery = useQuery({
+    queryKey: ["qr-operasional", "rental-receipt", context.data?.usahaId, id],
+    queryFn: () => getRentalReceiptData(context.data!.usahaId, id!),
+    enabled: Boolean(context.data?.usahaId && id && query.data),
     staleTime: 15_000,
   });
-  const receiptData = useMemo(() => {
-    const rental = query.data;
-    if (!rental || !rentalQr.data || !receiptSupport.data) return null;
-    const recorded = receiptSupport.data.recorded;
-    const total = Number(rental.total_amount);
-    const status: "belum_dibayar" | "sebagian" | "lunas" = recorded <= 0 ? "belum_dibayar" : recorded >= total ? "lunas" : "sebagian";
-    return {
-      usaha_nama: receiptSupport.data.usaha_nama,
-      usaha_alamat: receiptSupport.data.usaha_alamat,
-      usaha_telepon: receiptSupport.data.usaha_telepon,
-      usaha_email: receiptSupport.data.usaha_email,
-      timezone: receiptSupport.data.timezone,
-      nomor_penyewaan: rental.nomor_penyewaan,
-      penyewa_nama: rental.penyewa_nama ?? "Penyewa tidak ditemukan",
-      penyewa_telepon: receiptSupport.data.penyewa_telepon,
-      jadwal_mulai: rental.jadwal_mulai,
-      jadwal_kembali: rental.jadwal_kembali,
-      tolerance_deadline: rental.tolerance_deadline,
-      actual_pickup_at: rental.actual_pickup_at,
-      total_amount: total,
-      currency_code: rental.currency_code,
-      token_qr: rentalQr.data.token_qr,
-      url: buildPenyewaanQrUrl(window.location.origin, rentalQr.data.token_qr),
-      generated_at: new Date().toISOString(),
-      lines: rental.lines.map((line) => ({
-        nama: line.paket_nama ?? line.barang_nama ?? "Barang",
-        rincian: line.varian_nama,
-        jumlah: Number(line.jumlah),
-        subtotal: Number(line.subtotal),
-        currency_code: line.currency_code,
-      })),
-      catatan: rental.catatan,
-      pembayaran: {
-        tercatat: recorded,
-        sisa: Math.max(0, total - recorded),
-        status,
-      },
-    };
-  }, [query.data, receiptSupport.data, rentalQr.data]);
+  const receiptData = receiptQuery.data ?? null;
   if (context.isPending || query.isPending) return <Card><CardContent className="flex min-h-44 items-center justify-center text-sm text-muted-foreground">Memuat detail penyewaan…</CardContent></Card>;
   if (context.error || query.error || !query.data) return <Alert variant="destructive"><AlertTitle>Detail penyewaan tidak tersedia</AlertTitle><AlertDescription className="gap-3"><p>{context.error?.message ?? query.error?.message ?? "Penyewaan tidak ditemukan atau Anda tidak memiliki akses."}</p><Button variant="outline" size="sm" onClick={() => void query.refetch()}><RefreshCw />Coba lagi</Button></AlertDescription></Alert>;
   const item=query.data; const capabilities=getRentalCapabilities();
@@ -203,6 +165,8 @@ export function RentalShow() {
           ) : null}
         </div>
       </section>
+
+      {receiptQuery.error ? <Alert variant="destructive" className="rounded-xl"><AlertTitle>Struk belum dapat disiapkan</AlertTitle><AlertDescription>{receiptQuery.error instanceof Error ? receiptQuery.error.message : "Data struk belum dapat dimuat."}</AlertDescription></Alert> : null}
 
       <RentalFinanceCard
         context={{ ...context.data, timezone: context.data.timezone }}

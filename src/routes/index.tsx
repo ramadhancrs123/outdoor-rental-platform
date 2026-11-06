@@ -49,6 +49,9 @@ const SupplierCreate = lazyNamed(() => import("@/pages/pemasok/create"), "Suppli
 const PurchaseList = lazyNamed(() => import("@/pages/pembelian/list"), "PurchaseList");
 const PurchaseShow = lazyNamed(() => import("@/pages/pembelian/show"), "PurchaseShow");
 const PurchaseCreate = lazyNamed(() => import("@/pages/pembelian/create"), "PurchaseCreate");
+const SalePage = lazyNamed(() => import("@/pages/penjualan"), "PenjualanPage");
+const EventPromotions = lazyNamed(() => import("@/pages/event-promotions"), "EventPromotionsPage");
+const EventPromotionCatalog = lazyNamed(() => import("@/pages/event-promotions/catalog-create"), "EventPromotionCatalogPage");
 
 const RequestList = lazyNamed(() => import("@/pages/permintaan/list"), "RequestList");
 const RequestShow = lazyNamed(() => import("@/pages/permintaan/show"), "RequestShow");
@@ -58,6 +61,7 @@ const ReservationShow = lazyNamed(() => import("@/pages/reservasi/show"), "Reser
 const ReservationCreate = lazyNamed(() => import("@/pages/reservasi/create"), "ReservationCreate");
 
 const FinanceHome = lazyNamed(() => import("@/pages/keuangan/home"), "FinanceHome");
+const FinanceRetailAnalysis = lazyNamed(() => import("@/pages/keuangan/retail-analysis"), "FinanceRetailAnalysis");
 const FinanceAccountList = lazyNamed(() => import("@/pages/keuangan/accounts"), "FinanceAccountList");
 const FinanceAccountShow = lazyNamed(() => import("@/pages/keuangan/account-show"), "FinanceAccountShow");
 
@@ -279,6 +283,13 @@ export function AppRoutes() {
           <Route path=":id" element={<PurchaseShow />} />
         </Route>
 
+        <Route path={paths.penjualan} element={<SalePage />} />
+        <Route path={paths.eventPromotions}>
+          <Route index element={<EventPromotions />} />
+          <Route path="katalog/buat" element={<EventPromotionCatalog />} />
+          <Route path="katalog/:id/edit" element={<EventPromotionCatalog />} />
+        </Route>
+
         <Route path={paths.permintaan}>
           <Route index element={<RequestList />} />
           <Route path=":id" element={<RequestShow />} />
@@ -292,6 +303,7 @@ export function AppRoutes() {
 
         <Route path={paths.keuangan}>
           <Route index element={<FinanceHome />} />
+          <Route path="retail" element={<FinanceRetailAnalysis />} />
           <Route path="akun" element={<FinanceAccountList />} />
           <Route path="akun/:id" element={<FinanceAccountShow />} />
           <Route path="transaksi" element={<TransaksiList />} />

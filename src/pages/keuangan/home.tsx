@@ -62,6 +62,7 @@ function transactionSourceLabel(item: FinanceTransaction) {
   if (item.sumber_type === "reservation") return "Reservasi";
   if (item.sumber_type === "payment") return "Pembayaran";
   if (item.sumber_type === "purchase") return "Pembelian";
+  if (item.sumber_type === "sale") return "Penjualan Retail";
   if (item.sumber_type === "maintenance") return "Perawatan";
   if (source !== "-") return source;
   return item.jenis ? semanticFinanceLabel(item.jenis) : "Transaksi Keuangan";
@@ -320,15 +321,46 @@ export function FinanceHome() {
           <CardContent className="p-3.5">
             <div className="flex items-start justify-between gap-1">
               <div>
-                <p className="text-[9px] font-medium text-muted-foreground">Net Operasional</p>
+                <p className="text-[9px] font-medium text-muted-foreground">Net Arus Transaksi</p>
                 <p className="mt-1 text-[15px] font-bold tracking-tight tabular-nums text-sky-800 dark:text-sky-200">{formatFinanceMoney(summary.data.net_operational_movement)}</p>
-                <p className="mt-1 text-[8px] text-muted-foreground">Pemasukan − Pengeluaran</p>
+                <p className="mt-1 text-[8px] text-muted-foreground">Bukan laba bersih</p>
               </div>
               <span className="grid size-7 place-items-center rounded-lg bg-white/70 text-sky-700 dark:bg-sky-950/30 dark:text-sky-300"><BarChart3 className="size-3.5" /></span>
             </div>
           </CardContent>
         </Card>
       </section>
+
+      <Card className="rounded-2xl border-border/60 shadow-none">
+        <CardContent className="space-y-3 p-3.5">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[11px] font-bold">Rincian sumber transaksi</p>
+            <span className="text-[9px] text-muted-foreground">Periode terpilih</span>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="rounded-xl bg-emerald-50/65 p-3 dark:bg-emerald-950/15">
+              <p className="text-[9px] text-muted-foreground">Pendapatan rental</p>
+              <p className="mt-1 text-[13px] font-bold tabular-nums">{formatFinanceMoney(summary.data.rental_income)}</p>
+            </div>
+            <div className="rounded-xl bg-sky-50/65 p-3 dark:bg-sky-950/15">
+              <p className="text-[9px] text-muted-foreground">Pendapatan penjualan</p>
+              <p className="mt-1 text-[13px] font-bold tabular-nums">{formatFinanceMoney(summary.data.retail_income)}</p>
+            </div>
+            <div className="rounded-xl bg-amber-50/65 p-3 dark:bg-amber-950/15">
+              <p className="text-[9px] text-muted-foreground">Pembelian barang / stok</p>
+              <p className="mt-1 text-[13px] font-bold tabular-nums">{formatFinanceMoney(summary.data.purchase_cash_out)}</p>
+            </div>
+            <div className="rounded-xl bg-muted/40 p-3">
+              <p className="text-[9px] text-muted-foreground">Pengeluaran lainnya</p>
+              <p className="mt-1 text-[13px] font-bold tabular-nums">{formatFinanceMoney(summary.data.non_purchase_expense)}</p>
+            </div>
+          </div>
+          <p className="text-[9px] leading-4 text-muted-foreground">Rincian ini memisahkan sumber transaksi untuk laporan. Saldo akun kas/bank tetap mengikuti seluruh uang masuk dan keluar yang benar-benar tercatat.</p>
+          <Link to={paths.financeRetail} className="inline-flex min-h-9 items-center gap-1.5 rounded-xl border border-primary/20 bg-primary/5 px-3 text-[10px] font-semibold text-primary transition-colors hover:bg-primary/10">
+            Buka Analisis Retail <ArrowRight className="size-3.5" />
+          </Link>
+        </CardContent>
+      </Card>
 
       <section className="rounded-[22px] border border-border/60 bg-card p-2.5 shadow-[0_4px_16px_rgba(30,68,57,.05)]">
         <div className="grid grid-cols-4 gap-1.5">

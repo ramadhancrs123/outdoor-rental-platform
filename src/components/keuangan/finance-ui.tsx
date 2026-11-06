@@ -52,6 +52,7 @@ function FinanceSubnav() {
   const pathname = typeof window === "undefined" ? "" : window.location.pathname;
   const items = [
     ["Ringkasan", paths.keuangan],
+    ["Analisis Retail", paths.financeRetail],
     ["Pembayaran", paths.keuangan + "/pembayaran"],
     ["Pengeluaran", paths.keuangan + "/pengeluaran"],
     ["Transaksi", paths.keuangan + "/transaksi"],

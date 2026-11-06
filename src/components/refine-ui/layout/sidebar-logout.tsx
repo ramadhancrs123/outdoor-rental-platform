@@ -51,12 +51,13 @@ export function SidebarLogout() {
           <Button
             key={index}
             type="button"
+            variant="ghost"
             disabled={isPending}
             aria-label="Keluar"
             onClick={() => logout()}
             className={cn(
-              "mt-1 h-10 w-full justify-start gap-3 rounded-xl px-3 text-sm font-medium",
-              "text-sidebar-foreground/72 hover:bg-sidebar-accent hover:text-rose-300",
+              "mt-1 h-9 w-full justify-start gap-3 rounded-lg px-3 text-[13px] font-medium",
+              "text-sidebar-foreground/65 hover:bg-destructive/10 hover:text-destructive",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring",
               "disabled:opacity-60",
               "group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-2",

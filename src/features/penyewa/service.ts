@@ -328,6 +328,22 @@ export function buildRenterDetailPath(usahaId: string, penyewaId: string) {
   return `penyewa?select=${detailSelect}&usaha_id=eq.${encode(usahaId)}&penyewa_id=eq.${encode(penyewaId)}&limit=1`;
 }
 
+export async function getRenterSummary(
+  tenant: TenantContext,
+  penyewaId: string,
+  token = readStoredAccessToken(),
+): Promise<RenterListItem> {
+  if (!token) throw new RenterReadError("Sesi admin tidak ditemukan.", 401);
+  const rows = await getJson<RenterListItem>(
+    `penyewa?select=${listSelect}&usaha_id=eq.${encode(tenant.usahaId)}&penyewa_id=eq.${encode(penyewaId)}&limit=1`,
+    token,
+  );
+  if (!rows[0]) {
+    throw new RenterReadError("Penyewa tidak ditemukan atau tidak tersedia dalam Usaha aktif.", 404);
+  }
+  return rows[0];
+}
+
 export async function getRenter(
   tenant: TenantContext,
   penyewaId: string,

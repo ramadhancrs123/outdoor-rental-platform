@@ -48,13 +48,11 @@ export function Header() {
       </SidebarTrigger>
 
       <div className="flex min-w-0 flex-1 items-center gap-3">
-        <div className="hidden items-center gap-2 lg:flex">
-          <div className="grid size-8 place-items-center rounded-lg bg-primary text-primary-foreground">
-            <TentMark />
-          </div>
+        <div className="hidden items-center gap-2.5 lg:flex">
+          <img src="/logo.webp" alt="Akasha Outdoor" className="size-8 shrink-0 object-contain" />
           <div className="leading-tight">
-            <p className="text-sm font-bold">Akasha Outdoor</p>
-            <p className="text-[10px] text-muted-foreground">management system</p>
+            <p className="text-sm font-bold tracking-tight">Akasha Outdoor</p>
+            <p className="text-[10px] font-medium tracking-normal text-muted-foreground">sistem management Akasha</p>
           </div>
         </div>
 
@@ -65,10 +63,10 @@ export function Header() {
         </div>
 
         <div className="flex min-w-0 flex-1 items-center gap-2 md:hidden">
-          <div className="grid size-8 shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground"><TentMark /></div>
+          <img src="/logo.webp" alt="Akasha Outdoor" className="size-8 shrink-0 object-contain" />
           <div className="min-w-0 leading-tight">
-            <p className="truncate text-sm font-bold">Akasha Outdoor</p>
-            <p className="text-[10px] text-muted-foreground">management system</p>
+            <p className="truncate text-sm font-bold tracking-tight">Akasha Outdoor</p>
+            <p className="text-[10px] font-medium tracking-normal text-muted-foreground">sistem management Akasha</p>
           </div>
         </div>
         <Button variant="outline" className="hidden h-10 min-w-0 flex-1 justify-start gap-2 bg-muted/50 text-muted-foreground sm:max-md:flex">
@@ -87,10 +85,6 @@ export function Header() {
       </div>
     </header>
   );
-}
-
-function TentMark() {
-  return <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden="true"><path d="M3 19 12 5l9 14H3Z" /><path d="m8 19 4-6 4 6" /></svg>;
 }
 
 Header.displayName = "Header";

@@ -384,13 +384,13 @@ export const CatalogList = () => {
               </div>
               <Button asChild className="h-10 shrink-0 rounded-xl px-4">
                 <Link to={paths.katalogQuickItem}>
-                  <Plus />
-                  Tambah Barang
+                  <Plus className="size-4" />
+                  Rental Cepat
                 </Link>
               </Button>
             </div>
             <p className="max-w-2xl text-sm leading-5 text-muted-foreground">
-              Daftar barang dan paket yang tersedia untuk disewakan. Kelola informasi, harga, dan ketersediaan.
+              Kelola satu katalog untuk barang sewa, barang jual, atau keduanya. Ketersediaan dan harga mengikuti channel serta mode inventaris masing-masing.
             </p>
           </header>
 
@@ -408,10 +408,10 @@ export const CatalogList = () => {
           </div>
 
           <div className="flex gap-2 overflow-x-auto pb-1 sm:grid sm:grid-cols-3 sm:gap-3 sm:overflow-visible" aria-label="Ringkasan katalog">
-            <Card className="min-w-[116px] flex-1 rounded-2xl border-emerald-200/70 bg-emerald-50/45 shadow-none dark:border-emerald-900/40 dark:bg-emerald-950/20 sm:min-w-0">
+            <Card className="min-w-[116px] flex-1 rounded-2xl border-primary/15 bg-primary/5 shadow-none dark:border-primary/20 dark:bg-primary/10 sm:min-w-0">
               <CardContent className="p-3">
                 <div className="flex items-start gap-2.5">
-                  <div className="grid size-8 shrink-0 place-items-center rounded-xl bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-200">
+                  <div className="grid size-8 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary dark:bg-primary/15 dark:text-primary">
                     <Tag className="size-4" />
                   </div>
                   <div className="min-w-0">
@@ -643,12 +643,12 @@ export const CatalogList = () => {
                 <div>
                   <p className="font-semibold">{filtersActive ? "Tidak ada barang yang cocok" : "Belum ada barang di katalog"}</p>
                   <p className="mt-1 max-w-md text-sm leading-6 text-muted-foreground">
-                    {filtersActive ? "Coba ubah filter atau reset pencarian." : "Tambahkan barang untuk mulai mengelola katalog rental."}
+                    {filtersActive ? "Coba ubah filter atau reset pencarian." : "Tambahkan barang sewa, barang jual, atau produk yang digunakan untuk keduanya."}
                   </p>
                 </div>
                 <div className="flex flex-col gap-2 sm:flex-row">
                   {filtersActive ? <Button variant="outline" className="rounded-xl" onClick={resetFilters}>Reset Filter</Button> : null}
-                  <Button asChild className="rounded-xl"><Link to={paths.katalogQuickItem}><Plus />Tambah Barang</Link></Button>
+                  <Button asChild className="rounded-xl"><Link to={paths.katalogQuickItem}><Plus />Rental Cepat</Link></Button>
                 </div>
               </CardContent>
             </Card>

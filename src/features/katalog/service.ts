@@ -1,11 +1,61 @@
 import { createClientId } from "@/lib/client-id";
 import { supabase } from "@/app/providers/supabase/client";
-import type { CatalogCategory, CatalogListFilters, CatalogPackageMedia, CatalogPackagePromo, CatalogPackageReference, CatalogProduct, CatalogProductDetail, CatalogSummary, CatalogStockSummary, CatalogTariff, CatalogVariant, CatalogVariantMedia, CatalogVariantOption } from "./types";
+import type { CatalogCategory, CatalogListFilters, CatalogPackageMedia, CatalogPackagePromo, CatalogPackageReference, CatalogProduct, CatalogProductDetail, CatalogRentalPromotion, CatalogSummary, CatalogStockSummary, CatalogTariff, CatalogVariant, CatalogVariantMedia, CatalogVariantOption } from "./types";
 import { CATALOG_PRODUCT_MEDIA_BUCKET } from "./types";
 import { resolvePackagePrice } from "./pricing";
 import { isActiveCatalogTariff } from "./utils";
 
 type MembershipRow = { usaha_id: string; status: string };
+
+type CatalogRentalPromotionRow = CatalogRentalPromotion & {
+  barang_id: string | null;
+  varian_barang_id: string | null;
+  started_at: string;
+  created_at: string;
+  ended_at: string | null;
+};
+
+async function loadActiveRentalPromotions(
+  usahaId: string,
+  productIds: string[],
+  variantIds: string[],
+) {
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const select = "promosi_katalog_id,barang_id,varian_barang_id,diskon_persen,started_at,created_at,valid_until,ended_at";
+  const [productsResult, variantsResult] = await Promise.all([
+    productIds.length
+      ? supabase.from("promosi_katalog").select(select).eq("usaha_id", usahaId)
+          .eq("channel", "rental").eq("status", "active").is("ended_at", null)
+          .is("varian_barang_id", null).in("barang_id", productIds).lte("started_at", nowIso)
+          .order("started_at", { ascending: false }).order("created_at", { ascending: false })
+      : Promise.resolve({ data: [], error: null } as const),
+    variantIds.length
+      ? supabase.from("promosi_katalog").select(select).eq("usaha_id", usahaId)
+          .eq("channel", "rental").eq("status", "active").is("ended_at", null)
+          .is("barang_id", null).in("varian_barang_id", variantIds).lte("started_at", nowIso)
+          .order("started_at", { ascending: false }).order("created_at", { ascending: false })
+      : Promise.resolve({ data: [], error: null } as const),
+  ]);
+  if (productsResult.error) throw productsResult.error;
+  if (variantsResult.error) throw variantsResult.error;
+
+  const isCurrent = (row: CatalogRentalPromotionRow) =>
+    row.started_at <= nowIso && (!row.valid_until || new Date(row.valid_until).getTime() > now.getTime()) && !row.ended_at;
+  const byProduct = new Map<string, CatalogRentalPromotion>();
+  const byVariant = new Map<string, CatalogRentalPromotion>();
+  for (const row of (productsResult.data ?? []) as CatalogRentalPromotionRow[]) {
+    if (row.barang_id && isCurrent(row) && !byProduct.has(row.barang_id)) {
+      byProduct.set(row.barang_id, { promosi_katalog_id: row.promosi_katalog_id, diskon_persen: Number(row.diskon_persen), valid_until: row.valid_until });
+    }
+  }
+  for (const row of (variantsResult.data ?? []) as CatalogRentalPromotionRow[]) {
+    if (row.varian_barang_id && isCurrent(row) && !byVariant.has(row.varian_barang_id)) {
+      byVariant.set(row.varian_barang_id, { promosi_katalog_id: row.promosi_katalog_id, diskon_persen: Number(row.diskon_persen), valid_until: row.valid_until });
+    }
+  }
+  return { byProduct, byVariant };
+}
 
 async function resolveCurrentUsahaId(): Promise<string> {
   const { data: { session }, error: sessionError } = await supabase.auth.getSession();
@@ -59,7 +109,7 @@ export async function listCatalogCategories(usahaId: string): Promise<CatalogCat
 export async function listCatalogVariants(usahaId: string): Promise<CatalogVariantOption[]> {
   const { data, error } = await supabase
     .from("varian_barang")
-    .select("varian_barang_id,barang_id,usaha_id,nama,kode_internal,deskripsi,atribut_pembeda,status,updated_at,barang:barang!varian_barang_tenant_fk(barang_id,nama)")
+    .select("varian_barang_id,barang_id,usaha_id,nama,kode_internal,deskripsi,atribut_pembeda,status,is_rentable,is_sellable,harga_jual,harga_beli,inventory_mode,updated_at,barang:barang!varian_barang_tenant_fk(barang_id,nama)")
     .eq("usaha_id", usahaId)
     .order("nama", { ascending: true });
   if (error) throw error;
@@ -90,6 +140,11 @@ export async function listCatalogVariants(usahaId: string): Promise<CatalogVaria
     deskripsi: variant.deskripsi,
     atribut_pembeda: variant.atribut_pembeda,
     status: variant.status,
+    is_rentable: variant.is_rentable,
+    is_sellable: variant.is_sellable,
+    harga_jual: variant.harga_jual,
+    harga_beli: variant.harga_beli,
+    inventory_mode: variant.inventory_mode,
     updated_at: variant.updated_at,
     media: mediaByVariant.get(variant.varian_barang_id) ?? [],
     barang_nama: variant.barang?.nama ?? "Barang",
@@ -276,11 +331,19 @@ export async function setCatalogVariantMediaCover(
 export async function listCatalogProducts(usahaId: string, filters: CatalogListFilters) {
   const start = (filters.page - 1) * filters.pageSize;
   const end = start + filters.pageSize - 1;
-  let query = supabase.from("barang").select("barang_id,usaha_id,kategori_barang_id,nama,slug,deskripsi,ringkasan_publik,status,is_public,updated_at,kategori:kategori_barang!barang_kategori_tenant_fk(kategori_barang_id,nama,status)", { count: "exact" }).eq("usaha_id", usahaId);
+  let query = supabase
+    .from("barang")
+    .select(
+      "barang_id,usaha_id,kategori_barang_id,nama,slug,deskripsi,ringkasan_publik,status,is_public,is_rentable,is_sellable,harga_jual,inventory_mode,updated_at,kategori:kategori_barang!barang_kategori_tenant_fk(kategori_barang_id,nama,status)",
+      { count: "exact" },
+    )
+    .eq("usaha_id", usahaId);
+
   if (filters.categoryId !== "all") query = query.eq("kategori_barang_id", filters.categoryId);
   if (filters.status !== "all") query = query.eq("status", filters.status);
   if (filters.visibility === "public") query = query.eq("is_public", true);
   if (filters.visibility === "private") query = query.eq("is_public", false);
+
   if (filters.search.trim()) {
     const term = filters.search.trim().replace(/[,()]/g, " ");
     const categorySearch = await supabase
@@ -298,40 +361,99 @@ export async function listCatalogProducts(usahaId: string, filters: CatalogListF
         categoryClause,
     );
   }
+
   const ascending = filters.sort === "updated_asc" || filters.sort === "name_asc";
   const column = filters.sort.startsWith("name") ? "nama" : "updated_at";
   const { data, error, count } = await query.order(column, { ascending }).range(start, end);
   if (error) throw error;
+
   const products = (data ?? []) as unknown as CatalogProduct[];
   const productIds = products.map((product) => product.barang_id);
-  let tariffs: CatalogTariff[] = [];
-  const now = new Date();
-  if (productIds.length) {
-    const nowIso = now.toISOString();
-    const tariffResult = await supabase.from("tarif_sewa").select("tarif_sewa_id,usaha_id,barang_id,varian_barang_id,paket_sewa_id,nama,durasi_unit,durasi_nilai,nominal,currency_code,berlaku_mulai,berlaku_sampai,status,updated_at").eq("usaha_id", usahaId).in("barang_id", productIds).eq("status", "active").lte("berlaku_mulai", nowIso).or("berlaku_sampai.is.null,berlaku_sampai.gt." + nowIso).order("nominal", { ascending: true });
-    if (tariffResult.error) throw tariffResult.error;
-    tariffs = (tariffResult.data ?? []) as CatalogTariff[];
-  }
-  const firstTariffByProduct = new Map<string, CatalogTariff>();
-  for (const tariff of tariffs) {
-    if (tariff.barang_id && isActiveCatalogTariff(tariff, now) && !firstTariffByProduct.has(tariff.barang_id)) {
-      firstTariffByProduct.set(tariff.barang_id, tariff);
+  if (!productIds.length) return { products: [], total: count ?? 0 };
+
+  const { data: variantRows, error: variantsError } = await supabase
+    .from("varian_barang")
+    .select("varian_barang_id,barang_id,is_rentable,status")
+    .eq("usaha_id", usahaId)
+    .in("barang_id", productIds)
+    .eq("status", "active");
+  if (variantsError) throw variantsError;
+
+  const parentByVariant = new Map<string, string>();
+  const rentableVariantProducts = new Set<string>();
+  for (const variant of variantRows ?? []) {
+    parentByVariant.set(variant.varian_barang_id, variant.barang_id);
+    const parent = products.find((product) => product.barang_id === variant.barang_id);
+    if (parent && (variant.is_rentable ?? parent.is_rentable)) {
+      rentableVariantProducts.add(variant.barang_id);
     }
   }
+
+  const variantIds = (variantRows ?? []).map((variant) => variant.varian_barang_id);
+  const rentalPromotions = await loadActiveRentalPromotions(usahaId, productIds, variantIds);
+  const tariffSelect =
+    "tarif_sewa_id,usaha_id,barang_id,varian_barang_id,paket_sewa_id,nama,durasi_unit,durasi_nilai,nominal,currency_code,berlaku_mulai,berlaku_sampai,status,updated_at";
+  const nowIso = new Date().toISOString();
+  const activeTariffQuery = (source: "barang_id" | "varian_barang_id", ids: string[]) =>
+    ids.length
+      ? supabase
+          .from("tarif_sewa")
+          .select(tariffSelect)
+          .eq("usaha_id", usahaId)
+          .in(source, ids)
+          .eq("status", "active")
+          .lte("berlaku_mulai", nowIso)
+          .or("berlaku_sampai.is.null,berlaku_sampai.gt." + nowIso)
+          .order("nominal", { ascending: true })
+      : Promise.resolve({ data: [], error: null } as const);
+
+  const [productTariffsResult, variantTariffsResult] = await Promise.all([
+    activeTariffQuery("barang_id", productIds),
+    activeTariffQuery("varian_barang_id", variantIds),
+  ]);
+  if (productTariffsResult.error) throw productTariffsResult.error;
+  if (variantTariffsResult.error) throw variantTariffsResult.error;
+
+  const now = new Date();
+  const tariffs = [
+    ...((productTariffsResult.data ?? []) as CatalogTariff[]),
+    ...((variantTariffsResult.data ?? []) as CatalogTariff[]),
+  ].sort((a, b) => Number(a.nominal) - Number(b.nominal));
+
+  const firstTariffByProduct = new Map<string, CatalogTariff>();
+  for (const tariff of tariffs) {
+    const productId = tariff.barang_id ?? (tariff.varian_barang_id ? parentByVariant.get(tariff.varian_barang_id) : undefined);
+    if (productId && isActiveCatalogTariff(tariff, now) && !firstTariffByProduct.has(productId)) {
+      firstTariffByProduct.set(productId, tariff);
+    }
+  }
+
   return {
-    products: products.map((product) => ({ ...product, active_tariff: firstTariffByProduct.get(product.barang_id) ?? null })),
+    products: products.map((product) => ({
+      ...product,
+      has_rentable_variants: rentableVariantProducts.has(product.barang_id),
+      active_tariff: firstTariffByProduct.get(product.barang_id) ?? null,
+      rental_promotion: rentalPromotions.byProduct.get(product.barang_id) ?? null,
+      rental_variant_promotions: Object.fromEntries(
+        variantIds
+          .filter((variantId) => parentByVariant.get(variantId) === product.barang_id && rentalPromotions.byVariant.has(variantId))
+          .map((variantId) => [variantId, rentalPromotions.byVariant.get(variantId)!]),
+      ),
+      has_variant_promotion: variantIds.some((variantId) => parentByVariant.get(variantId) === product.barang_id && rentalPromotions.byVariant.has(variantId)),
+    })),
     total: count ?? 0,
   };
 }
 
 export async function getCatalogProduct(usahaId: string, productId: string): Promise<CatalogProductDetail> {
-  const productResult = await supabase.from("barang").select("barang_id,usaha_id,kategori_barang_id,nama,slug,deskripsi,ringkasan_publik,status,is_public,updated_at,kategori:kategori_barang!barang_kategori_tenant_fk(kategori_barang_id,nama,status)").eq("usaha_id", usahaId).eq("barang_id", productId).maybeSingle();
+  const productResult = await supabase.from("barang").select("barang_id,usaha_id,kategori_barang_id,nama,slug,deskripsi,ringkasan_publik,status,is_public,is_rentable,is_sellable,harga_jual,harga_beli,satuan_jual,inventory_mode,updated_at,kategori:kategori_barang!barang_kategori_tenant_fk(kategori_barang_id,nama,status)").eq("usaha_id", usahaId).eq("barang_id", productId).maybeSingle();
   if (productResult.error) throw productResult.error;
   if (!productResult.data) throw new Error("Barang tidak ditemukan dalam Usaha aktif.");
-  const variantsResult = await supabase.from("varian_barang").select("varian_barang_id,barang_id,usaha_id,nama,kode_internal,deskripsi,atribut_pembeda,status,updated_at").eq("usaha_id", usahaId).eq("barang_id", productId).order("nama", { ascending: true });
+  const variantsResult = await supabase.from("varian_barang").select("varian_barang_id,barang_id,usaha_id,nama,kode_internal,deskripsi,atribut_pembeda,status,is_rentable,is_sellable,harga_jual,harga_beli,inventory_mode,updated_at").eq("usaha_id", usahaId).eq("barang_id", productId).order("nama", { ascending: true });
   if (variantsResult.error) throw variantsResult.error;
   const variants = (variantsResult.data ?? []) as CatalogVariant[];
   const variantIds = variants.map((variant) => variant.varian_barang_id);
+  const rentalPromotions = await loadActiveRentalPromotions(usahaId, [productId], variantIds);
   const tariffSelect = "tarif_sewa_id,usaha_id,barang_id,varian_barang_id,paket_sewa_id,nama,durasi_unit,durasi_nilai,nominal,currency_code,berlaku_mulai,berlaku_sampai,status,updated_at";
   const productTariffQuery = supabase.from("tarif_sewa").select(tariffSelect).eq("usaha_id", usahaId).eq("barang_id", productId).order("berlaku_mulai", { ascending: false });
   const variantTariffQuery = variantIds.length
@@ -361,6 +483,7 @@ export async function getCatalogProduct(usahaId: string, productId: string): Pro
   const variantsWithMedia = variants.map((variant) => ({
     ...variant,
     media: variantMediaById.get(variant.varian_barang_id) ?? [],
+    rental_promotion: rentalPromotions.byVariant.get(variant.varian_barang_id) ?? rentalPromotions.byProduct.get(productId) ?? null,
   }));
   const tariffs = [
     ...((productTariffsResult.data ?? []) as CatalogTariff[]),
@@ -369,6 +492,9 @@ export async function getCatalogProduct(usahaId: string, productId: string): Pro
   return {
     ...(productResult.data as unknown as CatalogProduct),
     active_tariff: tariffs.find((tariff) => (tariff.barang_id === productId || (tariff.varian_barang_id !== null && variantIds.includes(tariff.varian_barang_id))) && isActiveCatalogTariff(tariff)) ?? null,
+    rental_promotion: rentalPromotions.byProduct.get(productId) ?? null,
+    rental_variant_promotions: Object.fromEntries(rentalPromotions.byVariant.entries()),
+    has_variant_promotion: rentalPromotions.byVariant.size > 0,
     variants: variantsWithMedia,
     tariffs,
     media: (mediaResult.data ?? []) as CatalogProductDetail["media"],
@@ -396,7 +522,7 @@ export async function listCatalogProductCovers(usahaId: string, productIds: stri
     .select("barang_id,storage_bucket,storage_path,is_cover,urutan,status")
     .eq("usaha_id", usahaId)
     .in("barang_id", ids)
-    .eq("status", "active")
+    .eq("status", "valid")
     .order("is_cover", { ascending: false })
     .order("urutan", { ascending: true });
 
@@ -474,6 +600,12 @@ export type CreateCatalogProductInput = {
   status?: "active" | "inactive";
   isPublic?: boolean;
   metadata?: Record<string, unknown> | null;
+  salesConfig?: {
+    isRentable: boolean;
+    isSellable: boolean;
+    hargaJual: number | null;
+    inventoryMode: "serialized" | "quantity" | "untracked";
+  };
 };
 
 export type UpdateCatalogProductInput = CreateCatalogProductInput & {
@@ -662,6 +794,32 @@ export async function createCatalogProduct(
   options: CatalogCommandOptions = {},
 ) {
   const idempotencyKey = commandKey("create-katalog-product", options);
+  if (input.salesConfig) {
+    return executeCatalogCommand(
+      usahaId,
+      "create_barang_with_channels",
+      "command_create_barang_with_channels",
+      {
+        p_usaha_id: usahaId,
+        p_kategori_barang_id: input.kategoriBarangId,
+        p_nama: input.nama.trim(),
+        p_slug: input.slug.trim().toLowerCase(),
+        p_deskripsi: input.deskripsi?.trim() || null,
+        p_ringkasan_publik: input.ringkasanPublik?.trim() || null,
+        p_status: input.status ?? "active",
+        p_is_public: input.isPublic ?? false,
+        p_metadata: input.metadata ?? null,
+        p_is_rentable: input.salesConfig.isRentable,
+        p_is_sellable: input.salesConfig.isSellable,
+        p_harga_jual: input.salesConfig.hargaJual,
+        p_inventory_mode: input.salesConfig.inventoryMode,
+        p_idempotency_key: idempotencyKey,
+        p_request_id: options.requestId ?? createClientId(),
+      },
+      "Pembuatan barang dan channel",
+      idempotencyKey,
+    );
+  }
   return executeCatalogCommand(
     usahaId,
     "create_barang",
@@ -1448,4 +1606,106 @@ export async function getCatalogPackageDetails(
     tariffs,
     media: (mediaResult.data ?? []) as CatalogPackageMedia[],
   };
+}
+
+export type CatalogSalesConfigInput = {
+  isRentable: boolean;
+  isSellable: boolean;
+  hargaJual: number | null;
+  inventoryMode: "serialized" | "quantity" | "untracked";
+  expectedUpdatedAt?: string;
+};
+
+export async function setCatalogProductPurchaseCost(
+  usahaId: string,
+  barangId: string,
+  hargaBeli: number,
+  expectedUpdatedAt?: string,
+  options: CatalogCommandOptions = {},
+) {
+  const idempotencyKey = commandKey("set-katalog-product-hpp", options);
+  return executeCatalogCommand(
+    usahaId, "set_barang_hpp", "command_set_barang_hpp",
+    { p_usaha_id: usahaId, p_barang_id: barangId, p_harga_beli: hargaBeli,
+      p_expected_updated_at: expectedUpdatedAt ?? null, p_idempotency_key: idempotencyKey,
+      p_request_id: options.requestId ?? createClientId() },
+    "Harga pokok produk", idempotencyKey,
+  );
+}
+
+export async function setCatalogVariantPurchaseCost(
+  usahaId: string,
+  varianBarangId: string,
+  hargaBeli: number,
+  expectedUpdatedAt?: string,
+  options: CatalogCommandOptions = {},
+) {
+  const idempotencyKey = commandKey("set-katalog-variant-hpp", options);
+  return executeCatalogCommand(
+    usahaId, "set_varian_hpp", "command_set_varian_hpp",
+    { p_usaha_id: usahaId, p_varian_barang_id: varianBarangId, p_harga_beli: hargaBeli,
+      p_expected_updated_at: expectedUpdatedAt ?? null, p_idempotency_key: idempotencyKey,
+      p_request_id: options.requestId ?? createClientId() },
+    "Harga pokok varian", idempotencyKey,
+  );
+}
+
+export async function setCatalogProductSalesConfig(
+  usahaId: string,
+  barangId: string,
+  input: CatalogSalesConfigInput,
+  options: CatalogCommandOptions = {},
+) {
+  const idempotencyKey = commandKey("set-katalog-sales-config", options);
+  return executeCatalogCommand(
+    usahaId,
+    "set_barang_sales_config",
+    "command_set_barang_sales_config",
+    {
+      p_usaha_id: usahaId,
+      p_barang_id: barangId,
+      p_is_rentable: input.isRentable,
+      p_is_sellable: input.isSellable,
+      p_harga_jual: input.hargaJual,
+      p_inventory_mode: input.inventoryMode,
+      p_expected_updated_at: input.expectedUpdatedAt ?? null,
+      p_idempotency_key: idempotencyKey,
+      p_request_id: options.requestId ?? createClientId(),
+    },
+    "Konfigurasi channel penjualan produk",
+    idempotencyKey,
+  );
+}
+
+export async function setCatalogVariantSalesConfig(
+  usahaId: string,
+  varianBarangId: string,
+  input: {
+    isRentable: boolean | null;
+    isSellable: boolean | null;
+    hargaJual: number | null;
+    inventoryMode: "serialized" | "quantity" | "untracked" | null;
+    expectedUpdatedAt?: string;
+  },
+  options: CatalogCommandOptions = {},
+) {
+  const idempotencyKey = commandKey("set-katalog-variant-sales-config", options);
+  return executeCatalogCommand(
+    usahaId,
+    "set_varian_sales_config",
+    "command_set_varian_sales_config",
+    {
+      p_usaha_id: usahaId,
+      p_varian_barang_id: varianBarangId,
+      p_is_rentable: input.isRentable,
+      p_is_sellable: input.isSellable,
+      p_harga_jual: input.hargaJual,
+      p_inventory_mode: input.inventoryMode,
+      p_expected_updated_at: input.expectedUpdatedAt ?? null,
+      p_idempotency_key: idempotencyKey,
+      p_request_id: options.requestId ?? createClientId(),
+    },
+    "Konfigurasi channel penjualan varian",
+    idempotencyKey,
+  );
 }

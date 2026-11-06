@@ -14,7 +14,7 @@ import { Sidebar } from "./sidebar";
 
 const mobileNav = [
   ["Beranda", paths.dashboard, Home],
-  ["Operasional", paths.penyewaan, Search],
+  ["Penyewaan", paths.penyewaan, Search],
   ["Scan QR", "", QrCode],
   ["Notifikasi", paths.pemberitahuan, Bell],
 ] as const;
@@ -31,7 +31,7 @@ function isReturnPath(pathname: string) {
 }
 
 function isFocusedTransactionPath(pathname: string) {
-  return pathname === paths.penyewaanWalkIn;
+  return pathname === paths.penyewaanWalkIn || pathname === paths.penjualan;
 }
 
 function isFocusedInspectionPath(pathname: string) {

@@ -62,8 +62,8 @@ export const SignInForm = () => {
   };
 
   return (
-    <main className="min-h-svh overflow-x-hidden bg-[#eef2f0] text-[#102b29]">
-      <div className="relative min-h-svh bg-[#eef2f0] md:bg-transparent">
+    <main className="min-h-svh overflow-x-hidden bg-[#FAF9F6] text-[#28231F]">
+      <div className="relative min-h-svh bg-[#FAF9F6] md:bg-transparent">
         <div
           className="absolute inset-0 hidden bg-center bg-no-repeat md:block"
           style={{
@@ -75,26 +75,26 @@ export const SignInForm = () => {
         />
 
         <div className="relative mx-auto grid min-h-svh max-w-[1540px] gap-4 p-0 md:grid-cols-[minmax(0,1fr)_minmax(410px,458px)] md:items-center md:gap-8 md:px-8 md:py-8 xl:grid-cols-[minmax(0,1fr)_470px]">
-          <section className="relative hidden min-h-[calc(100svh-64px)] overflow-hidden rounded-[32px] border border-white/65 bg-white/[0.23] p-10 shadow-[0_20px_80px_rgba(36,56,49,.12)] backdrop-blur-[2px] lg:flex lg:flex-col lg:justify-between xl:p-14">
+          <section className="relative hidden min-h-[calc(100svh-64px)] overflow-hidden rounded-[32px] border border-white/65 bg-white/[0.23] p-10 shadow-[0_20px_80px_rgba(40,30,22,.12)] backdrop-blur-[2px] lg:flex lg:flex-col lg:justify-between xl:p-14">
             <div className="space-y-8">
               <div className="inline-flex items-center gap-3">
                 <div className="grid size-12 place-items-center overflow-hidden rounded-2xl bg-white/82 shadow-sm backdrop-blur">
                   <img src="/logo.webp" alt="" className="h-full w-full object-contain p-1.5" />
                 </div>
                 <div className="leading-tight">
-                  <p className="text-[18px] font-semibold tracking-[-0.02em] text-[#0b211e]">AKASHA</p>
-                  <p className="text-[11px] font-medium uppercase tracking-[0.24em] text-[#37544d]">Outdoor Rent</p>
+                  <p className="text-[18px] font-semibold tracking-[-0.02em] text-[#28231F]">AKASHA OUTDOOR</p>
+                  <p className="text-[11px] font-medium tracking-normal text-[#766D66]">sistem management Akasha</p>
                 </div>
               </div>
 
               <div className="max-w-xl pt-4">
-                <p className="mb-4 text-[11px] font-semibold uppercase tracking-[0.32em] text-[#415c55]">Sistem Manajemen</p>
-                <h1 className="font-serif text-5xl font-semibold leading-[0.98] tracking-[-0.04em] text-[#112825] xl:text-[62px]">
+                <p className="mb-4 text-[11px] font-semibold uppercase tracking-[0.32em] text-[#766D66]">Sistem Manajemen</p>
+                <h1 className="font-serif text-5xl font-semibold leading-[0.98] tracking-[-0.04em] text-[#28231F] xl:text-[62px]">
                   Jasa Sewa
                   <br />
                   Alat <em>Outdoor</em>
                 </h1>
-                <p className="mt-6 max-w-lg text-[17px] leading-7 text-[#3a534e]">
+                <p className="mt-6 max-w-lg text-[17px] leading-7 text-[#5E5148]">
                   Kelola penyewaan, inventaris, pemesanan, pelanggan, keuangan, dan operasional usaha rental outdoor Anda dalam satu sistem yang modern dan profesional.
                 </p>
               </div>
@@ -102,10 +102,10 @@ export const SignInForm = () => {
               <div className="grid max-w-2xl grid-cols-2 gap-3 xl:grid-cols-3">
                 {modules.map(({ icon: Icon, label }) => (
                   <div key={label} className="flex items-center gap-3 rounded-2xl border border-white/70 bg-white/48 px-4 py-3 backdrop-blur-sm">
-                    <span className="grid size-10 shrink-0 place-items-center rounded-full bg-white/80 text-[#1f554c] shadow-sm">
+                    <span className="grid size-10 shrink-0 place-items-center rounded-full bg-white/80 text-[#B45324] shadow-sm">
                       <Icon className="size-5" strokeWidth={1.8} />
                     </span>
-                    <span className="text-sm font-medium leading-5 text-[#1c3733]">{label}</span>
+                    <span className="text-sm font-medium leading-5 text-[#332B25]">{label}</span>
                   </div>
                 ))}
               </div>
@@ -115,19 +115,19 @@ export const SignInForm = () => {
               {benefits.map(({ icon: Icon, title, detail }) => (
                 <div
                   key={title}
-                  className="relative overflow-hidden rounded-2xl border border-white/70 bg-gradient-to-br from-white/78 via-white/52 to-white/32 px-3.5 py-3 shadow-[0_14px_34px_rgba(36,56,49,.12)] backdrop-blur-md"
+                  className="relative overflow-hidden rounded-2xl border border-white/70 bg-gradient-to-br from-white/78 via-white/52 to-white/32 px-3.5 py-3 shadow-[0_14px_34px_rgba(40,30,22,.12)] backdrop-blur-md"
                 >
                   <span
                     aria-hidden="true"
-                    className="pointer-events-none absolute -right-7 -top-9 size-24 rounded-full bg-[#1f554c]/15 blur-2xl"
+                    className="pointer-events-none absolute -right-7 -top-9 size-24 rounded-full bg-[#B45324]/15 blur-2xl"
                   />
                   <div className="relative flex items-start gap-2.5">
-                    <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-[#1f554c] to-[#0b5544] text-white shadow-[0_8px_18px_rgba(15,94,75,.3)]">
+                    <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-[#B45324] to-[#943F1E] text-white shadow-[0_8px_18px_rgba(180,83,36,.22)]">
                       <Icon className="size-[18px]" strokeWidth={2.1} />
                     </span>
                     <div className="min-w-0">
-                      <p className="text-sm font-semibold text-[#1c3a34]">{title}</p>
-                      <p className="mt-0.5 text-[11px] leading-4 text-[#4a605a]">{detail}</p>
+                      <p className="text-sm font-semibold text-[#28231F]">{title}</p>
+                      <p className="mt-0.5 text-[11px] leading-4 text-[#766D66]">{detail}</p>
                     </div>
                   </div>
                 </div>
@@ -151,10 +151,10 @@ export const SignInForm = () => {
 
               <div className="relative flex flex-col items-center">
                 <div className="grid size-[72px] place-items-center overflow-hidden rounded-[22px] bg-white/88 shadow-[0_10px_30px_rgba(0,0,0,.16)] backdrop-blur">
-                  <img src="/logo.webp" alt="Akasha Outdoor Rent" className="h-full w-full object-contain p-2" />
+                  <img src="/logo.webp" alt="Akasha Outdoor" className="h-full w-full object-contain p-2" />
                 </div>
-                <p className="mt-2 text-[16px] font-semibold tracking-[-0.02em] drop-shadow-md">AKASHA</p>
-                <p className="text-[8px] font-medium uppercase tracking-[0.3em] text-white/92 drop-shadow-md">Outdoor Rent</p>
+                <p className="mt-2 text-[16px] font-semibold tracking-[-0.02em] drop-shadow-md">AKASHA OUTDOOR</p>
+                <p className="text-[10px] font-medium tracking-normal text-white/92 drop-shadow-md">sistem management Akasha</p>
               </div>
 
               <div className="relative w-full max-w-sm">
@@ -167,23 +167,23 @@ export const SignInForm = () => {
               </div>
             </div>
 
-            <div className="relative z-10 -mt-10 flex flex-1 flex-col rounded-t-[30px] border border-white/75 bg-white px-5 pb-8 pt-5 shadow-[0_-16px_50px_rgba(40,58,52,.14)] md:mx-auto md:my-auto md:mt-0 md:w-full md:max-w-[458px] md:rounded-[30px] md:border-white/70 md:px-8 md:py-8 md:shadow-[0_24px_70px_rgba(31,51,45,.16)]">
+            <div className="relative z-10 -mt-10 flex flex-1 flex-col rounded-t-[30px] border border-white/75 bg-white px-5 pb-8 pt-5 shadow-[0_-16px_50px_rgba(40,30,22,.12)] md:mx-auto md:my-auto md:mt-0 md:w-full md:max-w-[458px] md:rounded-[30px] md:border-white/70 md:px-8 md:py-8 md:shadow-[0_24px_70px_rgba(40,30,22,.14)]">
               <div className="mb-6 text-center md:text-left">
                 <div className="hidden items-center justify-center md:flex">
-                  <div className="grid size-16 place-items-center overflow-hidden rounded-2xl bg-[#f1f5f3]">
+                  <div className="grid size-16 place-items-center overflow-hidden rounded-2xl bg-[#F3EEE9]">
                     <img src="/logo.webp" alt="" className="h-full w-full object-contain p-1.5" />
                   </div>
                 </div>
-                <h2 className="mt-2 text-[23px] font-semibold tracking-[-0.025em] text-[#16322e] md:text-center">Masuk ke Akasha</h2>
-                <p className="mt-1 text-sm leading-6 text-[#70817d] md:text-center">Kelola usaha rental outdoor Anda dengan aman</p>
+                <h2 className="mt-2 text-[23px] font-semibold tracking-[-0.025em] text-[#28231F] md:text-center">Masuk ke Akasha Outdoor</h2>
+                <p className="mt-1 text-sm leading-6 text-[#766D66] md:text-center">Kelola usaha rental outdoor Anda dengan aman</p>
               </div>
 
-              <div className="mb-5 grid grid-cols-2 border-b border-[#dce5e1]" role="tablist" aria-label="Autentikasi">
-                <button type="button" role="tab" aria-selected="true" className="relative h-11 text-sm font-semibold text-[#1a4c43]">
+              <div className="mb-5 grid grid-cols-2 border-b border-[#E8DFD7]" role="tablist" aria-label="Autentikasi">
+                <button type="button" role="tab" aria-selected="true" className="relative h-11 text-sm font-semibold text-[#943F1E]">
                   Login
-                  <span className="absolute inset-x-6 -bottom-px h-0.5 rounded-full bg-[#0f5e4c]" />
+                  <span className="absolute inset-x-6 -bottom-px h-0.5 rounded-full bg-[#B45324]" />
                 </button>
-                <button type="button" role="tab" aria-selected="false" disabled className="h-11 text-sm font-medium text-[#8b9793] disabled:cursor-default">
+                <button type="button" role="tab" aria-selected="false" disabled className="h-11 text-sm font-medium text-[#94887E] disabled:cursor-default">
                   Daftar Akun
                 </button>
               </div>
@@ -198,9 +198,9 @@ export const SignInForm = () => {
 
               <form onSubmit={handleSignIn} className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="email" className="text-sm font-semibold text-[#304641]">Email atau nomor telepon</Label>
+                  <Label htmlFor="email" className="text-sm font-semibold text-[#3C3129]">Email atau nomor telepon</Label>
                   <div className="relative">
-                    <Mail className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-[#8da09a]" aria-hidden="true" />
+                    <Mail className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-[#94887E]" aria-hidden="true" />
                     <Input
                       id="email"
                       name="email"
@@ -211,15 +211,15 @@ export const SignInForm = () => {
                       required
                       value={email}
                       onChange={(event) => setEmail(event.target.value)}
-                      className="h-12 rounded-xl border-[#d8e2de] bg-white pl-10 text-sm shadow-none placeholder:text-[#9aa7a3] focus:border-[#4b7c70] focus:ring-[#4b7c70]/20"
+                      className="h-12 rounded-xl border-[#E8DFD7] bg-white pl-10 text-sm shadow-none placeholder:text-[#A29890] focus:border-[#B45324] focus:ring-[#B45324]/20"
                     />
                   </div>
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="password" className="text-sm font-semibold text-[#304641]">Kata sandi</Label>
+                  <Label htmlFor="password" className="text-sm font-semibold text-[#3C3129]">Kata sandi</Label>
                   <div className="relative">
-                    <LockKeyhole className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-[#8da09a]" aria-hidden="true" />
+                    <LockKeyhole className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-[#94887E]" aria-hidden="true" />
                     <Input
                       id="password"
                       name="password"
@@ -229,11 +229,11 @@ export const SignInForm = () => {
                       required
                       value={password}
                       onChange={(event) => setPassword(event.target.value)}
-                      className="h-12 rounded-xl border-[#d8e2de] bg-white pl-10 pr-10 text-sm shadow-none placeholder:text-[#9aa7a3] focus:border-[#4b7c70] focus:ring-[#4b7c70]/20"
+                      className="h-12 rounded-xl border-[#E8DFD7] bg-white pl-10 pr-10 text-sm shadow-none placeholder:text-[#A29890] focus:border-[#B45324] focus:ring-[#B45324]/20"
                     />
                     <button
                       type="button"
-                      className="absolute right-3 top-1/2 -translate-y-1/2 rounded-lg p-1 text-[#7f928b] hover:bg-[#eef4f1]"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 rounded-lg p-1 text-[#84776D] hover:bg-[#F3EEE9]"
                       onClick={() => setShowPassword((current) => !current)}
                       aria-label={showPassword ? "Sembunyikan kata sandi" : "Tampilkan kata sandi"}
                     >
@@ -243,16 +243,16 @@ export const SignInForm = () => {
                 </div>
 
                 <div className="flex items-center justify-between gap-3">
-                  <label htmlFor="remember" className="flex min-w-0 items-center gap-2 text-sm text-[#52635e]">
+                  <label htmlFor="remember" className="flex min-w-0 items-center gap-2 text-sm text-[#766D66]">
                     <Checkbox
                       id="remember"
                       checked={rememberMe}
                       onCheckedChange={(checked) => setRememberMe(checked === true)}
-                      className="size-4 rounded-[5px] data-[state=checked]:border-[#0e5d4b] data-[state=checked]:bg-[#0e5d4b]"
+                      className="size-4 rounded-[5px] data-[state=checked]:border-[#B45324] data-[state=checked]:bg-[#B45324]"
                     />
                     <span>Ingat saya</span>
                   </label>
-                  <button type="button" className="shrink-0 text-xs font-semibold text-[#1d564c] hover:underline md:text-sm">
+                  <button type="button" className="shrink-0 text-xs font-semibold text-[#943F1E] hover:underline md:text-sm">
                     Lupa kata sandi?
                   </button>
                 </div>
@@ -260,16 +260,16 @@ export const SignInForm = () => {
                 <Button
                   type="submit"
                   disabled={isPending}
-                  className="h-12 w-full rounded-xl bg-[#075d4b] text-sm font-semibold shadow-[0_10px_20px_rgba(7,93,75,.18)] hover:bg-[#064f40]"
+                  className="h-12 w-full rounded-xl bg-[#B45324] text-sm font-semibold shadow-[0_10px_20px_rgba(180,83,36,.20)] hover:bg-[#943F1E]"
                 >
                   {isPending ? "Memproses..." : "Masuk"}
                   <ArrowRight className="size-4" />
                 </Button>
 
                 <div className="flex items-center gap-3">
-                  <Separator className="bg-[#e1e8e5]" />
-                  <span className="shrink-0 text-xs text-[#8a9893]">atau masuk dengan</span>
-                  <Separator className="bg-[#e1e8e5]" />
+                  <Separator className="bg-[#E8DFD7]" />
+                  <span className="shrink-0 text-xs text-[#94887E]">atau masuk dengan</span>
+                  <Separator className="bg-[#E8DFD7]" />
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
@@ -278,7 +278,7 @@ export const SignInForm = () => {
                     type="button"
                     disabled={isPending}
                     onClick={handleSignInWithGoogle}
-                    className="h-11 rounded-xl border-[#d8e2de] bg-white text-sm font-medium text-[#314641] hover:bg-[#f4f8f6]"
+                    className="h-11 rounded-xl border-[#E8DFD7] bg-white text-sm font-medium text-[#3C3129] hover:bg-[#F3EEE9]"
                   >
                     <span className="grid size-5 place-items-center text-[#4285F4] font-bold">G</span>
                     Google
@@ -288,7 +288,7 @@ export const SignInForm = () => {
                     type="button"
                     disabled={isPending}
                     onClick={handleSignInWithGitHub}
-                    className="h-11 rounded-xl border-[#d8e2de] bg-white text-sm font-medium text-[#314641] hover:bg-[#f4f8f6]"
+                    className="h-11 rounded-xl border-[#E8DFD7] bg-white text-sm font-medium text-[#3C3129] hover:bg-[#F3EEE9]"
                   >
                     <span className="grid size-5 place-items-center text-[#111827] dark:text-white">
                       <svg width="19" height="19" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -299,8 +299,8 @@ export const SignInForm = () => {
                   </Button>
                 </div>
 
-                <p className="pb-1 text-center text-[11px] leading-5 text-[#8b9894]">
-                  Dengan masuk, Anda menyetujui <span className="font-medium text-[#46645c]">Syarat Layanan</span> dan <span className="font-medium text-[#46645c]">Kebijakan Privasi</span> kami.
+                <p className="pb-1 text-center text-[11px] leading-5 text-[#94887E]">
+                  Dengan masuk, Anda menyetujui <span className="font-medium text-[#943F1E]">Syarat Layanan</span> dan <span className="font-medium text-[#943F1E]">Kebijakan Privasi</span> kami.
                 </p>
               </form>
             </div>

@@ -1,4 +1,4 @@
-import type { RentalReceiptData, UnitQrLabelData, UnitQrLabelOptions } from "./types";
+import type { RentalReceiptData, RentalQrLineData, UnitQrLabelData, UnitQrLabelOptions } from "./types";
 
 function escapeHtml(value: string) {
   return value
@@ -36,105 +36,234 @@ function paymentLabel(status: NonNullable<RentalReceiptData["pembayaran"]>["stat
   return "BELUM DIBAYAR";
 }
 
-export function buildThermalReceiptPrintHtml(
-  receipt: RentalReceiptData,
-  qrDataUrl: string,
-) {
-  const lines = receipt.lines.map((line) =>
-    '<div class="item">' +
-      '<div class="item-top">' +
-        '<div class="item-name">' + escapeHtml(line.nama) + (line.rincian ? ' <span class="variant">· ' + escapeHtml(line.rincian) + '</span>' : '') + '</div>' +
-        '<div class="item-total">' + escapeHtml(formatReceiptMoney(line.subtotal, line.currency_code)) + '</div>' +
-      '</div>' +
-      '<div class="item-meta">' + line.jumlah + ' × ' + escapeHtml(formatReceiptMoney(line.subtotal / Math.max(line.jumlah, 1), line.currency_code)) + '</div>' +
-    '</div>'
-  ).join('');
+function formatFileDate(value: string, timezone: string) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(value));
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((entry) => entry.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
 
+/** Stable, filesystem-safe name based on renter identity and rental start date. */
+export function buildRentalReceiptFileName(receipt: Pick<RentalReceiptData, "penyewa_nama" | "jadwal_mulai" | "timezone">) {
+  const renter = (receipt.penyewa_nama
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "PENYEWA").slice(0, 72).replace(/-+$/g, "");
+  return `${renter}-${formatFileDate(receipt.jadwal_mulai, receipt.timezone)}`;
+}
+
+function renderReceiptLine(line: RentalQrLineData, currencyCode: string, channel: "SEWA" | "JUAL") {
+  const subtotal = Number(line.subtotal || 0);
+  const promoDiscount = Math.max(0, Number(line.nominal_diskon_snapshot || 0));
+  const promoPercent = Number(line.diskon_persen_snapshot || 0);
+  const unitPrice = line.unit_price == null
+    ? subtotal / Math.max(1, line.jumlah)
+    : Number(line.unit_price);
+  const normalAmount = subtotal + promoDiscount;
+  const promoRows = promoDiscount > 0
+    ? `<div class="item-subrow"><span>Harga normal</span><strong>${escapeHtml(formatReceiptMoney(normalAmount, currencyCode))}</strong></div>
+       <div class="item-subrow promo"><span>${escapeHtml(line.promo_label || "Promo katalog")}${promoPercent > 0 ? ` (${promoPercent}%)` : ""}</span><strong>−${escapeHtml(formatReceiptMoney(promoDiscount, currencyCode))}</strong></div>`
+    : "";
+  const periodMeta = channel === "SEWA" && line.period_count && line.period_count > 0
+    ? ` · ${line.period_count} periode${line.period_description ? ` × ${escapeHtml(line.period_description)}` : ""}`
+    : "";
+
+  return `<article class="item">
+    <div class="item-top">
+      <div class="item-heading"><span class="item-kind ${channel.toLowerCase()}">${channel}</span><span class="item-name">${escapeHtml(line.nama)}${line.rincian ? ` <span class="variant">· ${escapeHtml(line.rincian)}</span>` : ""}</span></div>
+      <div class="item-total">${escapeHtml(formatReceiptMoney(subtotal, currencyCode))}</div>
+    </div>
+    ${promoRows}
+    <div class="item-meta">${Number(line.jumlah)} × ${escapeHtml(formatReceiptMoney(unitPrice, currencyCode))}${periodMeta}</div>
+  </article>`;
+}
+
+export function getReceiptToleranceHours(jadwalKembali: string, toleranceDeadline?: string | null) {
+  if (!toleranceDeadline) return 0;
+  const returnAt = new Date(jadwalKembali).getTime();
+  const deadlineAt = new Date(toleranceDeadline).getTime();
+  if (!Number.isFinite(returnAt) || !Number.isFinite(deadlineAt)) return 0;
+  return Math.max(0, Math.round(((deadlineAt - returnAt) / 3_600_000) * 100) / 100);
+}
+
+function renderAmountRow(label: string, amount: number, currencyCode: string, kind: "normal" | "discount" = "normal") {
+  if (amount <= 0) return "";
+  const value = formatReceiptMoney(amount, currencyCode);
+  return `<div class="amount-row ${kind}"><span>${escapeHtml(label)}</span><strong>${kind === "discount" ? "−" : ""}${escapeHtml(value)}</strong></div>`;
+}
+
+/** The single compact renderer shared by preview, native thermal print, PDF, and PNG. */
+export function buildRentalReceiptHtml(receipt: RentalReceiptData, qrDataUrl: string, logoDataUrl = "/logo.webp") {
+  const currency = receipt.currency_code || "IDR";
+  const rentalLines = receipt.lines.map((line) => renderReceiptLine(line, line.currency_code || currency, "SEWA")).join("");
+  const saleLines = (receipt.sale_lines ?? []).map((line) => renderReceiptLine(line, line.currency_code || currency, "JUAL")).join("");
+  const allLines = `${rentalLines}${saleLines}`;
+  const discounts = receipt.discounts;
+  const discountRows = discounts
+    ? [
+        renderAmountRow("Promo / Diskon Sewa", Number(discounts.manual_rental || 0), currency, "discount"),
+        renderAmountRow("Diskon Loyalitas Rental", Number(discounts.loyalty_rental || 0), currency, "discount"),
+        renderAmountRow("Diskon Loyalitas Penjualan", Number(discounts.loyalty_sale || 0), currency, "discount"),
+        renderAmountRow(discounts.other_rental_label || "Diskon Rental", Number(discounts.other_rental || 0), currency, "discount"),
+      ].join("")
+    : "";
+  const hasDiscount = Boolean(discounts && (
+    Number(discounts.manual_rental || 0) > 0
+    || Number(discounts.loyalty_rental || 0) > 0
+    || Number(discounts.loyalty_sale || 0) > 0
+    || Number(discounts.other_rental || 0) > 0
+  ));
+  const contact = [receipt.usaha_telepon, receipt.usaha_email].filter(Boolean).join(" · ");
+  const address = receipt.usaha_alamat
+    ? `<div class="business-address">${escapeHtml(receipt.usaha_alamat)}</div>`
+    : "";
+  const contactHtml = contact
+    ? `<div class="business-contact">${escapeHtml(contact)}</div>`
+    : "";
   const payment = receipt.pembayaran
-    ? '<section class="section">' +
-        '<div class="section-title">PEMBAYARAN</div>' +
-        '<div class="payment-row"><span>Status</span><strong>' + paymentLabel(receipt.pembayaran.status) + '</strong></div>' +
-        '<div class="payment-row"><span>Tercatat</span><strong>' + escapeHtml(formatReceiptMoney(receipt.pembayaran.tercatat, receipt.currency_code)) + '</strong></div>' +
-        '<div class="payment-row"><span>Sisa</span><strong>' + escapeHtml(formatReceiptMoney(receipt.pembayaran.sisa, receipt.currency_code)) + '</strong></div>' +
-      '</section>'
-    : '';
+    ? `<section class="section payment-section">
+        <div class="section-title">PEMBAYARAN</div>
+        <div class="meta-row"><span>Status</span><strong>${paymentLabel(receipt.pembayaran.status)}</strong></div>
+        <div class="meta-row"><span>Dibayar</span><strong>${escapeHtml(formatReceiptMoney(receipt.pembayaran.tercatat, currency))}</strong></div>
+        <div class="meta-row"><span>Sisa</span><strong>${escapeHtml(formatReceiptMoney(receipt.pembayaran.sisa, currency))}</strong></div>
+      </section>`
+    : "";
+  const note = `<section class="section receipt-note"><div class="section-title">Catatan</div><div class="small-note">Waktu toleransi pengembalian <strong>10</strong> jam</div></section>`;
+  const qr = qrDataUrl
+    ? `<div class="qr-wrap"><img class="qr" src="${escapeHtml(qrDataUrl)}" alt="QR Penyewaan" /><div class="qr-caption">QR PENYEWAAN</div></div>`
+    : "";
+  const fileName = buildRentalReceiptFileName(receipt);
 
-  const contact = [receipt.usaha_telepon, receipt.usaha_email].filter(Boolean).join('  ·  ');
-  const address = receipt.usaha_alamat ? '<div class="business-address">' + escapeHtml(receipt.usaha_alamat) + '</div>' : '';
-  const contactHtml = contact ? '<div class="business-contact">' + escapeHtml(contact) + '</div>' : '';
-  const pickup = receipt.actual_pickup_at
-    ? '<div class="meta-row"><span>Serah-terima</span><strong>' + escapeHtml(formatReceiptDateTime(receipt.actual_pickup_at, receipt.timezone)) + '</strong></div>'
-    : '';
-  const note = receipt.catatan
-    ? '<section class="section"><div class="section-title">CATATAN</div><div class="small-note">' + escapeHtml(receipt.catatan) + '</div></section>'
-    : '';
+  return `<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>${escapeHtml(fileName)}.pdf</title>
+<style>
+@page { size: 58mm auto; margin: 0; }
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: #fff; }
+body { width: 58mm; color: #111827; font-family: Arial, Helvetica, sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.receipt { width: 52mm; margin: 0 auto; padding: 3mm 0 4mm; }
+.center { text-align: center; }
+.brand-logo { display: block; width: 10mm; height: 10mm; object-fit: contain; margin: 0 auto 1.2mm; }
+.brand { font-size: 10pt; line-height: 1.1; font-weight: 900; letter-spacing: .055em; text-transform: uppercase; }
+.tagline { margin-top: .7mm; font-size: 6.1pt; line-height: 1.2; letter-spacing: .025em; color: #6b7280; font-weight: 600; }
+.business-address { margin-top: 1.3mm; font-size: 6.7pt; line-height: 1.3; color: #4b5563; overflow-wrap: anywhere; }
+.business-contact { margin-top: .6mm; font-size: 6.5pt; line-height: 1.3; color: #4b5563; overflow-wrap: anywhere; }
+.rule { border-top: .35mm solid #111827; margin: 2.5mm 0; }
+.rule-soft { border-top: .2mm dashed #9ca3af; margin: 1.8mm 0; }
+.title { font-size: 8.2pt; line-height: 1.15; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
+.section { margin-top: 2.3mm; }
+.section-title { margin-bottom: 1.2mm; font-size: 6.7pt; line-height: 1.1; font-weight: 850; letter-spacing: .085em; text-transform: uppercase; color: #374151; }
+.meta-grid { display: grid; gap: .8mm; }
+.meta-row, .amount-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 2mm; font-size: 6.8pt; line-height: 1.3; }
+.meta-row span, .amount-row span { color: #6b7280; min-width: 0; }
+.meta-row strong, .amount-row strong { max-width: 31mm; text-align: right; color: #111827; overflow-wrap: anywhere; }
+.amount-row { margin-top: .9mm; }
+.amount-row.discount strong { color: #111827; }
+.renter-name { font-size: 8pt; line-height: 1.2; font-weight: 800; overflow-wrap: anywhere; }
+.renter-contact { margin-top: .6mm; font-size: 6.8pt; color: #4b5563; }
+.item { margin: 1.7mm 0; }
+.item-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 1.5mm; }
+.item-heading { display: flex; align-items: flex-start; gap: 1mm; min-width: 0; max-width: 35mm; }
+.item-kind { flex: 0 0 auto; margin-top: .1mm; padding: .35mm .7mm; border: .15mm solid #9ca3af; border-radius: .7mm; font-size: 5pt; line-height: 1.15; font-weight: 800; letter-spacing: .04em; }
+.item-kind.jual { border-style: dashed; }
+.item-name { min-width: 0; font-size: 6.8pt; line-height: 1.25; font-weight: 750; overflow-wrap: anywhere; }
+.item-total { flex: 0 0 auto; max-width: 17mm; font-size: 7pt; line-height: 1.25; font-weight: 850; text-align: right; overflow-wrap: anywhere; }
+.variant { font-weight: 500; color: #4b5563; }
+.item-subrow { display: flex; justify-content: space-between; gap: 2mm; margin-top: .6mm; font-size: 6pt; line-height: 1.2; color: #6b7280; }
+.item-subrow strong { flex: 0 0 auto; text-align: right; color: #4b5563; }
+.item-subrow.promo strong { color: #111827; }
+.item-meta { margin-top: .5mm; font-size: 6pt; color: #6b7280; line-height: 1.2; }
+.summary { margin-top: 2.5mm; padding-top: 1.6mm; border-top: .25mm dashed #6b7280; }
+.summary .amount-row { font-size: 6.9pt; }
+.discount-heading { margin-top: 1.8mm; font-size: 6pt; font-weight: 800; letter-spacing: .07em; color: #6b7280; }
+.total-box { margin-top: 2.1mm; padding: 2mm 0; border-top: .4mm solid #111827; border-bottom: .4mm solid #111827; }
+.total-row { display: flex; align-items: baseline; justify-content: space-between; gap: 2mm; }
+.total-label { font-size: 8pt; font-weight: 900; letter-spacing: .035em; }
+.total-value { max-width: 29mm; font-size: 9.8pt; font-weight: 950; text-align: right; overflow-wrap: anywhere; }
+.payment-section { padding-top: 1.5mm; border-top: .2mm dashed #9ca3af; }
+.small-note { font-size: 6.1pt; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #4b5563; }
+.small-note strong { color: #111827; font-weight: 900; }
+.receipt-note { margin-top: 2mm; }
+.receipt-note .section-title { text-transform: none; }
+.qr-wrap { margin-top: 3mm; text-align: center; }
+.qr { width: 24mm; height: 24mm; display: block; margin: 0 auto 1.3mm; image-rendering: crisp-edges; }
+.qr-caption { font-size: 6.5pt; line-height: 1.2; font-weight: 850; letter-spacing: .08em; }
+.footer-message { margin-top: 2.2mm; text-align: center; font-size: 6.7pt; line-height: 1.25; font-weight: 800; letter-spacing: .025em; }
+.system-attribution { margin-top: 1.1mm; text-align: center; font-size: 5.1pt; line-height: 1.2; color: #6b7280; letter-spacing: .035em; }
+@media screen { body { margin: 0 auto; } }
+</style>
+</head>
+<body>
+<main class="receipt">
+  <header class="center">
+    <img class="brand-logo" src="${escapeHtml(logoDataUrl || "/logo.webp")}" alt="Logo Akasha Outdoor" />
+    <div class="brand">AKASHA OUTDOOR</div>
+    <div class="tagline">ready for your wild journey</div>
+    ${address}${contactHtml}
+  </header>
+  <div class="rule"></div>
+  <section class="center"><div class="title">BUKTI TRANSAKSI</div></section>
+  <section class="section">
+    <div class="section-title">DETAIL TRANSAKSI & PENYEWA</div>
+    <div class="renter-name">${escapeHtml(receipt.penyewa_nama)}</div>
+    ${receipt.penyewa_telepon ? `<div class="renter-contact">${escapeHtml(receipt.penyewa_telepon)}</div>` : ""}
+  </section>
+  <section class="section">
+    <div class="section-title">JADWAL PENYEWAAN</div>
+    <div class="meta-grid">
+      <div class="meta-row"><span>Mulai</span><strong>${escapeHtml(formatReceiptDateTime(receipt.jadwal_mulai, receipt.timezone))}</strong></div>
+      <div class="meta-row"><span>Kembali</span><strong>${escapeHtml(formatReceiptDateTime(receipt.jadwal_kembali, receipt.timezone))}</strong></div>
+      <div class="meta-row"><span>Toleransi</span><strong>${escapeHtml(formatReceiptDateTime(receipt.tolerance_deadline, receipt.timezone))}</strong></div>
+    </div>
+  </section>
+  <section class="section">
+    <div class="section-title">RINCIAN BARANG</div>
+    <div class="rule-soft"></div>
+    ${allLines || '<div class="item-meta">Tidak ada rincian barang.</div>'}
+  </section>
+  <section class="summary">
+    <div class="section-title">RINGKASAN TRANSAKSI</div>
+    <div class="amount-row"><span>Total Sewa + Beli</span><strong>${escapeHtml(formatReceiptMoney(Number(receipt.subtotal_rental ?? receipt.total_amount) + Number(receipt.subtotal_penjualan ?? 0), currency))}</strong></div>
+    ${hasDiscount ? `<div class="discount-heading">DISKON</div>${discountRows}` : ""}
+    <div class="total-box">
+      <div class="total-row"><span class="total-label">TOTAL TRANSAKSI</span><span class="total-value">${escapeHtml(formatReceiptMoney(receipt.total_amount, currency))}</span></div>
+    </div>
+  </section>
+  ${payment}${note}
+  <div class="rule-soft"></div>
+  ${qr}
+  <div class="footer-message">Semoga perjalanan Anda menyenangkan.</div>
+  <div class="system-attribution">Dicetak dengan Akasha Outdoor Management System</div>
+</main>
+</body>
+</html>`;
+}
 
-  return '<!doctype html>\n' +
-'<html lang="id">\n<head>\n' +
-'<meta charset="utf-8" />\n' +
-'<title>Bukti Penyewaan ' + escapeHtml(receipt.nomor_penyewaan) + '</title>\n' +
-'<style>\n' +
-'@page { size: 58mm auto; margin: 0; }\n' +
-'html, body { margin: 0; padding: 0; background: #fff; }\n' +
-'body { width: 58mm; color: #111827; font-family: Arial, Helvetica, sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }\n' +
-'.receipt { width: 52mm; margin: 0 auto; padding: 3.5mm 0 5mm; box-sizing: border-box; }\n' +
-'.center { text-align: center; }\n' +
-'.brand { font-size: 10.2pt; line-height: 1.1; font-weight: 900; letter-spacing: .055em; white-space: nowrap; }\n' +
-'.business-type { margin-top: 1.2mm; font-size: 7.3pt; line-height: 1.2; text-transform: uppercase; letter-spacing: .18em; color: #374151; font-weight: 800; }\n' +
-'.tagline { margin-top: .8mm; font-size: 6.4pt; line-height: 1.3; letter-spacing: .025em; color: #6b7280; font-weight: 600; }\n' +
-'.business-address { margin-top: 1.6mm; font-size: 7pt; line-height: 1.35; color: #4b5563; }\n' +
-'.business-contact { margin-top: .8mm; font-size: 6.7pt; line-height: 1.35; color: #4b5563; }\n' +
-'.rule { border-top: .35mm solid #111827; margin: 3mm 0; }\n' +
-'.rule-soft { border-top: .2mm dashed #6b7280; margin: 2.8mm 0; }\n' +
-'.title { font-size: 9pt; line-height: 1.15; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }\n' +
-'.rental-no { margin-top: 1.2mm; font-size: 10.5pt; line-height: 1.1; font-weight: 800; }\n' +
-'.section { margin-top: 3mm; }\n' +
-'.section-title { margin-bottom: 1.7mm; font-size: 7pt; line-height: 1.1; font-weight: 800; letter-spacing: .11em; text-transform: uppercase; color: #374151; }\n' +
-'.meta-grid { display: grid; gap: 1.2mm; }\n' +
-'.meta-row, .payment-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 3mm; font-size: 7.2pt; line-height: 1.35; }\n' +
-'.meta-row span, .payment-row span { color: #6b7280; }\n' +
-'.meta-row strong, .payment-row strong { text-align: right; color: #111827; }\n' +
-'.renter-name { font-size: 8.8pt; line-height: 1.2; font-weight: 750; }\n' +
-'.renter-contact { margin-top: .8mm; font-size: 7pt; color: #4b5563; }\n' +
-'.item { margin: 2.5mm 0; }\n' +
-'.item-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 3mm; }\n' +
-'.item-name { max-width: 34mm; font-size: 7.5pt; line-height: 1.3; font-weight: 750; }\n' +
-'.variant { font-weight: 500; color: #4b5563; }\n' +
-'.item-total { flex: 0 0 auto; font-size: 7.7pt; line-height: 1.3; font-weight: 800; text-align: right; white-space: nowrap; }\n' +
-'.item-meta { margin-top: .9mm; font-size: 6.7pt; color: #6b7280; line-height: 1.2; }\n' +
-'.total-box { margin-top: 2.8mm; padding: 2.4mm 0; border-top: .35mm solid #111827; border-bottom: .35mm solid #111827; }\n' +
-'.total-row { display: flex; align-items: baseline; justify-content: space-between; gap: 3mm; }\n' +
-'.total-label { font-size: 8.3pt; font-weight: 800; letter-spacing: .05em; }\n' +
-'.total-value { font-size: 11pt; font-weight: 900; white-space: nowrap; }\n' +
-'.qr-wrap { margin-top: 4mm; text-align: center; }\n' +
-'.qr { width: 29mm; height: 29mm; display: block; margin: 0 auto 2mm; image-rendering: crisp-edges; }\n' +
-'.qr-caption { font-size: 7pt; line-height: 1.25; font-weight: 800; letter-spacing: .09em; }\n' +
-'.qr-number { margin-top: .8mm; font-size: 7pt; line-height: 1.2; font-weight: 700; }\n' +
-'.footer-message { margin-top: 3mm; text-align: center; font-size: 6.7pt; line-height: 1.35; font-weight: 800; letter-spacing: .08em; }\n' +
-'.generated { margin-top: 2mm; text-align: center; font-size: 5.8pt; line-height: 1.25; color: #9ca3af; }\n' +
-'.small-note { font-size: 6.8pt; line-height: 1.4; white-space: pre-wrap; word-break: break-word; }\n' +
-'</style>\n</head>\n<body>\n' +
-'<main class="receipt">\n' +
-'<header class="center">\n' +
-'<div class="brand">AKASHA OUTDOOR RENT</div>\n' +
-'<div class="tagline">ready for your wild journey</div>\n' + address + contactHtml + '\n' +
-'</header>\n' +
-'<div class="rule"></div>\n' +
-'<section class="center"><div class="title">BUKTI PENYEWAAN</div><div class="rental-no">' + escapeHtml(receipt.nomor_penyewaan) + '</div></section>\n' +
-'<section class="section"><div class="section-title">PERIODE PENYEWAAN</div><div class="meta-grid">' +
-'<div class="meta-row"><span>Mulai</span><strong>' + escapeHtml(formatReceiptDateTime(receipt.jadwal_mulai, receipt.timezone)) + '</strong></div>' +
-'<div class="meta-row"><span>Berakhir</span><strong>' + escapeHtml(formatReceiptDateTime(receipt.jadwal_kembali, receipt.timezone)) + '</strong></div>' +
-'<div class="meta-row"><span>Toleransi</span><strong>' + escapeHtml(formatReceiptDateTime(receipt.tolerance_deadline, receipt.timezone)) + '</strong></div>' + pickup +
-'</div></section>\n' +
-'<section class="section"><div class="section-title">PENYEWA</div><div class="renter-name">' + escapeHtml(receipt.penyewa_nama) + '</div>' + (receipt.penyewa_telepon ? '<div class="renter-contact">' + escapeHtml(receipt.penyewa_telepon) + '</div>' : '') + '</section>\n' +
-'<section class="section"><div class="section-title">PERLENGKAPAN</div><div class="rule-soft"></div>' + (lines || '<div class="item-meta">Tidak ada perlengkapan.</div>') + '</section>\n' +
-'<div class="total-box"><div class="total-row"><span class="total-label">TOTAL PENYEWAAN</span><span class="total-value">' + escapeHtml(formatReceiptMoney(receipt.total_amount, receipt.currency_code)) + '</span></div></div>\n' +
-payment + note +
-'<div class="rule-soft"></div>\n' +
-'<div class="qr-wrap"><img class="qr" src="' + qrDataUrl + '" alt="QR Penyewaan" /><div class="qr-caption">QR PENYEWAAN</div><div class="qr-number">' + escapeHtml(receipt.nomor_penyewaan) + '</div></div>\n' +
-'<div class="footer-message">SEMOGA PERJALANAN ANDA MENYENANGKAN</div>\n' +
-'<div class="generated">Dicetak ' + escapeHtml(formatReceiptDateTime(receipt.generated_at, receipt.timezone)) + '</div>\n' +
-'</main>\n</body>\n</html>';
+/** Converts stored Indonesian mobile numbers to the international WhatsApp JID format. */
+export function normalizeReceiptWhatsAppPhone(value: string | null | undefined) {
+  const raw = (value ?? "").trim();
+  if (!raw) return "";
+  const explicitInternational = raw.startsWith("+") || raw.startsWith("00");
+  let digits = raw.replace(/\D/g, "");
+  if (raw.startsWith("00") && digits.startsWith("00")) digits = digits.slice(2);
+  else if (!explicitInternational && digits.startsWith("0")) digits = `62${digits.slice(1)}`;
+  else if (!explicitInternational && digits.startsWith("8")) digits = `62${digits}`;
+  return digits.length >= 8 && digits.length <= 15 ? digits : "";
+}
+
+/** Backward-compatible alias; all receipt callers now use the canonical layout. */
+export function buildThermalReceiptPrintHtml(receipt: RentalReceiptData, qrDataUrl: string) {
+  return buildRentalReceiptHtml(receipt, qrDataUrl);
 }
 
 type AndroidPrintBridge = {

@@ -568,7 +568,7 @@ export function Dashboard() {
             <Link
               key={label}
               to={href}
-              className="group flex min-h-[80px] flex-col items-center justify-center rounded-xl border border-border/60 bg-emerald-50/45 px-1.5 py-2.5 text-center transition-colors hover:bg-emerald-50 dark:bg-emerald-950/15 dark:hover:bg-emerald-950/25"
+              className="group flex min-h-[80px] flex-col items-center justify-center rounded-xl border border-border/60 bg-primary/5 px-1.5 py-2.5 text-center transition-colors hover:bg-primary/10 dark:bg-primary/10 dark:hover:bg-primary/15"
             >
               <span className="grid size-8 place-items-center rounded-xl text-primary">
                 <Icon className="size-4.5" strokeWidth={1.9} aria-hidden="true" />

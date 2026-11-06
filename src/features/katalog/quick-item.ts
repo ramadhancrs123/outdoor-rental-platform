@@ -190,3 +190,95 @@ export function quickItemLocationSelection(locations: QuickItemLocation[]) {
     selectionRequired: locations.length > 1,
   };
 }
+
+
+export type QuickSaleItemVariantInput = {
+  attributes: Record<string, string>;
+  quantity: number;
+  hargaJual: number;
+  hargaBeli?: number | null;
+};
+
+export type QuickSaleItemOnboardingInput = {
+  kategoriBarangId?: string | null;
+  kategoriNama?: string | null;
+  namaBarang: string;
+  deskripsi?: string | null;
+  inventoryMode: "serialized" | "quantity" | "untracked";
+  hargaJual?: number | null;
+  hargaBeli?: number | null;
+  jumlah?: number;
+  lokasiId?: string | null;
+  varianMode: boolean;
+  variants?: QuickSaleItemVariantInput[];
+};
+
+export type QuickSaleItemOnboardingResult = {
+  state: "committed";
+  channel: "sale";
+  usaha_id: string;
+  barang_id: string;
+  barang_nama: string;
+  slug: string;
+  kategori_barang_id: string;
+  kategori_dibuat: boolean;
+  inventory_mode: "serialized" | "quantity" | "untracked";
+  harga_beli?: number | null;
+  varian_mode: boolean;
+  variant_count: number;
+  unit_count: number;
+  stock_quantity: number | null;
+  min_price: number;
+  max_price: number;
+  currency_code: string;
+  variants: Array<{ varian_barang_id: string; nama: string; harga_jual: number; harga_beli?: number | null }>;
+  readiness: "ready";
+};
+
+export async function onboardQuickSaleItem(
+  usahaId: string,
+  input: QuickSaleItemOnboardingInput,
+  options: { idempotencyKey?: string; requestId?: string } = {},
+): Promise<QuickSaleItemOnboardingResult> {
+  const idempotencyKey = quickItemIdempotencyKey(options);
+  const payload = {
+    kategori_barang_id: input.kategoriBarangId ?? null,
+    kategori_nama: input.kategoriNama ?? null,
+    nama_barang: input.namaBarang.trim(),
+    deskripsi: input.deskripsi?.trim() || null,
+    inventory_mode: input.inventoryMode,
+    harga_jual: input.varianMode ? null : input.hargaJual ?? null,
+    harga_beli: input.inventoryMode === "untracked" && !input.varianMode ? input.hargaBeli ?? null : null,
+    jumlah: input.inventoryMode === "untracked" ? 0 : input.jumlah ?? 0,
+    lokasi_id: input.inventoryMode === "serialized" ? input.lokasiId ?? null : null,
+    varian_mode: input.varianMode,
+    variants: (input.variants ?? []).map((variant) => ({
+      attributes: variant.attributes,
+      jumlah: input.inventoryMode === "untracked" ? 0 : variant.quantity,
+      harga_jual: variant.hargaJual,
+      ...(input.inventoryMode === "untracked" ? { harga_beli: variant.hargaBeli ?? null } : {}),
+    })),
+  };
+  const { data, error } = await supabase.rpc("command_quick_sale_item_onboarding", {
+    p_usaha_id: usahaId,
+    p_payload: payload,
+    p_idempotency_key: idempotencyKey,
+    p_request_id: options.requestId ?? createClientId(),
+  });
+
+  if (!error && data) return data as QuickSaleItemOnboardingResult;
+
+  const reconciliation = await supabase.rpc("command_reconcile_catalog_mutation", {
+    p_usaha_id: usahaId,
+    p_command_name: "quick_item_onboarding",
+    p_idempotency_key: idempotencyKey,
+  });
+  if (!reconciliation.error && reconciliation.data?.state === "committed" && reconciliation.data.response) {
+    return reconciliation.data.response as QuickSaleItemOnboardingResult;
+  }
+  if (!reconciliation.error && reconciliation.data?.state === "unknown") {
+    throw new Error("UNKNOWN_OUTCOME: hasil penambahan barang jual belum dapat dipastikan. Periksa Katalog sebelum mencoba kembali.");
+  }
+  if (error) throw quickItemError(error);
+  throw new Error("Quick Item: server tidak mengembalikan hasil command.");
+}

@@ -9,6 +9,10 @@ import type {
   ReservationTenantContext,
   ReservationCommandResult,
   ReservationPricingLine,
+  ReservationAmendTarget,
+  ReservationAmendLineInput,
+  ReservationAmendmentResult,
+  ReservationAmendPreview,
   RequestDetail,
   RequestLineItem,
   RequestListItem,
@@ -63,7 +67,7 @@ const REQUEST_DETAIL_SELECT =
 const RESERVATION_SELECT =
   "reservasi_id,usaha_id,permintaan_sewa_id,penyewa_id,nomor_reservasi,mulai_reservasi,selesai_reservasi,status,stock_lock_status,confirmed_at,confirmed_by_admin_id,canceled_at,canceled_by_admin_id,cancellation_reason,catatan,created_at,updated_at";
 const RESERVATION_DETAIL_SELECT =
-  "detail_reservasi_id,usaha_id,reservasi_id,barang_id,varian_barang_id,paket_sewa_id,jumlah,unit_price,currency_code,subtotal,catatan";
+  "detail_reservasi_id,usaha_id,reservasi_id,barang_id,varian_barang_id,paket_sewa_id,jumlah,unit_price,currency_code,subtotal,catatan,tarif_sewa_id,promosi_paket_id,promosi_katalog_id,harga_normal_snapshot,diskon_persen_snapshot,nominal_diskon_snapshot,durasi_unit_snapshot,durasi_nilai_snapshot,created_at";
 
 export async function getReservasiContext(): Promise<ReservationTenantContext> {
   const { data: userData, error: userError } = await supabase.auth.getUser();
@@ -533,6 +537,15 @@ export async function getReservation(usahaId: string, reservationId: string): Pr
     currency_code: string;
     subtotal: string | number | null;
     catatan: string | null;
+    tarif_sewa_id: string | null;
+    promosi_paket_id: string | null;
+    promosi_katalog_id: string | null;
+    harga_normal_snapshot: string | number | null;
+    diskon_persen_snapshot: string | number | null;
+    nominal_diskon_snapshot: string | number | null;
+    durasi_unit_snapshot: string | null;
+    durasi_nilai_snapshot: string | number | null;
+    created_at: string;
   }>;
 
   const catalogNames = await resolveCatalogNames(
@@ -558,6 +571,143 @@ export async function getReservation(usahaId: string, reservationId: string): Pr
   };
 }
 
+
+export async function listReservationAmendTargets(usahaId: string): Promise<ReservationAmendTarget[]> {
+  const now = new Date().toISOString();
+  const [productsResult, variantsResult, packagesResult, tariffsResult] = await Promise.all([
+    supabase.from("barang")
+      .select("barang_id,nama,status,is_rentable")
+      .eq("usaha_id", usahaId).eq("status", "active").eq("is_rentable", true)
+      .order("nama"),
+    supabase.from("varian_barang")
+      .select("varian_barang_id,barang_id,nama,status,is_rentable")
+      .eq("usaha_id", usahaId).eq("status", "active")
+      .order("nama"),
+    supabase.from("paket_sewa")
+      .select("paket_sewa_id,nama,status")
+      .eq("usaha_id", usahaId).eq("status", "active")
+      .order("nama"),
+    supabase.from("tarif_sewa")
+      .select("tarif_sewa_id,barang_id,varian_barang_id,paket_sewa_id,nama,nominal,currency_code,durasi_unit,durasi_nilai,berlaku_mulai,berlaku_sampai")
+      .eq("usaha_id", usahaId).eq("status", "active")
+      .lte("berlaku_mulai", now)
+      .or("berlaku_sampai.is.null,berlaku_sampai.gt." + now)
+      .order("nominal"),
+  ]);
+  for (const result of [productsResult, variantsResult, packagesResult, tariffsResult]) {
+    if (result.error) throw result.error;
+  }
+
+  const products = productsResult.data ?? [];
+  const variants = variantsResult.data ?? [];
+  const packages = packagesResult.data ?? [];
+  const tariffs = tariffsResult.data ?? [];
+  const productMap = new Map(products.map((item) => [item.barang_id, item]));
+  const activeTariffs = tariffs.map((row) => ({
+    tarif_sewa_id: row.tarif_sewa_id,
+    nama: row.nama,
+    nominal: Number(row.nominal),
+    currency_code: String(row.currency_code ?? "IDR").trim(),
+    durasi_unit: row.durasi_unit,
+    durasi_nilai: Number(row.durasi_nilai),
+    berlaku_mulai: row.berlaku_mulai,
+    berlaku_sampai: row.berlaku_sampai,
+    barang_id: row.barang_id,
+    varian_barang_id: row.varian_barang_id,
+    paket_sewa_id: row.paket_sewa_id,
+  }));
+
+  const result: ReservationAmendTarget[] = [];
+  for (const product of products) {
+    const related = activeTariffs.filter((tariff) =>
+      tariff.paket_sewa_id == null &&
+      tariff.varian_barang_id == null &&
+      tariff.barang_id === product.barang_id
+    );
+    if (related.length) result.push({
+      key: "barang:" + product.barang_id,
+      barang_id: product.barang_id,
+      varian_barang_id: null,
+      paket_sewa_id: null,
+      label: product.nama,
+      tariffs: related,
+    });
+  }
+
+  for (const variant of variants) {
+    const parent = productMap.get(variant.barang_id);
+    if (!parent || !(variant.is_rentable ?? parent.is_rentable)) continue;
+    const specific = activeTariffs.filter((tariff) =>
+      tariff.paket_sewa_id == null && tariff.varian_barang_id === variant.varian_barang_id
+    );
+    const fallback = activeTariffs.filter((tariff) =>
+      tariff.paket_sewa_id == null &&
+      tariff.varian_barang_id == null &&
+      tariff.barang_id === parent.barang_id
+    );
+    const related = specific.length ? specific : fallback;
+    if (related.length) result.push({
+      key: "varian:" + variant.varian_barang_id,
+      barang_id: null,
+      varian_barang_id: variant.varian_barang_id,
+      paket_sewa_id: null,
+      label: parent.nama + " · " + variant.nama,
+      tariffs: related,
+    });
+  }
+
+  for (const packageItem of packages) {
+    const related = activeTariffs.filter((tariff) => tariff.paket_sewa_id === packageItem.paket_sewa_id);
+    if (related.length) result.push({
+      key: "paket:" + packageItem.paket_sewa_id,
+      barang_id: null,
+      varian_barang_id: null,
+      paket_sewa_id: packageItem.paket_sewa_id,
+      label: packageItem.nama + " (Paket)",
+      tariffs: related,
+    });
+  }
+
+  return result.sort((a, b) => a.label.localeCompare(b.label, "id"));
+}
+
+
+export async function previewReservationAmendment(
+  usahaId: string,
+  reservationId: string,
+  lines: ReservationAmendLineInput[],
+): Promise<ReservationAmendPreview> {
+  if (!lines.length) throw new Error("Reservasi harus memiliki minimal satu rincian.");
+  const { data, error } = await supabase.rpc("preview_reservation_amendment", {
+    p_usaha_id: usahaId,
+    p_reservasi_id: reservationId,
+    p_lines: lines,
+  });
+  return assertRpcResult(data as ReservationAmendPreview | null, error, "Preview perubahan reservasi");
+}
+
+export async function amendReservation(
+  usahaId: string,
+  reservationId: string,
+  expectedUpdatedAt: string,
+  lines: ReservationAmendLineInput[],
+  reason: string,
+  options: ReservationCommandOptions = {},
+): Promise<ReservationAmendmentResult> {
+  if (!lines.length) throw new Error("Reservasi harus memiliki minimal satu rincian.");
+  if (reason.trim().length < 3) throw new Error("Alasan perubahan minimal 3 karakter.");
+  const { data, error } = await supabase.rpc("command_amend_reservation", {
+    p_usaha_id: usahaId,
+    p_reservasi_id: reservationId,
+    p_expected_updated_at: expectedUpdatedAt,
+    p_lines: lines,
+    p_reason: reason.trim(),
+    p_idempotency_key: options.idempotencyKey ?? "amend-reservation-" + reservationId + "-" + createClientId(),
+    p_request_id: options.requestId ?? newCommandRequestId(),
+  });
+  return assertRpcResult(data as ReservationAmendmentResult | null, error, "Perubahan reservasi");
+}
+
 export function getReservationCapabilities(): ReservationCapabilities {
   return {
     read: true,
@@ -566,6 +716,7 @@ export function getReservationCapabilities(): ReservationCapabilities {
       "create_reservation_from_request",
       "confirm_reservation",
       "cancel_reservation",
+      "amend_reservation",
     ],
     reason:
       "Command Reservasi berjalan melalui trusted RPC dengan tenant validation, idempotency, transaction atomicity, audit, outbox, dan revalidasi source.",

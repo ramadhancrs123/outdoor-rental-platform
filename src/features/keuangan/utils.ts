@@ -1,9 +1,28 @@
 import type { FinancePeriodPreset, FinancePeriodSelection } from "./types";
 
+const FINANCE_SOURCE_LABELS: Record<string, string> = {
+  rental: "Penyewaan",
+  reservation: "Reservasi",
+  sale: "Penjualan Retail",
+  purchase: "Pembelian Barang",
+  pembelian: "Pembelian Barang",
+  rental_payment: "Pembayaran Penyewaan",
+  sales_payment: "Pembayaran Penjualan",
+  pembayaran_penjualan: "Pembayaran Penjualan",
+  expense: "Pengeluaran",
+  expense_settlement: "Pelunasan Pengeluaran",
+  finance_reversal: "Koreksi Keuangan",
+  payment: "Pembayaran",
+  maintenance: "Perawatan",
+  operational: "Operasional",
+  other: "Lainnya",
+  manual: "Manual",
+};
+
 export function semanticFinanceLabel(value: string | null | undefined) {
   if (!value) return "-";
-  return value
-    .toLowerCase()
+  const normalized = value.toLowerCase();
+  return FINANCE_SOURCE_LABELS[normalized] ?? normalized
     .split("_")
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))

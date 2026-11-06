@@ -13,6 +13,7 @@ import type {
   PurchaseListFilters,
   PurchaseListItem,
   PurchaseLineItem,
+  PurchaseReceivingSummary,
   SupplierDetail,
   SupplierListItem,
   CreateSupplierInput,
@@ -25,7 +26,18 @@ import { sanitizeProcurementSearch } from "./utils";
 
 type MembershipRow = { usaha_id: string; status: string; revoked_at: string | null };
 type CountRow = { pemasok_id: string | null; tanggal_pembelian: string };
-type PurchaseProgressLine = { detail_pembelian_id: string; pembelian_id: string; jumlah: string | number };
+type PurchaseProgressLine = {
+  detail_pembelian_id: string;
+  pembelian_id: string;
+  jumlah: string | number;
+};
+
+type PurchaseReceivingProgressRow = {
+  pembelian_id: string;
+  detail_pembelian_id: string;
+  inventory_mode: "serialized" | "quantity" | "untracked";
+  quantity_received: string | number;
+};
 type PurchaseUnitSourceRow = { sumber_pembelian_detail_id: string | null };
 type PurchaseInventoryProgress = { registeredUnits: number; pendingUnits: number; quantityReviewCount: number };
 type PurchaseLineInventoryProgress = { registered: number; remaining: number; needsReview: boolean };
@@ -265,14 +277,32 @@ async function getPurchaseLineInventoryProgress(
   const byLine = new Map<string, PurchaseLineInventoryProgress>();
   if (!purchaseIds.length) return { byPurchase, byLine };
 
-  const { data: lineRows, error: lineError } = await supabase
-    .from("detail_pembelian")
-    .select("detail_pembelian_id,pembelian_id,jumlah")
-    .eq("usaha_id", usahaId)
-    .in("pembelian_id", purchaseIds);
+  const [{ data: lineRows, error: lineError }, { data: purchaseRows, error: purchaseError }, receivingResult] =
+    await Promise.all([
+      supabase
+        .from("detail_pembelian")
+        .select("detail_pembelian_id,pembelian_id,jumlah")
+        .eq("usaha_id", usahaId)
+        .in("pembelian_id", purchaseIds),
+      supabase
+        .from("pembelian")
+        .select("pembelian_id,status")
+        .eq("usaha_id", usahaId)
+        .in("pembelian_id", purchaseIds),
+      supabase.rpc("get_purchase_receiving_progress", {
+        p_usaha_id: usahaId,
+        p_pembelian_ids: purchaseIds,
+      }),
+    ]);
   if (lineError) throw lineError;
+  if (purchaseError) throw purchaseError;
+  if (receivingResult.error) throw receivingResult.error;
 
   const lines = (lineRows ?? []) as PurchaseProgressLine[];
+  const purchaseStatus = new Map((purchaseRows ?? []).map((row) => [row.pembelian_id as string, row.status as string]));
+  const receivingByLine = new Map(
+    ((receivingResult.data ?? []) as PurchaseReceivingProgressRow[]).map((row) => [row.detail_pembelian_id, row]),
+  );
   const lineIds = lines.map((line) => line.detail_pembelian_id);
   const registeredByLine = new Map<string, number>();
   if (lineIds.length) {
@@ -294,9 +324,20 @@ async function getPurchaseLineInventoryProgress(
   for (const line of lines) {
     const rawQuantity = Number(line.jumlah);
     const quantity = Number.isFinite(rawQuantity) && rawQuantity > 0 ? rawQuantity : 0;
+    const receipt = receivingByLine.get(line.detail_pembelian_id) ?? null;
+    const mode = receipt?.inventory_mode ?? null;
+    const received = Math.max(0, Number(receipt?.quantity_received ?? 0));
     const registered = registeredByLine.get(line.detail_pembelian_id) ?? 0;
-    const needsReview = !Number.isInteger(quantity) || registered > Math.floor(quantity);
-    const remaining = Math.max(0, Math.floor(quantity) - registered);
+    const legacyCompleted = mode === null && purchaseStatus.get(line.pembelian_id) === "completed";
+    const needsReview = mode !== null
+      ? (mode !== "untracked" && !Number.isInteger(received))
+      : legacyCompleted && (!Number.isInteger(quantity) || registered > Math.floor(quantity));
+    const remaining = mode === "serialized"
+      ? Math.max(0, Math.floor(received) - registered)
+      : mode === null && legacyCompleted
+        ? Math.max(0, Math.floor(quantity) - registered)
+        : 0;
+
     byLine.set(line.detail_pembelian_id, { registered, remaining, needsReview });
     const current = byPurchase.get(line.pembelian_id) ?? {
       registeredUnits: 0,
@@ -317,6 +358,7 @@ async function getPurchaseLineInventoryProgress(
 
   return { byPurchase, byLine };
 }
+
 
 export async function listPurchases(
   usahaId: string,
@@ -381,7 +423,12 @@ export async function getPurchase(usahaId: string, pembelianId: string): Promise
   if (!data) throw new Error("Pembelian tidak ditemukan dalam Usaha aktif.");
 
   const purchase = data as PurchaseHeaderRow;
-  const [{ data: lineData, error: lineError }, supplierNames, lineCounts] = await Promise.all([
+  const [
+    { data: lineData, error: lineError },
+    supplierNames,
+    lineCounts,
+    receivingResult,
+  ] = await Promise.all([
     supabase
       .from("detail_pembelian")
       .select(PURCHASE_LINE_SELECT)
@@ -390,11 +437,27 @@ export async function getPurchase(usahaId: string, pembelianId: string): Promise
       .order("created_at", { ascending: true }),
     resolveSupplierNames(usahaId, [purchase.pemasok_id]),
     getLineCounts(usahaId, [purchase.pembelian_id]),
+    supabase.rpc("get_purchase_receiving_summary", {
+      p_usaha_id: usahaId,
+      p_pembelian_id: pembelianId,
+    }),
   ]);
 
   if (lineError) throw lineError;
+  if (receivingResult.error) throw receivingResult.error;
+  const receiving = (receivingResult.data ?? { state: "not_received" }) as PurchaseReceivingSummary;
 
-  const lines = (lineData ?? []) as Array<PurchaseLineItem>;
+  const receiptLinesByPurchaseLine = new Map(
+    (receiving.details ?? []).map((detail) => [detail.detail_pembelian_id, detail]),
+  );
+  const lines = ((lineData ?? []) as Array<PurchaseLineItem>).map((line) => {
+    const received = receiptLinesByPurchaseLine.get(line.detail_pembelian_id);
+    return {
+      ...line,
+      inventory_mode_snapshot: received?.inventory_mode ?? null,
+      received_quantity: received?.quantity_received ?? 0,
+    };
+  });
   const catalogIds = Array.from(
     new Set(lines.map((line) => line.barang_id).filter((id): id is string => Boolean(id))),
   );
@@ -427,6 +490,7 @@ export async function getPurchase(usahaId: string, pembelianId: string): Promise
 
   return {
     ...purchase,
+    receiving,
     pemasok_nama: purchase.pemasok_id ? supplierNames.get(purchase.pemasok_id) ?? null : null,
     line_count: lineCounts.get(purchase.pembelian_id) ?? 0,
     lines: lines.map((line) => ({
