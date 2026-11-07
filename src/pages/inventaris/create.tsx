@@ -14,6 +14,7 @@ import {
   UnknownOutcomeNotice,
 } from "@/components/inventaris/inventory-ui";
 import {
+  createCatalogTariff,
   createCatalogVariant,
   reconcileCatalogMutation,
 } from "@/features/katalog";
@@ -108,8 +109,12 @@ export function InventoryCreate() {
   const queryClient = useQueryClient();
   const commandRef = useRef<string | null>(null);
   const variantCreationKeyRef = useRef<string | null>(null);
+  const tariffCreationKeyRef = useRef<string | null>(null);
+  const tariffPendingVariantIdRef = useRef<string | null>(null);
+  const tariffPendingVariantNameRef = useRef<string | null>(null);
   const [creatingVariant, setCreatingVariant] = useState(false);
   const [variantDraft, setVariantDraft] = useState<InventoryVariantDraft>(EMPTY_INVENTORY_VARIANT_DRAFT);
+  const [variantTariffAmount, setVariantTariffAmount] = useState("");
   const [variantFeedback, setVariantFeedback] = useState("");
   const [form, setForm] = useState<RegisterInventoryUnitInput>(() => ({
     ...initialForm,
@@ -199,6 +204,13 @@ export function InventoryCreate() {
   const newVariantPurchaseConflict = Boolean(
     creatingVariant && sourceMode === "purchase" && selectedPurchaseLine?.varian_barang_id,
   );
+  const requiresNewVariantTariff = Boolean(creatingVariant && selectedProduct?.is_rentable && !matchingVariant);
+  const parsedVariantTariffAmount = Number(variantTariffAmount);
+  const validVariantTariff = !requiresNewVariantTariff || (
+    variantTariffAmount.trim() !== "" &&
+    Number.isFinite(parsedVariantTariffAmount) &&
+    parsedVariantTariffAmount >= 0
+  );
   const validVariantSelection = creatingVariant
     ? Boolean(inventoryVariantHasIdentity(variantDraft) && newVariantName && !newVariantPurchaseConflict && !(
         variantNameCollision && !matchingVariant
@@ -208,6 +220,7 @@ export function InventoryCreate() {
     context.data?.usahaId &&
     form.barangId &&
     validVariantSelection &&
+    validVariantTariff &&
     validJumlahUnit &&
     (sourceMode === "manual" || Boolean(form.sumberPembelianDetailId)) &&
     capabilities.mutation,
@@ -260,6 +273,10 @@ export function InventoryCreate() {
             }
             varianBarangId = createdVariantId;
             variantCreationKeyRef.current = null;
+            if (selectedProduct?.is_rentable) {
+              tariffPendingVariantIdRef.current = createdVariantId;
+              tariffPendingVariantNameRef.current = newVariantName;
+            }
             setForm((current) => ({ ...current, varianBarangId: createdVariantId }));
             setCreatingVariant(false);
             setVariantDraft(EMPTY_INVENTORY_VARIANT_DRAFT);
@@ -286,6 +303,33 @@ export function InventoryCreate() {
             setVariantDraft(EMPTY_INVENTORY_VARIANT_DRAFT);
             setVariantFeedback("Varian yang sama baru saja dibuat oleh proses lain. Unit akan menggunakan varian tersebut.");
           }
+        }
+      }
+
+      if (tariffPendingVariantIdRef.current) {
+        if (!selectedProduct?.is_rentable) {
+          tariffPendingVariantIdRef.current = null;
+          tariffCreationKeyRef.current = null;
+        } else {
+          if (!validVariantTariff) throw new Error("Isi tarif sewa per 1 hari untuk varian baru.");
+          if (!tariffCreationKeyRef.current) {
+            tariffCreationKeyRef.current = "inventory-create-tariff-" + createClientId();
+          }
+          const tariffTargetId = tariffPendingVariantIdRef.current;
+          const tariffVariantName = tariffPendingVariantNameRef.current || selectedVariant?.nama || newVariantName;
+          await createCatalogTariff(context.data.usahaId, {
+            varianBarangId: tariffTargetId,
+            nama: "Sewa " + selectedProduct.nama + (tariffVariantName ? " / " + tariffVariantName : ""),
+            durasiUnit: "hari",
+            durasiNilai: 1,
+            nominal: parsedVariantTariffAmount,
+            currencyCode: "IDR",
+            status: "active",
+          }, { idempotencyKey: tariffCreationKeyRef.current });
+          tariffCreationKeyRef.current = null;
+          tariffPendingVariantIdRef.current = null;
+          tariffPendingVariantNameRef.current = null;
+          setVariantFeedback("Tarif sewa per 1 hari berhasil ditambahkan untuk varian baru.");
         }
       }
 
@@ -363,6 +407,10 @@ export function InventoryCreate() {
             return;
           }
           setForm((current) => ({ ...current, varianBarangId: response.varian_barang_id! }));
+          if (selectedProduct?.is_rentable) {
+            tariffPendingVariantIdRef.current = response.varian_barang_id!;
+            tariffPendingVariantNameRef.current = newVariantName;
+          }
           setCreatingVariant(false);
           setVariantDraft(EMPTY_INVENTORY_VARIANT_DRAFT);
           setVariantFeedback("Varian baru terkonfirmasi. Tinjau kembali pendaftaran unit untuk melanjutkan.");
@@ -380,6 +428,29 @@ export function InventoryCreate() {
           setMode("form");
         } else {
           setFeedback("Hasil pembuatan varian masih belum dapat dipastikan. Jangan mengulang pembuatan varian.");
+        }
+        return;
+      }
+
+      if (tariffCreationKeyRef.current && tariffPendingVariantIdRef.current) {
+        const tariffResult = await reconcileCatalogMutation(
+          context.data.usahaId,
+          "create_tarif_sewa",
+          tariffCreationKeyRef.current,
+        );
+        if (tariffResult.state === "committed") {
+          tariffCreationKeyRef.current = null;
+          tariffPendingVariantIdRef.current = null;
+          tariffPendingVariantNameRef.current = null;
+          commandRef.current = null;
+          setFeedback("Tarif sewa varian sudah tersimpan. Tinjau kembali lalu lanjutkan pendaftaran unit.");
+          setMode("review");
+        } else if (tariffResult.state === "not_found") {
+          commandRef.current = null;
+          setFeedback("Tarif belum tercatat. Kembali ke tinjauan dan kirim ulang untuk menyimpan tarif sebelum unit didaftarkan.");
+          setMode("review");
+        } else {
+          setFeedback("Hasil pembuatan tarif belum dapat dipastikan. Jangan mengirim ulang sebelum status diperiksa.");
         }
         return;
       }
@@ -622,8 +693,12 @@ export function InventoryCreate() {
                     setJumlahUnit("1");
                     setCreatingVariant(false);
                     setVariantDraft(EMPTY_INVENTORY_VARIANT_DRAFT);
+                    setVariantTariffAmount("");
                     setVariantFeedback("");
                     variantCreationKeyRef.current = null;
+                    tariffCreationKeyRef.current = null;
+                    tariffPendingVariantIdRef.current = null;
+                    tariffPendingVariantNameRef.current = null;
                     const productVariants = (variants.data ?? []).filter((variant) => variant.barang_id === value);
                     setForm((current) => ({
                       ...current,
@@ -659,7 +734,11 @@ export function InventoryCreate() {
                         if (creatingVariant) {
                           setCreatingVariant(false);
                           setVariantDraft(EMPTY_INVENTORY_VARIANT_DRAFT);
+                          setVariantTariffAmount("");
                           variantCreationKeyRef.current = null;
+                          tariffCreationKeyRef.current = null;
+                          tariffPendingVariantIdRef.current = null;
+                          tariffPendingVariantNameRef.current = null;
                           setVariantFeedback("");
                         } else {
                           setCreatingVariant(true);
@@ -791,6 +870,27 @@ export function InventoryCreate() {
                       Deskripsi <span className="font-normal text-muted-foreground">(opsional)</span>
                       <Textarea value={variantDraft.deskripsi} onChange={(event) => updateVariantDraft("deskripsi", event.target.value)} placeholder="Informasi tambahan tentang varian" className="min-h-16 rounded-lg" rows={2} />
                     </label>
+                    {selectedProduct?.is_rentable && !matchingVariant ? (
+                      <label className="grid gap-1.5 text-xs font-semibold">
+                        Tarif sewa per 1 hari (IDR)
+                        <Input
+                          type="number"
+                          min="0"
+                          step="500"
+                          required={requiresNewVariantTariff}
+                          inputMode="numeric"
+                          value={variantTariffAmount}
+                          onChange={(event) => setVariantTariffAmount(event.target.value)}
+                          placeholder="Contoh: 25000"
+                          className="h-10 rounded-lg"
+                          aria-label="Tarif sewa per 1 hari"
+                        />
+                        <span className="text-[11px] font-normal leading-5 text-muted-foreground">
+                          Tarif aktif ini langsung ditautkan ke varian baru. Durasi lain dapat ditambahkan dari Katalog → Tarif.
+                        </span>
+                        {!validVariantTariff ? <span className="text-[11px] font-medium text-destructive">Masukkan nominal tarif yang valid, termasuk 0 bila gratis.</span> : null}
+                      </label>
+                    ) : null}
                     <div className="rounded-lg bg-background px-3 py-2.5">
                       <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Nama varian otomatis</p>
                       <p className="mt-1 text-sm font-semibold">{newVariantName || "Isi minimal satu atribut pembeda"}</p>
@@ -1092,6 +1192,12 @@ export function InventoryCreate() {
                   <p className="text-xs text-muted-foreground">Jumlah unit</p>
                   <p className="mt-1 font-semibold text-primary">{jumlahUnit} unit · kode tiap unit otomatis</p>
                 </div>
+                {selectedProduct?.is_rentable && Boolean(tariffPendingVariantIdRef.current || (creatingVariant && !matchingVariant)) ? (
+                  <div className="rounded-2xl border border-primary/20 bg-primary/[0.03] p-4">
+                    <p className="text-xs text-muted-foreground">Tarif sewa aktif · 1 hari</p>
+                    <p className="mt-1 font-semibold text-primary">Rp {parsedVariantTariffAmount.toLocaleString("id-ID")}</p>
+                  </div>
+                ) : null}
                 <div className="rounded-2xl border bg-muted/20 p-4">
                   <p className="text-xs text-muted-foreground">Asal unit</p>
                   <p className="mt-1 font-semibold">{sourceMode === "purchase" ? (selectedPurchaseLine ? "Pembelian terkait" : "Pembelian belum dipilih") : "Input manual / non-pembelian"}</p>

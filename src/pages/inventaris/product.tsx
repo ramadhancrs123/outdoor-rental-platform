@@ -126,24 +126,24 @@ function UnitCompactRow({
   return (
     <Link
       to={paths.inventaris + "/" + unit.unit_barang_id}
-      className="group box-border flex w-full min-w-0 items-center gap-3 overflow-hidden rounded-2xl border border-border/70 bg-card px-3.5 py-3 outline-none transition hover:bg-accent/25 focus-visible:ring-2 focus-visible:ring-ring"
+      className="group box-border flex w-full max-w-full min-w-0 items-center gap-2.5 overflow-hidden rounded-xl border border-border/70 bg-card px-3 py-2.5 outline-none transition hover:bg-accent/25 focus-visible:ring-2 focus-visible:ring-ring sm:gap-3 sm:rounded-2xl sm:px-3.5 sm:py-3"
     >
-      <div className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-xl bg-primary/[0.055] text-primary">
+      <div className="grid size-10 shrink-0 place-items-center overflow-hidden rounded-lg bg-primary/[0.055] text-primary sm:size-12 sm:rounded-xl">
         {photoUrl ? <img src={photoUrl} alt={hasPhysicalPhoto ? "Foto fisik " + unit.kode_unit : hasVariantPhoto ? "Foto varian " + displayName : "Foto produk " + productName} className="size-full object-cover" /> : <Boxes className="size-5" aria-hidden="true" />}
       </div>
       <div className="min-w-0 flex-1">
         <p className="break-words text-sm font-semibold leading-5">{displayName}</p>
         <p className="mt-0.5 break-all font-mono text-[10px] leading-4 text-muted-foreground">Kode unit · {unit.kode_unit}</p>
-        {hasPhysicalPhoto ? <p className="mt-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-400">Foto fisik unit</p> : hasVariantPhoto ? <p className="mt-0.5 text-[10px] text-muted-foreground">Foto representatif varian</p> : productPhoto ? <p className="mt-0.5 text-[10px] text-muted-foreground">Foto produk Katalog</p> : null}
-        <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5 text-xs text-muted-foreground">
+        {hasPhysicalPhoto ? <p className="mt-0.5 hidden text-[10px] font-medium text-emerald-700 dark:text-emerald-400 sm:block">Foto fisik unit</p> : hasVariantPhoto ? <p className="mt-0.5 hidden text-[10px] text-muted-foreground sm:block">Foto representatif varian</p> : productPhoto ? <p className="mt-0.5 hidden text-[10px] text-muted-foreground sm:block">Foto produk Katalog</p> : null}
+        <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground sm:mt-1.5 sm:gap-y-1.5 sm:text-xs">
           <Badge className={"shrink-0 rounded-full border px-2.5 py-1 text-[11px] " + statusTone(unit.status)}>
             {inventoryStatusLabel(unit.status)}
           </Badge>
-          <span className="inline-flex min-w-0 items-center gap-1.5">
+          <span className="inline-flex min-w-0 items-center gap-1.5 break-words [overflow-wrap:anywhere]">
             <MapPin className="size-3.5 shrink-0" />
             {unit.lokasi?.nama ?? "Lokasi belum ditentukan"}
           </span>
-          <span className="inline-flex min-w-0 items-center gap-1.5">
+          <span className="inline-flex min-w-0 items-center gap-1.5 break-words [overflow-wrap:anywhere]">
             <CircleAlert className="size-3.5 shrink-0" />
             {unit.kondisi_ringkas ?? "Kondisi belum dicatat"}
           </span>
@@ -173,15 +173,15 @@ function VariantUnitGroups({
   const variantById = new Map(variants.map((variant) => [variant.varian_barang_id, variant]));
 
   return (
-    <div className="space-y-4">
+    <div className="w-full min-w-0 space-y-4">
       {groups.map((group) => (
-        <section key={group.key} aria-label={"Varian " + group.label} className="space-y-2">
-          <div className="flex min-w-0 items-center justify-between gap-3 border-b border-border/60 pb-2">
+        <section key={group.key} aria-label={"Varian " + group.label} className="w-full min-w-0 space-y-2">
+          <div className="flex min-w-0 flex-col gap-2 border-b border-border/60 pb-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
               <h3 className="truncate text-sm font-semibold">{group.label}</h3>
               <p className="text-xs text-muted-foreground">{productName}</p>
             </div>
-            <div className="flex shrink-0 items-center gap-2">
+            <div className="flex w-full min-w-0 flex-wrap items-center gap-2 sm:w-auto sm:shrink-0 sm:justify-end">
               <Badge variant="outline" className="rounded-full tabular-nums">{group.units.length} ditampilkan</Badge>
               <Button asChild size="sm" variant="outline" className="h-8 rounded-lg px-2.5 text-[11px]">
                 <Link to={paths.inventarisCreate + "?barangId=" + productId + (group.key === "without-variant" ? "" : "&varianBarangId=" + group.key)}>
@@ -347,7 +347,7 @@ export function InventoryProductShow() {
   ] as const;
 
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-4 pb-20 sm:space-y-5 lg:pb-10">
+    <div className="mx-auto w-full min-w-0 max-w-5xl space-y-4 overflow-x-clip pb-20 sm:space-y-5 lg:pb-10">
       <header className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           <Button asChild variant="ghost" size="icon" className="-ml-2 size-9 rounded-xl" aria-label="Kembali ke Inventaris">
@@ -454,7 +454,7 @@ export function InventoryProductShow() {
       </nav>
 
       {tab === "info" ? (
-        <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
+        <div className="grid w-full min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
           <div className="min-w-0 space-y-4">
             <Card className="rounded-[22px] border-border/70 shadow-none">
               <CardHeader className="p-4 pb-3">
@@ -475,12 +475,12 @@ export function InventoryProductShow() {
                   <div
                     key={label}
                     className={[
-                      "grid grid-cols-[132px_minmax(0,1fr)] items-center gap-3 rounded-xl px-3 py-2.5",
+                      "grid min-w-0 grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] items-start gap-2 rounded-xl px-2.5 py-2.5 sm:grid-cols-[132px_minmax(0,1fr)] sm:items-center sm:gap-3 sm:px-3",
                       index % 2 === 0 ? "bg-muted/20" : "bg-background",
                     ].join(" ")}
                   >
-                    <span className="text-xs text-muted-foreground">{label}</span>
-                    <span className="min-w-0 truncate text-sm font-medium">{value}</span>
+                    <span className="min-w-0 text-[11px] leading-5 text-muted-foreground sm:text-xs">{label}</span>
+                    <span className="min-w-0 break-words text-xs font-medium leading-5 [overflow-wrap:anywhere] sm:text-sm">{value}</span>
                   </div>
                 ))}
               </CardContent>
@@ -571,8 +571,8 @@ export function InventoryProductShow() {
             </Card>
 
             <Card className="rounded-[22px] border-border/70 shadow-none">
-              <CardHeader className="flex flex-row items-center justify-between gap-3 p-4 pb-3">
-                <div>
+              <CardHeader className="flex flex-col gap-2 p-3 pb-3 sm:flex-row sm:items-center sm:justify-between sm:p-4 sm:pb-3">
+                <div className="min-w-0">
                   <CardTitle className="flex items-center gap-2 text-base">
                     <Boxes className="size-5 text-primary" />
                     Daftar Unit Fisik
@@ -582,14 +582,14 @@ export function InventoryProductShow() {
                 <Button
                   type="button"
                   variant="ghost"
-                  className="h-9 rounded-full px-3 text-xs text-primary"
+                  className="h-8 self-start rounded-full px-3 text-xs text-primary sm:h-9 sm:self-auto"
                   onClick={() => setTab("units")}
                 >
                   Lihat semua
                   <ChevronRight />
                 </Button>
               </CardHeader>
-              <CardContent className="grid gap-2.5 p-4 pt-0">
+              <CardContent className="grid min-w-0 gap-2.5 overflow-hidden p-3 pt-0 sm:p-4 sm:pt-0">
                 <VariantUnitGroups
                   units={(data.units.units ?? []).slice(0, 6)}
                   variants={data.variants}

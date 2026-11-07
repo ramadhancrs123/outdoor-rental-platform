@@ -102,6 +102,7 @@ export type InventoryCatalogItem = {
   nama: string;
   slug: string;
   status: string;
+  is_rentable: boolean;
 };
 
 export type InventoryVariantMedia = {

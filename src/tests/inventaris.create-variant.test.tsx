@@ -14,6 +14,7 @@ const inventoryMock = vi.hoisted(() => ({
 }));
 const catalogMock = vi.hoisted(() => ({
   createCatalogVariant: vi.fn(),
+  createCatalogTariff: vi.fn(),
   reconcileCatalogMutation: vi.fn(),
 }));
 const purchaseMock = vi.hoisted(() => ({ getPurchase: vi.fn(), listPurchases: vi.fn() }));
@@ -25,7 +26,7 @@ vi.mock("@/features/pemasok", () => purchaseMock);
 import { InventoryCreate } from "@/pages/inventaris/create";
 
 const context = { akunAdminId: "admin-1", usahaId: "usaha-1", usahaNama: "Akasha Outdoor" };
-const product = { barang_id: "barang-1", nama: "Tenda Dome 4P", slug: "tenda-dome-4p", status: "active" };
+const product = { barang_id: "barang-1", nama: "Tenda Dome 4P", slug: "tenda-dome-4p", status: "active", is_rentable: false };
 const existingVariant = {
   varian_barang_id: "variant-existing",
   barang_id: "barang-1",
@@ -72,6 +73,7 @@ beforeEach(() => {
     units: [{ unit_barang_id: "unit-1", kode_unit: "TD4P-001", status: "ready" }],
   });
   catalogMock.createCatalogVariant.mockReset().mockResolvedValue({ varian_barang_id: "variant-created", barang_id: "barang-1" });
+  catalogMock.createCatalogTariff.mockReset().mockResolvedValue({ tarif_sewa_id: "tariff-created" });
   catalogMock.reconcileCatalogMutation.mockReset();
   purchaseMock.getPurchase.mockReset();
   purchaseMock.listPurchases.mockReset().mockResolvedValue({ purchases: [] });
@@ -100,6 +102,40 @@ describe("Inventaris unit registration variant creation", () => {
       atributPembeda: { warna: "Hitam", kapasitas: "4 orang" },
       status: "active",
     }, expect.objectContaining({ idempotencyKey: expect.stringMatching(/^inventory-create-variant-/) })));
+
+    await waitFor(() => expect(inventoryMock.registerInventoryUnits).toHaveBeenCalledWith("usaha-1", expect.objectContaining({
+      barangId: "barang-1",
+      varianBarangId: "variant-created",
+    }), 1, expect.objectContaining({ idempotencyKey: expect.any(String) })));
+    expect(await screen.findByText("Unit berhasil didaftarkan")).toBeInTheDocument();
+  });
+
+  test("requires and persists a one-day rental tariff for a newly created variant of a rentable product", async () => {
+    inventoryMock.listInventoryProducts.mockResolvedValue([{ ...product, is_rentable: true }]);
+    renderPage();
+    await chooseProduct();
+
+    fireEvent.click(screen.getByRole("button", { name: "+ Tambah varian" }));
+    fireEvent.change(screen.getByLabelText("Kapasitas / Ukuran"), { target: { value: "2" } });
+    fireEvent.change(screen.getByLabelText("Seri"), { target: { value: "Single layer" } });
+
+    const tariffInput = screen.getByLabelText("Tarif sewa per 1 hari");
+    expect(tariffInput).toBeRequired();
+    fireEvent.change(tariffInput, { target: { value: "25000" } });
+
+    await proceedToReview();
+    expect(screen.getByText("Tarif sewa aktif · 1 hari")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Daftarkan 1 Unit" }));
+
+    await waitFor(() => expect(catalogMock.createCatalogTariff).toHaveBeenCalledWith("usaha-1", {
+      varianBarangId: "variant-created",
+      nama: "Sewa Tenda Dome 4P / Kapasitas/Ukuran 2 · Seri Single layer",
+      durasiUnit: "hari",
+      durasiNilai: 1,
+      nominal: 25000,
+      currencyCode: "IDR",
+      status: "active",
+    }, expect.objectContaining({ idempotencyKey: expect.stringMatching(/^inventory-create-tariff-/) })));
 
     await waitFor(() => expect(inventoryMock.registerInventoryUnits).toHaveBeenCalledWith("usaha-1", expect.objectContaining({
       barangId: "barang-1",

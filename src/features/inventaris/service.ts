@@ -318,7 +318,7 @@ export function getInventoryStateCapabilities(): InventoryCapabilities {
 export async function listInventoryProducts(usahaId: string): Promise<InventoryCatalogItem[]> {
   const { data, error } = await supabase
     .from("barang")
-    .select("barang_id,nama,slug,status")
+    .select("barang_id,nama,slug,status,is_rentable")
     .eq("usaha_id", usahaId)
     .eq("status", "active")
     .order("nama", { ascending: true });
