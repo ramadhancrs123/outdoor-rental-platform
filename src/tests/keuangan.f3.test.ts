@@ -46,6 +46,10 @@ describe("Finance F3 contract", () => {
 
   test("finance status language avoids accounting profit semantics", () => {
     expect(semanticFinanceLabel("recorded_income")).toBe("Recorded Income");
+    expect(semanticFinanceLabel("sale")).toBe("Penjualan Retail");
+    expect(semanticFinanceLabel("purchase")).toBe("Pembelian Barang");
+    expect(semanticFinanceLabel("sales_payment")).toBe("Pembayaran Penjualan");
+    expect(semanticFinanceLabel("expense_settlement")).toBe("Pelunasan Pengeluaran");
     expect(formatFinanceTimezone("Asia/Jakarta")).toContain("Asia/Jakarta");
   });
 });

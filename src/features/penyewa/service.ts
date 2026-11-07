@@ -324,6 +324,30 @@ export async function listRenters(
   return enrichVerificationStatus(tenant.usahaId, renters, token);
 }
 
+
+export type RenterOverview = {
+  total: number;
+  active: number;
+  pendingIdentityDocuments: number;
+};
+
+export async function getRenterOverview(usahaId: string): Promise<RenterOverview> {
+  const [total, active, pendingIdentityDocuments] = await Promise.all([
+    supabase.from("penyewa").select("penyewa_id", { count: "exact", head: true }).eq("usaha_id", usahaId),
+    supabase.from("penyewa").select("penyewa_id", { count: "exact", head: true })
+      .eq("usaha_id", usahaId).eq("status", "active"),
+    supabase.from("bukti_identitas_penyewa").select("bukti_identitas_id", { count: "exact", head: true })
+      .eq("usaha_id", usahaId).eq("status_verifikasi", "pending"),
+  ]);
+  const failed = [total, active, pendingIdentityDocuments].find((result) => result.error);
+  if (failed?.error) throw failed.error;
+  return {
+    total: total.count ?? 0,
+    active: active.count ?? 0,
+    pendingIdentityDocuments: pendingIdentityDocuments.count ?? 0,
+  };
+}
+
 export function buildRenterDetailPath(usahaId: string, penyewaId: string) {
   return `penyewa?select=${detailSelect}&usaha_id=eq.${encode(usahaId)}&penyewa_id=eq.${encode(penyewaId)}&limit=1`;
 }

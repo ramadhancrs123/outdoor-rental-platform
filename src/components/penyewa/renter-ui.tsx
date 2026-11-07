@@ -29,6 +29,34 @@ export function RenterAvatar({
   );
 }
 
+export function CurrentUsahaInline({ className = "" }: { className?: string }) {
+  const { status, current, available, selectUsaha } = useCurrentUsaha();
+  const busy = status === "loading";
+  const canSwitch = available.length > 1;
+
+  return (
+    <div className={"inline-flex min-w-0 items-center gap-1.5 rounded-full border border-border/70 bg-card px-2.5 py-1 " + className}>
+      <Building2 className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+      {canSwitch ? (
+        <Select value={current?.usahaId ?? ""} onValueChange={(value) => void selectUsaha(value)} disabled={busy}>
+          <SelectTrigger aria-label="Ganti usaha aktif" className="h-6 min-w-0 max-w-[190px] border-0 bg-transparent px-0 py-0 text-[11px] font-medium shadow-none">
+            <SelectValue placeholder={busy ? "Memuat usaha…" : "Pilih usaha"} />
+          </SelectTrigger>
+          <SelectContent align="start">
+            {available.map((usaha) => (
+              <SelectItem key={usaha.usahaId} value={usaha.usahaId}>{usaha.usahaNama}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      ) : (
+        <span className="max-w-[190px] truncate text-[11px] font-medium text-muted-foreground">
+          {busy ? "Memuat usaha…" : current?.usahaNama ?? "Pilih usaha"}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export function CurrentUsahaCard({ className = "" }: { className?: string }) {
   const { status, current, available, selectUsaha } = useCurrentUsaha();
   const busy = status === "loading";
@@ -255,7 +283,7 @@ export function CapabilityPlaceholder({
         <Users className="size-5 text-muted-foreground" aria-hidden="true" />
         <p className="font-semibold">{title}</p>
         <p className="text-sm leading-5 text-muted-foreground">
-          {description ?? "Belum tersedia pada read-side contract yang terverifikasi."}
+          {description ?? "Informasi belum tersedia."}
         </p>
       </CardContent>
     </Card>

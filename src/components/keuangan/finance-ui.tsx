@@ -242,12 +242,14 @@ export function FinancePeriodCompact({
   onPreset,
   onCustomStart,
   onCustomEnd,
+  compact = false,
 }: {
   timezone: string;
   selection: FinancePeriodSelection;
   onPreset: (preset: FinancePeriodPreset) => void;
   onCustomStart: (value: string) => void;
   onCustomEnd: (value: string) => void;
+  compact?: boolean;
 }) {
   const labels: Array<[FinancePeriodPreset, string]> = [
     ["today", "Hari ini"],
@@ -263,11 +265,20 @@ export function FinancePeriodCompact({
           type="button"
           variant="outline"
           size="sm"
-          className="h-9 gap-1.5 rounded-full px-3 text-[11px] font-semibold"
+          className={cn(
+            "font-semibold",
+            compact
+              ? "h-7 max-w-[112px] gap-1 rounded-lg px-2 text-[9px] sm:max-w-[170px] sm:rounded-full sm:px-2.5"
+              : "h-9 gap-1.5 rounded-full px-3 text-[11px]",
+          )}
           aria-label="Atur periode keuangan"
         >
-          <CalendarDays className="size-3.5 text-primary" />
-          <span>{formatFinancePeriodLabel(selection.startDate, selection.endDateExclusive, timezone)}</span>
+          <CalendarDays className={cn("shrink-0 text-primary", compact ? "size-3" : "size-3.5")} />
+          <span className={cn("truncate", compact && "max-w-[76px] sm:max-w-[132px]")}>
+            {compact
+              ? labels.find(([value]) => value === selection.preset)?.[1] ?? "Rentang"
+              : formatFinancePeriodLabel(selection.startDate, selection.endDateExclusive, timezone)}
+          </span>
         </Button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-[min(320px,calc(100vw-24px))] p-3">

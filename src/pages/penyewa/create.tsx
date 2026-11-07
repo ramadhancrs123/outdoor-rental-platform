@@ -7,6 +7,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useCurrentUsaha } from "@/app/current-usaha-context";
@@ -25,7 +26,13 @@ function createIdempotencyKey() {
   return "create-renter-" + createClientId();
 }
 
-export function RenterCreate() {
+type RenterCreateProps = {
+  presentation?: "page" | "dialog";
+  onCreated?: (renterId: string) => void;
+  onCancel?: () => void;
+};
+
+export function RenterCreate({ presentation = "page", onCreated, onCancel }: RenterCreateProps) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const {
@@ -52,6 +59,10 @@ export function RenterCreate() {
     : paths.penyewa;
 
   const navigateToRenter = (renterId: string) => {
+    if (onCreated) {
+      onCreated(renterId);
+      return;
+    }
     if (isQuickAdd) {
       navigate(returnTo + "?renter_id=" + encodeURIComponent(renterId));
       return;
@@ -184,8 +195,118 @@ export function RenterCreate() {
 
   const unknownOutcome = mutation.error instanceof RenterUnknownOutcomeError;
 
+  if (presentation === "dialog") {
+    return (
+      <div className="space-y-4">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium" htmlFor="renter-name">Nama lengkap <span aria-hidden="true">*</span></label>
+            <Input
+              id="renter-name"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              autoComplete="name"
+              aria-invalid={Boolean(fieldErrors.name)}
+              aria-describedby={fieldErrors.name ? "renter-name-error" : undefined}
+              placeholder="Nama pelanggan"
+              className="h-10 rounded-xl"
+            />
+            {fieldErrors.name ? <p id="renter-name-error" className="text-xs text-destructive">{fieldErrors.name}</p> : null}
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium" htmlFor="renter-phone">Nomor telepon <span aria-hidden="true">*</span></label>
+            <Input
+              id="renter-phone"
+              value={phone}
+              onChange={(event) => setPhone(event.target.value)}
+              inputMode="tel"
+              autoComplete="tel"
+              aria-invalid={Boolean(fieldErrors.phone)}
+              aria-describedby={fieldErrors.phone ? "renter-phone-error" : undefined}
+              placeholder="08xxxxxxxxxx"
+              className="h-10 rounded-xl"
+            />
+            {fieldErrors.phone ? <p id="renter-phone-error" className="text-xs text-destructive">{fieldErrors.phone}</p> : null}
+          </div>
+        </div>
+
+        <details className="group rounded-xl border border-border/80 bg-muted/15">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 text-sm font-medium">
+            Informasi tambahan <span className="text-xs font-normal text-muted-foreground">Alamat & catatan</span>
+          </summary>
+          <div className="grid gap-3 border-t p-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium" htmlFor="renter-address">Alamat</label>
+              <Textarea id="renter-address" value={address} onChange={(event) => setAddress(event.target.value)} autoComplete="street-address" placeholder="Alamat pelanggan" rows={3} />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium" htmlFor="renter-note">Catatan internal</label>
+              <Textarea id="renter-note" value={note} onChange={(event) => setNote(event.target.value)} placeholder="Catatan untuk tim operasional" rows={3} />
+            </div>
+          </div>
+        </details>
+
+        {duplicateLoading ? (
+          <div className="rounded-xl border border-dashed p-3 text-xs text-muted-foreground" role="status" aria-live="polite">Memeriksa kecocokan pelanggan…</div>
+        ) : duplicateVisible ? (
+          <DuplicateRenterNotice
+            candidates={candidates.map((candidate) => ({
+              penyewa_id: candidate.penyewa_id,
+              nama_lengkap: candidate.nama_lengkap,
+              nomor_telepon: maskPhone(candidate.nomor_telepon),
+              status: candidate.status,
+            }))}
+            onUse={navigateToRenter}
+            onKeep={() => setDuplicateDismissed(true)}
+          />
+        ) : null}
+
+        {mutation.error && !unknownOutcome ? (
+          <Alert variant="destructive" role="alert">
+            <AlertTitle>Pendaftaran belum berhasil</AlertTitle>
+            <AlertDescription>{mutation.error.message}</AlertDescription>
+          </Alert>
+        ) : null}
+        {unknownOutcome ? (
+          <Alert variant="destructive" role="alert">
+            <AlertTitle>Hasil pendaftaran belum diketahui</AlertTitle>
+            <AlertDescription className="gap-2">
+              <p>Periksa status pendaftaran sebelum mencoba kembali.</p>
+              <Button type="button" size="sm" variant="outline" onClick={() => reconciliation.mutate()} disabled={reconciliation.isPending}>
+                {reconciliation.isPending ? "Memeriksa…" : "Periksa status"}
+              </Button>
+            </AlertDescription>
+          </Alert>
+        ) : null}
+        {reconciliation.error ? (
+          <Alert variant="destructive" role="alert">
+            <AlertTitle>Status belum dapat diperiksa</AlertTitle>
+            <AlertDescription>{reconciliation.error.message}</AlertDescription>
+          </Alert>
+        ) : null}
+
+        <div className="flex flex-col-reverse gap-2 border-t pt-3 sm:flex-row sm:justify-end">
+          <Button type="button" variant="outline" className="rounded-xl" onClick={onCancel} disabled={mutation.isPending || reconciliation.isPending}>
+            Batal
+          </Button>
+          <Button
+            className="rounded-xl"
+            disabled={submitDisabled || unknownOutcome}
+            onClick={() => {
+              setFieldErrors({});
+              mutation.mutate();
+            }}
+          >
+            {mutation.isPending ? "Mendaftarkan…" : "Daftarkan penyewa"}
+            {!mutation.isPending ? <Check /> : null}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="mx-auto w-full max-w-3xl space-y-4 pb-28 sm:space-y-5 sm:pb-8">
+    <div className="mx-auto w-full max-w-3xl space-y-4 pb-8 sm:space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Button asChild variant="ghost" className="-ml-3 rounded-xl">
           <Link to={returnTo}>
@@ -368,8 +489,8 @@ export function RenterCreate() {
         </Alert>
       ) : null}
 
-      <div className="fixed inset-x-3 bottom-3 z-20 sm:static sm:inset-auto">
-        <div className="mx-auto max-w-3xl rounded-2xl border bg-background/95 p-2 shadow-xl backdrop-blur sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none">
+      <div className="pt-2">
+        <div className="mx-auto max-w-3xl">
           <Button
             className="h-12 w-full rounded-xl"
             disabled={submitDisabled || unknownOutcome}
@@ -384,5 +505,36 @@ export function RenterCreate() {
         </div>
       </div>
     </div>
+  );
+}
+
+
+export function RenterCreateDialog({
+  open,
+  onOpenChange,
+  onCreated,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onCreated: (renterId: string) => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[90dvh] overflow-hidden rounded-2xl p-0 sm:max-w-xl">
+        <DialogHeader className="px-5 pb-0 pt-5">
+          <DialogTitle>Tambah penyewa</DialogTitle>
+          <DialogDescription>Masukkan nama dan nomor telepon pelanggan.</DialogDescription>
+        </DialogHeader>
+        {open ? (
+          <div className="max-h-[calc(90dvh-104px)] overflow-y-auto px-5 pb-5">
+            <RenterCreate
+              presentation="dialog"
+              onCancel={() => onOpenChange(false)}
+              onCreated={onCreated}
+            />
+          </div>
+        ) : null}
+      </DialogContent>
+    </Dialog>
   );
 }

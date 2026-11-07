@@ -62,6 +62,8 @@ describe("scenario B — responsive admin shell", () => {
 
     expect(await screen.findByRole("banner")).toBeInTheDocument();
     expect(await screen.findByRole("link", { name: /^Dashboard$/ })).toBeInTheDocument();
-    expect(await screen.findAllByRole("link", { name: /^Laporan$/ })).not.toHaveLength(0);
+    const insightGroup = await screen.findByRole("button", { name: /^Insight/ });
+    await insightGroup.click();
+    expect(await screen.findByRole("link", { name: /^Laporan$/ })).toBeInTheDocument();
   }, 15000);
 });

@@ -229,7 +229,9 @@ export default async function financeScenario({ page, baseURL, capture }) {
   console.log("FINANCE_BODY_START", (await page.locator("body").innerText()).slice(0, 5000));
   await assertVisible(page, "Pemasukan Tercatat");
   await assertVisible(page, "Pengeluaran Tercatat");
-  await assertVisible(page, "Net Operasional");
+  await assertVisible(page, "Net Arus Transaksi");
+  await assertVisible(page, "Bukan laba bersih");
+  await assertVisible(page, "Buka Analisis Retail");
   await assertVisible(page, "Transaksi Terbaru");
   await assertVisible(page, "Perlu Perhatian");
   await assertVisible(page, "Analisis Keuangan");
@@ -248,8 +250,10 @@ export default async function financeScenario({ page, baseURL, capture }) {
   } else {
     await page.locator("table tbody tr").filter({ hasText: "Reservasi RSV-F3-001" }).first().waitFor({ state: "visible" });
   }
-  await page.getByRole("button", { name: /Custom/i }).click();
-  await assertVisible(page, "Mulai");
+  const paymentPeriod = page.locator("details").filter({ hasText: "Periode" }).first();
+  await paymentPeriod.locator("summary").click();
+  await paymentPeriod.getByRole("button", { name: "Rentang", exact: true }).click();
+  await page.getByLabel("Tanggal mulai").waitFor({ state: "visible" });
   await capture("finance-payments-period");
 
   await page.goto(baseURL + "/keuangan/pembayaran/pay-fin-001", { waitUntil: "domcontentloaded" });

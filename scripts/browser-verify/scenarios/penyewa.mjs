@@ -33,7 +33,7 @@ export default async function penyewaScenario({ page, capture }) {
     await page.waitForTimeout(700);
     await capture("detail-summary");
 
-    for (const tab of ["Ringkasan", "Identitas", "Kontak", "Operasional"]) {
+    for (const tab of ["Ringkasan", "Penyewaan", "Identitas", "Kontak"]) {
       await page.getByRole("tab", { name: tab }).click();
       await page.waitForTimeout(250);
       await capture(`detail-tab-${tab}`);

@@ -166,7 +166,10 @@ export async function exportFinanceReportToExcel(report: FinanceExportReport, bu
   const summary = report.summary;
   const summaryRows: Array<Array<string | number | boolean | null>> = [
     ...report.currencySummaries.flatMap((item) => [
-      [item.currency_code, "Pemasukan tercatat", item.recorded_income, item.recorded_income_transaction_count, "Transaksi Finance berstatus tercatat."],
+      [item.currency_code, "Pendapatan penyewaan", Number(item.rental_income ?? 0), "", "Transaksi keuangan dengan sumber penyewaan atau reservasi."],
+      [item.currency_code, "Pendapatan penjualan retail", Number(item.retail_income ?? 0), "", "Transaksi keuangan dengan sumber penjualan retail."],
+      [item.currency_code, "Pendapatan sumber lain", Number(item.other_income ?? 0), "", "Pemasukan yang bukan berasal dari penyewaan atau penjualan retail."],
+      [item.currency_code, "Pemasukan tercatat", item.recorded_income, item.recorded_income_transaction_count, "Seluruh transaksi Finance berstatus tercatat."],
       [item.currency_code, "Pengeluaran tercatat", item.recorded_expense, item.recorded_expense_transaction_count, "Transaksi Finance berstatus tercatat."],
       [item.currency_code, "Net transaksi", item.net_operational_movement, item.recorded_income_transaction_count + item.recorded_expense_transaction_count, "Pemasukan dikurangi pengeluaran tercatat dalam mata uang yang sama; bukan laba bersih atau saldo kas."],
       [item.currency_code, "Pembayaran tercatat", item.recorded_payment_amount, item.recorded_payment_count, "Fakta pembayaran ditampilkan terpisah, tidak dijumlahkan ke transaksi Finance."],
@@ -574,6 +577,227 @@ export async function exportFinanceReportToExcel(report: FinanceExportReport, bu
       ["Cakupan atribusi", "", "", "", report.unitRevenue.coverage_ratio === null ? "N/A" : Math.round(report.unitRevenue.coverage_ratio * 100) + "%", "", report.unitRevenue.allocation_policy],
     ],
     numericColumns: [5],
+  });
+
+
+  const retailSales = report.retailSales ?? [];
+  const retailSaleLines = report.retailSaleLines ?? [];
+  const purchases = report.purchases ?? [];
+  const purchaseLines = report.purchaseLines ?? [];
+  const purchaseReceipts = report.purchaseReceipts ?? [];
+  const purchaseReceiptLines = report.purchaseReceiptLines ?? [];
+  const promotionUsage = report.promotionUsage ?? [];
+
+  writeTableSheet(workbook, {
+    name: "Penjualan Retail",
+    title: "RINGKASAN TRANSAKSI PENJUALAN RETAIL",
+    businessName,
+    period: report.period,
+    headers: ["Tanggal", "Nomor Penjualan", "Sumber", "Pelanggan", "Status", "Pembayaran", "Jumlah Jenis Barang", "Jumlah Terjual", "Omzet", "HPP Diketahui", "Laba Kotor Terhitung", "Baris HPP Belum Lengkap", "Mata Uang"],
+    widths: [24, 25, 16, 30, 16, 18, 20, 18, 20, 20, 23, 25, 14],
+    rows: retailSales.map((sale) => [
+      sale.created_at,
+      sale.nomor_penjualan,
+      sale.source === "mixed" ? "Checkout gabungan" : "POS",
+      sale.nama_pelanggan ?? "Pelanggan umum",
+      sale.status,
+      sale.payment_status,
+      sale.item_count,
+      sale.quantity,
+      sale.total_amount,
+      sale.known_hpp,
+      sale.gross_profit_known,
+      sale.hpp_unknown_lines,
+      sale.currency_code,
+    ]),
+    numericColumns: [7, 8, 9, 10, 11, 12],
+  });
+
+  writeTableSheet(workbook, {
+    name: "Rincian Penjualan",
+    title: "RINCIAN BARANG TERJUAL",
+    businessName,
+    period: report.period,
+    headers: ["Tanggal", "Nomor Penjualan", "Barang", "Varian", "Mode Stok", "Jumlah", "Harga Normal / Unit", "Diskon %", "Nominal Diskon", "Harga Jual", "Subtotal", "HPP Satuan", "Total HPP", "Laba Kotor Terhitung", "Promo ID", "Barang Bonus", "Alasan Bonus", "ID Detail"],
+    widths: [24, 25, 30, 22, 17, 12, 18, 14, 19, 18, 18, 18, 18, 23, 38, 15, 30, 38],
+    rows: retailSaleLines.map((line) => [
+      line.tanggal_transaksi,
+      line.nomor_penjualan,
+      line.nama_barang,
+      line.nama_varian ?? "-",
+      line.inventory_mode,
+      line.jumlah,
+      line.harga_normal,
+      line.diskon_persen,
+      line.nominal_diskon,
+      line.unit_price,
+      line.subtotal,
+      line.harga_beli_satuan ?? "HPP tidak tersedia",
+      line.hpp_total ?? "HPP tidak tersedia",
+      line.gross_profit_known ?? "Belum dapat dihitung",
+      line.promosi_katalog_id ?? "-",
+      line.is_bonus_rental ? "Ya" : "Tidak",
+      line.bonus_reason ?? "-",
+      line.detail_penjualan_id,
+    ]),
+    numericColumns: [6, 7, 8, 9, 10, 11, 12, 13, 14],
+  });
+
+  writeTableSheet(workbook, {
+    name: "Pembelian",
+    title: "DOKUMEN PEMBELIAN BARANG",
+    businessName,
+    period: report.period,
+    headers: ["Tanggal Pembelian", "Nomor Pembelian", "Pemasok", "Status", "Jumlah Baris", "Nilai Dokumen", "Kas Keluar dalam Periode", "Barang Diterima", "Nilai Barang Diterima", "Mata Uang", "Catatan", "ID Pembelian"],
+    widths: [20, 25, 30, 18, 16, 20, 24, 19, 24, 14, 42, 38],
+    rows: purchases.map((purchase) => [
+      purchase.tanggal_pembelian,
+      purchase.nomor_pembelian,
+      purchase.nama_pemasok,
+      purchase.status,
+      purchase.item_count,
+      purchase.total_amount,
+      purchase.cash_out_amount,
+      purchase.received_quantity,
+      purchase.received_stock_value,
+      purchase.currency_code,
+      purchase.catatan ?? "-",
+      purchase.pembelian_id,
+    ]),
+    numericColumns: [5, 6, 7, 8, 9],
+  });
+
+  writeTableSheet(workbook, {
+    name: "Rincian Pembelian",
+    title: "RINCIAN BARANG DALAM PEMBELIAN",
+    businessName,
+    period: report.period,
+    headers: ["Nomor Pembelian", "Barang ID", "Varian ID", "Deskripsi", "Jumlah Dipesan", "Harga Satuan", "Subtotal", "Jumlah Diterima", "Mode Stok", "Mata Uang", "ID Baris"],
+    widths: [25, 38, 38, 38, 18, 18, 20, 18, 18, 14, 38],
+    rows: purchaseLines.map((line) => [
+      line.nomor_pembelian,
+      line.barang_id,
+      line.varian_barang_id ?? "-",
+      line.deskripsi ?? "-",
+      line.jumlah,
+      line.unit_price,
+      line.subtotal,
+      line.received_quantity,
+      line.inventory_mode_snapshot ?? "Belum ditetapkan",
+      line.currency_code,
+      line.detail_pembelian_id,
+    ]),
+    numericColumns: [5, 6, 7, 8],
+  });
+
+  writeTableSheet(workbook, {
+    name: "Penerimaan Barang",
+    title: "RIWAYAT PENERIMAAN BARANG",
+    businessName,
+    period: report.period,
+    headers: ["Tanggal Diterima", "Nomor Penerimaan", "Nomor Pembelian", "Status", "Jumlah Diterima", "Nilai Barang Diterima", "ID Penerimaan"],
+    widths: [24, 25, 25, 18, 20, 24, 38],
+    rows: purchaseReceipts.map((receipt) => [
+      receipt.received_at,
+      receipt.nomor_penerimaan,
+      receipt.nomor_pembelian,
+      receipt.status,
+      receipt.received_quantity,
+      receipt.received_stock_value,
+      receipt.penerimaan_pembelian_id,
+    ]),
+    numericColumns: [5, 6],
+  });
+
+  writeTableSheet(workbook, {
+    name: "Rincian Penerimaan",
+    title: "RINCIAN BARANG YANG DITERIMA",
+    businessName,
+    period: report.period,
+    headers: ["Tanggal", "Nomor Penerimaan", "Nomor Pembelian", "Barang ID", "Varian ID", "Mode Stok", "Jumlah Diterima", "Biaya Satuan", "Nilai Diterima", "ID Baris Penerimaan"],
+    widths: [24, 25, 25, 38, 38, 18, 19, 18, 20, 40],
+    rows: purchaseReceiptLines.map((line) => [
+      purchaseReceipts.find((receipt) => receipt.penerimaan_pembelian_id === line.penerimaan_pembelian_id)?.received_at ?? "-",
+      line.nomor_penerimaan,
+      line.nomor_pembelian,
+      line.barang_id,
+      line.varian_barang_id ?? "-",
+      line.inventory_mode,
+      line.quantity_received,
+      line.unit_cost,
+      line.subtotal_cost,
+      line.detail_penerimaan_pembelian_id,
+    ]),
+    numericColumns: [7, 8, 9],
+  });
+
+  const promoTotals = new Map<string, { sumber: string; jenis: string; id: string; mata_uang: string; jumlah: number; harga_normal: number; diskon: number; nilai_akhir: number; baris: number }>();
+  for (const item of promotionUsage) {
+    const id = item.promo_id ?? "Tanpa ID";
+    const key = [item.sumber, item.jenis_promo, id, item.mata_uang].join("|");
+    const current = promoTotals.get(key) ?? {
+      sumber: item.sumber,
+      jenis: item.jenis_promo,
+      id,
+      mata_uang: item.mata_uang,
+      jumlah: 0,
+      harga_normal: 0,
+      diskon: 0,
+      nilai_akhir: 0,
+      baris: 0,
+    };
+    current.jumlah += item.jumlah;
+    current.harga_normal += item.harga_normal;
+    current.diskon += item.diskon;
+    current.nilai_akhir += item.nilai_akhir;
+    current.baris += 1;
+    promoTotals.set(key, current);
+  }
+
+  writeTableSheet(workbook, {
+    name: "Ringkasan Promo",
+    title: "RINGKASAN PENGGUNAAN PROMO DAN DISKON",
+    businessName,
+    period: report.period,
+    headers: ["Sumber", "Jenis Promo", "ID Program/Promo", "Mata Uang", "Jumlah Baris", "Jumlah Barang", "Nilai Normal", "Total Diskon", "Nilai Setelah Diskon"],
+    widths: [18, 30, 40, 14, 18, 18, 22, 22, 25],
+    rows: Array.from(promoTotals.values()).map((item) => [
+      item.sumber,
+      item.jenis,
+      item.id,
+      item.mata_uang,
+      item.baris,
+      item.jumlah,
+      item.harga_normal,
+      item.diskon,
+      item.nilai_akhir,
+    ]),
+    numericColumns: [5, 6, 7, 8, 9],
+  });
+
+  writeTableSheet(workbook, {
+    name: "Penggunaan Promo",
+    title: "RINCIAN PENGGUNAAN PROMO, DISKON, DAN BARANG BONUS",
+    businessName,
+    period: report.period,
+    headers: ["Tanggal", "Sumber", "Nomor Transaksi", "Jenis Promo", "ID Promo/Program", "Barang/Paket", "Jumlah", "Mata Uang", "Harga Normal", "Nominal Diskon", "Nilai Akhir", "HPP Bonus", "Catatan"],
+    widths: [24, 18, 25, 30, 40, 34, 12, 14, 20, 20, 20, 18, 48],
+    rows: promotionUsage.map((item) => [
+      item.tanggal,
+      item.sumber,
+      item.nomor_transaksi,
+      item.jenis_promo,
+      item.promo_id ?? "-",
+      item.barang_paket,
+      item.jumlah,
+      item.mata_uang,
+      item.harga_normal,
+      item.diskon,
+      item.nilai_akhir,
+      item.hpp_bonus ?? "Tidak tersedia",
+      item.catatan ?? "-",
+    ]),
+    numericColumns: [7, 9, 10, 11],
   });
 
   const fileName = "laporan-keuangan-" + safeSlug(businessName) + "-" + report.period.start_date + "-sd-" + lastDayExclusive(report.period) + "-" + timestamp(report.period.timezone) + ".xlsx";

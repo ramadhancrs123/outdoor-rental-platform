@@ -126,10 +126,11 @@ describe("Pemasok & Pembelian read-side", () => {
     expect(screen.getByText(/Buat draft pengadaan baru/i)).toBeInTheDocument();
   });
 
-  test("purchase detail presents line facts and keeps inventory/payment boundaries explicit", async () => {
+  test("purchase detail presents line facts and explains automatic receiving after completion", async () => {
     serviceMock.getPemasokContext.mockResolvedValue(context);
     serviceMock.getPurchase.mockResolvedValue({
       ...purchase,
+      receiving: { state: "not_received" },
       lines: [{
         detail_pembelian_id: "line-1",
         usaha_id: "usaha-a",
@@ -154,7 +155,7 @@ describe("Pemasok & Pembelian read-side", () => {
       </QueryClientProvider>,
     );
     expect(await screen.findByRole("heading", { level: 1, name: "PB-001" })).toBeInTheDocument();
-    expect(screen.getByText(/tidak otomatis berarti receiving/i)).toBeInTheDocument();
+    expect(screen.getByText(/Setelah pembelian dibayar dan diselesaikan/i)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("tab", { name: "Item" }));
     expect((screen.getAllByText("Tenda Dome 4P")).length).toBeGreaterThan(0);
   });

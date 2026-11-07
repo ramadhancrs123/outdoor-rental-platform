@@ -107,6 +107,23 @@ export default async function inventoryProductListPagination({ page, baseURL, ca
         [...document.querySelectorAll('a[href^="/inventaris/barang/"]')]
           .map((node) => node.getAttribute("href")),
       ).size,
+      gridColumns: (() => {
+        const grid = document.querySelector('[data-testid="inventory-product-grid"]');
+        return grid ? getComputedStyle(grid).gridTemplateColumns.split(" ").length : 0;
+      })(),
+      firstCard: (() => {
+        const grid = document.querySelector('[data-testid="inventory-product-grid"]');
+        const card = grid?.firstElementChild;
+        const image = card?.querySelector('a[href*="/inventaris/barang/"]')?.parentElement;
+        const cardRect = card?.getBoundingClientRect();
+        const imageRect = image?.getBoundingClientRect();
+        return cardRect && imageRect ? {
+          width: Math.round(cardRect.width),
+          height: Math.round(cardRect.height),
+          imageHeight: Math.round(imageRect.height),
+          imageRatio: Number((imageRect.width / Math.max(1, imageRect.height)).toFixed(2)),
+        } : null;
+      })(),
       overflowingNodes,
     };
   });
@@ -115,6 +132,14 @@ export default async function inventoryProductListPagination({ page, baseURL, ca
   if (firstPage.documentWidth > firstPage.viewportWidth + 1 || firstPage.visibleProducts !== 12) {
     throw new Error("Product list first page is not compact/paginated correctly: " + JSON.stringify(firstPage));
   }
+  const expectedColumns = firstPage.viewportWidth >= 1536 ? 5 : firstPage.viewportWidth >= 1024 ? 4 : firstPage.viewportWidth >= 640 ? 3 : 2;
+  if (firstPage.gridColumns !== expectedColumns) {
+    throw new Error("Inventory product grid did not use the expected responsive density: " + JSON.stringify(firstPage));
+  }
+  if (!firstPage.firstCard || firstPage.firstCard.imageRatio < 1.25 || firstPage.firstCard.imageRatio > 1.42) {
+    throw new Error("Inventory product image/card proportions are not compact: " + JSON.stringify(firstPage));
+  }
+  await capture("inventory-products-compact-grid");
 
   await page.getByRole("button", { name: "Berikutnya" }).click();
   await page.getByText("Menampilkan 13–13 dari 13 barang", { exact: true }).waitFor({ state: "visible", timeout: 15000 });
@@ -126,7 +151,9 @@ export default async function inventoryProductListPagination({ page, baseURL, ca
   await page.getByRole("button", { name: "Filter inventaris" }).click();
   const variantFilter = page.getByRole("combobox", { name: "Filter varian produk" });
   await variantFilter.click();
-  await page.getByRole("option", { name: "Carrier 2 · 45 L", exact: true }).click();
+  const matchingVariant = page.getByRole("option", { name: "Carrier 2 · 45 L", exact: true });
+  await matchingVariant.waitFor({ state: "visible", timeout: 10000 });
+  await matchingVariant.press("Enter");
   await page.getByText("Menampilkan 1–1 dari 1 barang", { exact: true }).waitFor({ state: "visible", timeout: 15000 });
 
   const filtered = await readLayout();

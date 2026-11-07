@@ -80,6 +80,7 @@ export function RentalShow() {
       : "Campuran"
     : "Barang Satuan";
   const renterName = item.penyewa_nama ?? "Penyewa tidak ditemukan";
+  const rentalStatusLabel = rentalDetailStatusLabel(item.status);
   const renterPhone = item.penyewa_telepon?.trim() || null;
   const whatsappHref = renterPhone ? buildWhatsAppHref(renterPhone, renterName, item.nomor_penyewaan) : null;
   const lateFeeReviews = (consequenceReviews.data ?? []).filter((review) => review.jenis_konsekuensi === "late_fee");
@@ -109,7 +110,7 @@ export function RentalShow() {
             </div>
 
             <Badge variant={rentalStatusVariant()} className="shrink-0 rounded-full border border-white/40 bg-white/12 px-2.5 py-1 text-[10px] text-white backdrop-blur">
-              {semanticRentalLabel(item.status)}
+              {rentalStatusLabel}
             </Badge>
           </div>
 
@@ -228,7 +229,7 @@ export function RentalShow() {
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <p className="truncate text-[13px] font-bold">{renterName}</p>
-                    <Badge variant="secondary" className="rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] text-emerald-700 dark:bg-emerald-950/25 dark:text-emerald-300">Sedang Sewa</Badge>
+                    <Badge variant={item.status === "completed" ? "outline" : item.status === "cancelled" ? "destructive" : "secondary"} className="rounded-full px-2 py-0.5 text-[9px]">{rentalStatusLabel}</Badge>
                   </div>
                   <p className="mt-0.5 truncate text-[9px] text-muted-foreground">{item.lines.length} detail · {item.assignments.length} unit ditetapkan</p>
                 </div>
@@ -352,7 +353,7 @@ export function RentalShow() {
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3.5 py-3.5 marker:hidden sm:px-4">
           <span className="flex min-w-0 items-start gap-2.5">
             <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300"><ReceiptText className="size-4.5" /></span>
-            <span className="min-w-0"><span className="block text-[15px] font-bold">Detail Penyewaan</span><span className="mt-0.5 block text-[10px] text-muted-foreground">{item.lines.length} detail · {item.assignments.length} unit ditetapkan · buka untuk rincian.</span></span>
+            <span className="min-w-0"><span className="block text-[15px] font-bold">Detail Transaksi</span><span className="mt-0.5 block text-[10px] text-muted-foreground">{item.lines.length} barang sewa · {item.sale_lines.length} barang jual · {item.assignments.length} unit ditetapkan.</span></span>
           </span>
           <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
         </summary>
@@ -363,24 +364,51 @@ export function RentalShow() {
               <Link to={paths.penyewaan}>Kembali ke daftar<ArrowRight className="size-3.5" /></Link>
             </Button>
           </div>
-          <div className="space-y-1.5">
+
+          <section aria-label="Barang sewa" className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-[11px] font-bold">Barang Sewa</h3>
+              <Badge variant="secondary" className="rounded-full text-[9px]">{item.lines.length} item</Badge>
+            </div>
             {item.lines.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-border px-3 py-4 text-center text-[10px] text-muted-foreground">Belum ada detail penyewaan.</div>
-            ) : (
-              item.lines.map((line) => (
-                <div key={line.detail_penyewaan_id} className="flex items-center justify-between gap-3 rounded-2xl border border-border/60 bg-background px-3 py-2.5">
+              <div className="rounded-xl border border-dashed border-border px-3 py-3 text-center text-[10px] text-muted-foreground">Tidak ada barang sewa.</div>
+            ) : item.lines.map((line) => {
+              const displayName = line.paket_nama ?? (line.varian_nama ? (line.barang_nama ?? "Barang") + " · " + line.varian_nama : line.barang_nama ?? "Target tidak ditemukan");
+              return (
+                <div key={line.detail_penyewaan_id} className="flex items-center justify-between gap-3 rounded-xl border border-border/60 bg-background px-3 py-2.5">
                   <div className="flex min-w-0 items-center gap-2.5">
-                    <span className="grid size-8 shrink-0 place-items-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/25 dark:text-emerald-300"><Package className="size-4" /></span>
+                    <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-emerald-50 text-emerald-700 dark:bg-emerald-950/25 dark:text-emerald-300"><Package className="size-4" /></span>
                     <div className="min-w-0">
-                      <p className="truncate text-[10px] font-semibold">{line.barang_nama ?? line.varian_nama ?? line.paket_nama ?? "Target tidak ditemukan"}</p>
+                      <p className="truncate text-[10px] font-semibold">{displayName}</p>
                       <p className="mt-0.5 truncate text-[9px] text-muted-foreground">{line.jumlah} unit · {formatRentalMoney(line.unit_price, line.currency_code)} / unit</p>
                     </div>
                   </div>
                   <p className="shrink-0 text-[10px] font-bold">{formatRentalMoney(line.subtotal, line.currency_code)}</p>
                 </div>
-              ))
-            )}
-          </div>
+              );
+            })}
+          </section>
+
+          {item.sale_lines.length ? (
+            <section aria-label="Barang jual" className="mt-4 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-[11px] font-bold">Barang Jual</h3>
+                <Badge variant="secondary" className="rounded-full text-[9px]">{item.sale_lines.length} item</Badge>
+              </div>
+              {item.sale_lines.map((line) => (
+                <div key={line.detail_penjualan_id} className="flex items-center justify-between gap-3 rounded-xl border border-border/60 bg-background px-3 py-2.5">
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-sky-50 text-sky-700 dark:bg-sky-950/25 dark:text-sky-300"><PackageCheck className="size-4" /></span>
+                    <div className="min-w-0">
+                      <p className="truncate text-[10px] font-semibold">{line.nama_barang_snapshot}{line.nama_varian_snapshot ? " · " + line.nama_varian_snapshot : ""}</p>
+                      <p className="mt-0.5 truncate text-[9px] text-muted-foreground">Qty {line.jumlah} · {formatRentalMoney(line.unit_price, line.currency_code)} / item</p>
+                    </div>
+                  </div>
+                  <p className="shrink-0 text-[10px] font-bold">{formatRentalMoney(line.subtotal, line.currency_code)}</p>
+                </div>
+              ))}
+            </section>
+          ) : null}
         </div>
       </details>
 
@@ -520,19 +548,19 @@ export function RentalShow() {
         onRecorded={async () => { await query.refetch(); }}
       />
 
-      {item.status === "active" || item.status === "return_in_progress" ? (
-        <div className="fixed inset-x-3 bottom-16 z-40 lg:hidden">
-          <div className="rounded-2xl border border-white/60 bg-background/92 p-2 shadow-[0_18px_50px_rgba(20,40,30,.16)] backdrop-blur">
-            <Button asChild className="h-11 w-full rounded-xl bg-[#0a6b55] text-xs font-semibold hover:bg-[#075944]">
-              <a href="#rental-operational">Selesaikan Sewa<ArrowRight className="size-4" /></a>
-            </Button>
-          </div>
-        </div>
-      ) : null}
+
     </div>
   );
 
 }
+function rentalDetailStatusLabel(status: string | null | undefined) {
+  if (status === "active") return "Sedang Disewa";
+  if (status === "return_in_progress") return "Pengembalian Berlangsung";
+  if (status === "completed") return "Selesai";
+  if (status === "cancelled") return "Dibatalkan";
+  return semanticRentalLabel(status);
+}
+
 function buildWhatsAppHref(phone: string, renterName: string, rentalNumber: string) {
   const digits = phone.replace(/\D/g, "");
   const normalized = digits.startsWith("62") ? digits : digits.replace(/^0+/, "62");

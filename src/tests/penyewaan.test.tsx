@@ -96,6 +96,7 @@ describe("Penyewaan read-side",()=> {
     serviceMock.getRental.mockResolvedValue({
       ...rental,
       lines:[{detail_penyewaan_id:"detail-1",usaha_id:"usaha-a",penyewaan_id:"rental-1",barang_id:"barang-1",varian_barang_id:null,paket_sewa_id:null,jumlah:"2",unit_price:"375000",currency_code:"IDR",subtotal:"750000",catatan:null,barang_nama:"Tenda Dome 4P",varian_nama:null,paket_nama:null}],
+      sale_lines:[{detail_penjualan_id:"sale-line-1",nama_barang_snapshot:"Jas Hujan",nama_varian_snapshot:"Ukuran L",inventory_mode:"quantity",jumlah:1,unit_price:"25000",subtotal:"25000",currency_code:"IDR"}],
       components:[],
       assignments:[{penetapan_unit_id:"assign-1",usaha_id:"usaha-a",detail_penyewaan_id:"detail-1",komponen_penyewaan_id:null,unit_barang_id:"unit-1",asal_pilihan_unit_id:null,status:"assigned",ditetapkan_at:"2026-10-01T09:30:00Z",dibatalkan_at:null,alasan_substitusi:null,ditetapkan_by_admin_id:"admin-1",catatan:null,kode_unit:"TD4P-001"}],
       handover:{serah_terima_id:"handover-1",usaha_id:"usaha-a",penyewaan_id:"rental-1",serah_terima_at:"2026-10-01T10:15:00Z",actor_admin_id:"admin-1",status:"completed",catatan:null},
@@ -105,9 +106,43 @@ describe("Penyewaan read-side",()=> {
     expect(await screen.findByRole("heading",{level:1,name:"RNT-001"})).toBeInTheDocument();
     expect(screen.getByText("TD4P-001")).toBeInTheDocument();
     expect(screen.getByTestId("rental-header-countdown")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Detail Transaksi"));
+    expect(screen.getByText("Barang Sewa")).toBeInTheDocument();
+    expect(screen.getByText("Barang Jual")).toBeInTheDocument();
+    expect(screen.getByText("Tenda Dome 4P")).toBeInTheDocument();
+    expect(screen.getByText("Jas Hujan · Ukuran L")).toBeInTheDocument();
+    expect(screen.getByText("Qty 1 · 25000 / item")).toBeInTheDocument();
+    expect(screen.getAllByText("Sedang Disewa").length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button",{name:"Denda"}));
     expect(screen.getByRole("heading",{name:"Perhitungan Denda"})).toBeInTheDocument();
     expect(screen.getByText("Estimasi denda berjalan")).toBeInTheDocument();
     expect(screen.getByRole("link",{name:/Buka Keuangan/})).toBeInTheDocument();
   });
+
+  test("rental detail badge follows the completed rental state",async()=> {
+    serviceMock.getPenyewaanContext.mockResolvedValue({
+      ...context,
+      timezone:"Asia/Jakarta",
+      defaultToleranceHours:2,
+      lateFeeEnabled:false,
+      lateFeePerHour:0,
+    });
+    serviceMock.getRental.mockResolvedValue({
+      ...rental,
+      status:"completed",
+      actual_return_completed_at:"2026-10-03T16:00:00Z",
+      lines:[],
+      sale_lines:[],
+      components:[],
+      assignments:[],
+      handover:null,
+      extensions:[],
+    });
+    render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><MemoryRouter initialEntries={["/penyewaan/rental-1"]}><Routes><Route path="/penyewaan/:id" element={<RentalShow/>}/></Routes></MemoryRouter></QueryClientProvider>);
+
+    expect(await screen.findByRole("heading",{level:1,name:"RNT-001"})).toBeInTheDocument();
+    expect(screen.getAllByText("Selesai").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Sedang Disewa")).not.toBeInTheDocument();
+  });
+
 });

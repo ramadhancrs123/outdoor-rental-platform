@@ -101,13 +101,30 @@ export type OperationalReturnCommandResult = {
 export type OperationalReturnBatchItem = {
   unitBarangId: string;
   result?: OperationalReturnCommandResult;
-  error?: string;
+  reconciled?: boolean;
 };
 
 export type OperationalReturnBatchResult = {
   state: "completed" | "partial" | "failed";
   processed: OperationalReturnBatchItem[];
+  failedUnitId?: string;
+  error?: string;
+  unknownOutcome?: boolean;
 };
+
+function describeOperationalError(error: unknown, fallback: string) {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  if (typeof error === "object" && error !== null) {
+    const value = error as Record<string, unknown>;
+    const details = [value.message, value.details, value.hint]
+      .filter((part): part is string => typeof part === "string" && Boolean(part.trim()))
+      .join(" · ");
+    const code = typeof value.code === "string" && value.code.trim() ? value.code.trim() : null;
+    if (details) return details + (code ? " (" + code + ")" : "");
+  }
+  return fallback;
+}
 
 export async function getOperationalReturnWorkspace(
   usahaId: string,
@@ -205,47 +222,126 @@ export async function processOperationalUnitReturns(
   input: {
     rentalId: string;
     units: Array<{ unitBarangId: string; inspection: OperationalReturnInspectionInput }>;
-    expectedRentalUpdatedAt: string;
     note?: string | null;
   },
+  options: {
+    onProgress?: (progress: { index: number; total: number; unitBarangId: string }) => void;
+  } = {},
 ): Promise<OperationalReturnBatchResult> {
   const processed: OperationalReturnBatchItem[] = [];
-  let currentUpdatedAt = input.expectedRentalUpdatedAt;
+  if (!input.units.length) {
+    return { state: "failed", processed, error: "Pilih kondisi minimal satu unit sebelum memproses." };
+  }
 
-  for (const unit of input.units) {
+  let currentWorkspace: OperationalReturnWorkspace;
+  try {
+    // Reconcile against the server's current state before starting a sequential run.
+    currentWorkspace = await getOperationalReturnWorkspace(usahaId, input.rentalId);
+  } catch (error) {
+    return {
+      state: "failed",
+      processed,
+      failedUnitId: input.units[0].unitBarangId,
+      error: describeOperationalError(error, "Status unit belum dapat diverifikasi sebelum proses dimulai."),
+      // No write has been issued yet, so the outcome is known and safe to retry.
+      unknownOutcome: false,
+    };
+  }
+
+  for (let index = 0; index < input.units.length; index += 1) {
+    const selected = input.units[index];
+    options.onProgress?.({ index: index + 1, total: input.units.length, unitBarangId: selected.unitBarangId });
+
+    let currentUnit = currentWorkspace.operational_units.find(
+      (unit) => unit.unit_barang_id === selected.unitBarangId,
+    );
+    if (!currentUnit) {
+      return {
+        state: processed.length ? "partial" : "failed",
+        processed,
+        failedUnitId: selected.unitBarangId,
+        error: "Unit tidak ditemukan pada status operasional terbaru. Muat ulang sebelum melanjutkan.",
+      };
+    }
+
+    // Another admin may have finished the selected unit after this page was opened.
+    // Never issue another command for a unit already returned and inspected.
+    if (currentUnit.return && currentUnit.inspection) {
+      processed.push({ unitBarangId: selected.unitBarangId, reconciled: true });
+      continue;
+    }
+    if (currentUnit.return || currentUnit.unit_status !== "rented") {
+      return {
+        state: processed.length ? "partial" : "failed",
+        processed,
+        failedUnitId: selected.unitBarangId,
+        error: "Unit " + selected.unitBarangId + " belum berada pada state rented yang valid untuk dikembalikan.",
+      };
+    }
+
     try {
       const result = await processOperationalUnitReturn(
         usahaId,
         {
           rentalId: input.rentalId,
-          unitBarangId: unit.unitBarangId,
-          inspection: unit.inspection,
-          expectedRentalUpdatedAt: currentUpdatedAt,
+          unitBarangId: selected.unitBarangId,
+          inspection: selected.inspection,
+          expectedRentalUpdatedAt: currentWorkspace.rental.updated_at,
           note: input.note,
         },
         {
-          idempotencyKey: `operational-return-${input.rentalId}-${unit.unitBarangId}-${createClientId()}`,
+          idempotencyKey: "operational-return-" + input.rentalId + "-" + selected.unitBarangId + "-" + createClientId(),
           requestId: createClientId(),
         },
       );
-      processed.push({ unitBarangId: unit.unitBarangId, result });
-      const latest = await getOperationalReturnWorkspace(usahaId, input.rentalId);
-      currentUpdatedAt = latest.rental.updated_at;
+      processed.push({ unitBarangId: selected.unitBarangId, result });
     } catch (error) {
-      processed.push({
-        unitBarangId: unit.unitBarangId,
-        error: error instanceof Error ? error.message : "Pengembalian unit gagal.",
-      });
-      break;
+      const message = describeOperationalError(error, "Pengembalian unit gagal.");
+      try {
+        currentWorkspace = await getOperationalReturnWorkspace(usahaId, input.rentalId);
+        currentUnit = currentWorkspace.operational_units.find(
+          (unit) => unit.unit_barang_id === selected.unitBarangId,
+        );
+        if (currentUnit?.return && currentUnit.inspection) {
+          // The command may have committed even when its response was lost.
+          // The source-of-truth read proves completion, so skip replay and continue.
+          processed.push({ unitBarangId: selected.unitBarangId, reconciled: true });
+          continue;
+        }
+        return {
+          state: processed.length ? "partial" : "failed",
+          processed,
+          failedUnitId: selected.unitBarangId,
+          error: message,
+          unknownOutcome: message.includes("UNKNOWN_OUTCOME"),
+        };
+      } catch {
+        return {
+          state: processed.length ? "partial" : "failed",
+          processed,
+          failedUnitId: selected.unitBarangId,
+          error: "UNKNOWN_OUTCOME: hasil per unit belum dapat dipastikan karena status server gagal dibaca. Jangan ulangi sampai status unit diverifikasi.",
+          unknownOutcome: true,
+        };
+      }
+    }
+
+    try {
+      // Refresh the optimistic concurrency token before processing the next unit.
+      currentWorkspace = await getOperationalReturnWorkspace(usahaId, input.rentalId);
+    } catch {
+      return {
+        state: "partial",
+        processed,
+        failedUnitId: input.units[index + 1]?.unitBarangId,
+        error: "Unit terakhir telah diproses, tetapi status rental terbaru belum dapat dimuat. Verifikasi status sebelum melanjutkan.",
+        unknownOutcome: false,
+      };
     }
   }
 
-  return {
-    state: processed.every((item) => item.result) ? "completed" : processed.some((item) => item.result) ? "partial" : "failed",
-    processed,
-  };
+  return { state: "completed", processed };
 }
-
 export function getOperationalReturnContract() {
   return {
     operation: "receive_inspect_restore",

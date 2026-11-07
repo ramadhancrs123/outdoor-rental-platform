@@ -1,6 +1,6 @@
-import { Plus, RefreshCw, Search, SlidersHorizontal, Users } from "lucide-react";
+import { CheckCircle2, FileCheck2, Plus, RefreshCw, Search, SlidersHorizontal, Users } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,14 +8,16 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCurrentUsaha } from "@/app/current-usaha-context";
+import { RenterCreateDialog } from "@/pages/penyewa/create";
 import {
+  getRenterOverview,
   listRenters,
   maskPhone,
   RenterReadError,
   type RenterListItem,
 } from "@/features/penyewa/service";
 import {
-  CurrentUsahaCard,
+  CurrentUsahaInline,
   RenterResultCard,
   RenterAvatar,
   IdentityVerificationBadge,
@@ -42,6 +44,7 @@ function readErrorDescription(error: RenterReadError | null) {
 }
 
 export function RenterList() {
+  const navigate = useNavigate();
   const {
     status: usahaStatus,
     current: usaha,
@@ -55,6 +58,9 @@ export function RenterList() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<RenterReadError | null>(null);
+  const [overview, setOverview] = useState<{ total: number; active: number; pendingIdentityDocuments: number } | null>(null);
+  const [overviewLoading, setOverviewLoading] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
 
   const load = useCallback(
     async (context: NonNullable<typeof usaha>, term: string, filter: StatusFilter) => {
@@ -81,6 +87,31 @@ export function RenterList() {
     },
     [],
   );
+
+  useEffect(() => {
+    if (usahaStatus !== "ready" || !usaha) {
+      setOverview(null);
+      setOverviewLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setOverviewLoading(true);
+    void getRenterOverview(usaha.usahaId)
+      .then((result) => {
+        if (!cancelled) setOverview(result);
+      })
+      .catch(() => {
+        if (!cancelled) setOverview(null);
+      })
+      .finally(() => {
+        if (!cancelled) setOverviewLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [usaha, usahaStatus]);
 
   useEffect(() => {
     if (usahaStatus !== "ready" || !usaha) {
@@ -112,23 +143,51 @@ export function RenterList() {
 
   return (
     <div className="mx-auto w-full max-w-6xl space-y-4 pb-8 sm:space-y-5">
-      <header className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-        <div className="space-y-1">
-          <p className="text-sm font-medium text-muted-foreground">Penyewa</p>
-          <h1 className="text-2xl font-bold tracking-tight sm:text-[28px]">Daftar Penyewa</h1>
-          <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-            Cari identitas penyewa dengan cepat untuk kebutuhan operasional Usaha aktif.
-          </p>
+      <header className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[11px] font-semibold tracking-wide text-muted-foreground">PELANGGAN</p>
+          <div className="mt-0.5 flex flex-wrap items-center gap-2">
+            <h1 className="text-2xl font-bold tracking-tight">Penyewa</h1>
+            <CurrentUsahaInline />
+          </div>
         </div>
-        <Button asChild className="w-full rounded-xl sm:w-auto">
-          <Link to={paths.penyewa + "/create"}><Plus />Tambah Penyewa</Link>
+        <Button type="button" size="sm" variant="ghost" className="h-9 w-fit shrink-0 rounded-lg px-3 text-primary" onClick={() => setCreateOpen(true)}>
+          <Plus className="size-4" />Tambah penyewa
         </Button>
       </header>
 
-      <CurrentUsahaCard />
+      <section className="grid grid-cols-3 gap-2 sm:gap-3" aria-label="Ringkasan penyewa">
+        <Card className="border-border/80 shadow-none">
+          <CardContent className="p-3 sm:p-4">
+            <div className="flex items-center gap-1.5 text-[10px] font-medium text-muted-foreground sm:text-xs">
+              <Users className="size-3.5" aria-hidden="true" />Total
+            </div>
+            <p className="mt-2 text-xl font-bold tabular-nums sm:text-2xl">{overviewLoading ? "—" : (overview?.total ?? "—")}</p>
+            <p className="hidden text-[10px] text-muted-foreground sm:block">Pelanggan terdaftar</p>
+          </CardContent>
+        </Card>
+        <Card className="border-border/80 shadow-none">
+          <CardContent className="p-3 sm:p-4">
+            <div className="flex items-center gap-1.5 text-[10px] font-medium text-muted-foreground sm:text-xs">
+              <CheckCircle2 className="size-3.5" aria-hidden="true" />Aktif
+            </div>
+            <p className="mt-2 text-xl font-bold tabular-nums sm:text-2xl">{overviewLoading ? "—" : (overview?.active ?? "—")}</p>
+            <p className="hidden text-[10px] text-muted-foreground sm:block">Dapat bertransaksi</p>
+          </CardContent>
+        </Card>
+        <Card className="border-border/80 shadow-none">
+          <CardContent className="p-3 sm:p-4">
+            <div className="flex items-center gap-1.5 text-[10px] font-medium text-muted-foreground sm:text-xs">
+              <FileCheck2 className="size-3.5" aria-hidden="true" />Verifikasi
+            </div>
+            <p className="mt-2 text-xl font-bold tabular-nums sm:text-2xl">{overviewLoading ? "—" : (overview?.pendingIdentityDocuments ?? "—")}</p>
+            <p className="hidden text-[10px] text-muted-foreground sm:block">Menunggu verifikasi</p>
+          </CardContent>
+        </Card>
+      </section>
 
-      <Card className="border-border/80 shadow-sm">
-        <CardContent className="space-y-3 p-3 sm:p-4">
+      <Card className="border-border/80 shadow-none">
+        <CardContent className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center sm:gap-3">
           <div className="relative">
             <Search
               className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
@@ -145,7 +204,7 @@ export function RenterList() {
                 if (event.key === "Enter") submitSearch();
               }}
               placeholder="Cari nama atau nomor telepon…"
-              className="h-11 rounded-xl bg-background pl-9 pr-12"
+              className="h-10 rounded-lg bg-background pl-9 pr-12"
               autoComplete="off"
               disabled={usahaStatus !== "ready" || loading}
             />
@@ -173,7 +232,7 @@ export function RenterList() {
                 type="button"
                 size="sm"
                 variant={statusFilter === value ? "default" : "outline"}
-                className="min-h-9 shrink-0 rounded-full px-4 text-xs"
+                className="min-h-8 shrink-0 rounded-full px-3 text-xs"
                 onClick={() => {
                   setStatusFilter(value);
                   setSubmittedSearch(search.trim());
@@ -277,7 +336,7 @@ export function RenterList() {
             <p className="text-sm text-muted-foreground">
               {renters.length} hasil · {renterStatusLabel(statusFilter === "all" ? "all" : statusFilter)}
             </p>
-            <p className="text-xs text-muted-foreground">Scope: {usaha?.usahaNama}</p>
+            <p className="text-xs text-muted-foreground">{renters.length} pelanggan</p>
           </div>
 
           <div className="grid gap-2 md:hidden">
@@ -349,6 +408,14 @@ export function RenterList() {
           </Card>
         </section>
       )}
+      <RenterCreateDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        onCreated={(renterId) => {
+          setCreateOpen(false);
+          navigate(paths.penyewa + "/" + renterId);
+        }}
+      />
     </div>
   );
 }

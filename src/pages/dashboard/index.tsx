@@ -7,18 +7,22 @@ import {
   ChevronDown,
   ChevronRight,
   CreditCard,
-  FileBarChart,
   History,
   Mountain,
-  Receipt,
   RotateCcw,
+  ShoppingBag,
+  Tag,
   TentTree,
+  TrendingDown,
+  TrendingUp,
   Wrench,
 } from "lucide-react";
 import { useCurrentUsaha } from "@/app/current-usaha-context";
-import { getFinancialReport } from "@/features/laporan/service";
+import { ChartContainer, ChartTooltip } from "@/components/ui/chart";
 import { FinancePeriodCompact } from "@/components/keuangan/finance-ui";
-import { useFinancePeriod } from "@/features/keuangan";
+import { getFinanceAccountSummary, getFinanceDashboardAnalytics, useFinancePeriod } from "@/features/keuangan";
+import type { FinanceAccount, FinanceDashboardCashflowPoint, FinanceDashboardAnalytics } from "@/features/keuangan/types";
+import { Area, AreaChart, CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts";
 import { listNotifications } from "@/features/pemberitahuan/service";
 import { listInventoryUnits } from "@/features/inventaris/service";
 import { DEFAULT_RENTAL_LIST_FILTERS } from "@/features/penyewaan/types";
@@ -26,7 +30,6 @@ import { listRentals } from "@/features/penyewaan/service";
 import { listReturnQueue } from "@/features/pengembalian/service";
 import { listReservations } from "@/features/reservasi/service";
 import type { NotificationRecord } from "@/features/pemberitahuan/types";
-import type { FinancialReport } from "@/features/laporan/types";
 import type { InventoryUnit } from "@/features/inventaris/types";
 import type { RentalListItem } from "@/features/penyewaan/types";
 import type { ReturnQueueItem } from "@/features/pengembalian/types";
@@ -61,14 +64,6 @@ function dateOnly(date: Date) {
   ].join("-");
 }
 
-function money(value: number) {
-  return new Intl.NumberFormat("id-ID", {
-    style: "currency",
-    currency: "IDR",
-    maximumFractionDigits: 0,
-  }).format(value);
-}
-
 function sameDay(value: string | null | undefined, day: string) {
   return value ? dateOnly(new Date(value)) === day : false;
 }
@@ -84,6 +79,84 @@ function formatTime(value: string | null | undefined) {
 function humanStatus(status: string) {
   return status.replaceAll("_", " ");
 }
+
+function moneyForCurrency(value: number, currencyCode: string) {
+  try {
+    return new Intl.NumberFormat("id-ID", {
+      style: "currency",
+      currency: currencyCode,
+      maximumFractionDigits: 0,
+    }).format(value);
+  } catch {
+    return new Intl.NumberFormat("id-ID", { maximumFractionDigits: 0 }).format(value) + " " + currencyCode;
+  }
+}
+
+function compactMoney(value: number) {
+  return new Intl.NumberFormat("id-ID", {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(value);
+}
+
+function formatBusinessDate(value: string) {
+  return new Intl.DateTimeFormat("id-ID", {
+    day: "2-digit",
+    month: "short",
+    timeZone: "Asia/Jakarta",
+  }).format(new Date(value + "T00:00:00+07:00"));
+}
+
+type CashflowTooltipProps = {
+  active?: boolean;
+  payload?: Array<{ payload?: FinanceDashboardCashflowPoint }>;
+  label?: string;
+  currencyCode: string;
+};
+
+function CashflowTooltip({ active, payload, label, currencyCode }: CashflowTooltipProps) {
+  const point = payload?.[0]?.payload;
+  if (!active || !point) return null;
+  return (
+    <div className="min-w-[190px] rounded-xl border border-border/70 bg-card/95 p-3 shadow-xl backdrop-blur-xl">
+      <p className="mb-2 text-[11px] font-bold text-foreground">{label ? formatBusinessDate(label) : "Rincian harian"}</p>
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between gap-5 text-[11px]">
+          <span className="font-semibold text-emerald-700 dark:text-emerald-300">Uang masuk</span>
+          <span className="font-bold tabular-nums">{moneyForCurrency(point.income, currencyCode)}</span>
+        </div>
+        <div className="flex items-center justify-between gap-5 pl-2 text-[9px] text-muted-foreground">
+          <span>Rental</span><span className="tabular-nums">{moneyForCurrency(point.rental_income, currencyCode)}</span>
+        </div>
+        <div className="flex items-center justify-between gap-5 pl-2 text-[9px] text-muted-foreground">
+          <span>Retail</span><span className="tabular-nums">{moneyForCurrency(point.retail_income, currencyCode)}</span>
+        </div>
+        <div className="my-1 border-t border-border/60" />
+        <div className="flex items-center justify-between gap-5 text-[11px]">
+          <span className="font-semibold text-orange-700 dark:text-orange-300">Uang keluar</span>
+          <span className="font-bold tabular-nums">{moneyForCurrency(point.expense, currencyCode)}</span>
+        </div>
+        <div className="flex items-center justify-between gap-5 pl-2 text-[9px] text-muted-foreground">
+          <span>Pembelian</span><span className="tabular-nums">{moneyForCurrency(point.purchase_expense, currencyCode)}</span>
+        </div>
+        <div className="flex items-center justify-between gap-5 pl-2 text-[9px] text-muted-foreground">
+          <span>Biaya lainnya</span><span className="tabular-nums">{moneyForCurrency(point.other_expense, currencyCode)}</span>
+        </div>
+        <div className="mt-1 flex items-center justify-between gap-5 border-t border-border/60 pt-2 text-[10px]">
+          <span className="font-semibold">Arus bersih harian</span>
+          <span className={cn("font-bold tabular-nums", point.net >= 0 ? "text-emerald-700 dark:text-emerald-300" : "text-orange-700 dark:text-orange-300")}>
+            {point.net >= 0 ? "+" : ""}{moneyForCurrency(point.net, currencyCode)}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const cashflowChartConfig = {
+  income: { label: "Pemasukan", color: "#0F9F72" },
+  expense: { label: "Pengeluaran", color: "#E77A5D" },
+};
 
 const inventoryQuery = {
   search: "",
@@ -188,8 +261,13 @@ export function Dashboard() {
   const { data: identity } = useGetIdentity<AdminIdentity>();
   const { current } = useCurrentUsaha();
   const [notifications, setNotifications] = useState<NotificationRecord[]>([]);
-  const [unreadCount, setUnreadCount] = useState(0);
-  const [report, setReport] = useState<FinancialReport | null>(null);
+  const [dashboardAnalytics, setDashboardAnalytics] = useState<FinanceDashboardAnalytics | null>(null);
+  const [operationalAccounts, setOperationalAccounts] = useState<FinanceAccount[] | null>(null);
+  const [selectedCurrency, setSelectedCurrency] = useState("IDR");
+  const [chartMode, setChartMode] = useState<"area" | "line">("area");
+  const [showIncome, setShowIncome] = useState(true);
+  const [showExpense, setShowExpense] = useState(true);
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
   const [rentals, setRentals] = useState<RentalListItem[]>([]);
   const [returns, setReturns] = useState<ReturnQueueItem[]>([]);
   const [reservations, setReservations] = useState<ReservationListItem[]>([]);
@@ -198,6 +276,14 @@ export function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [activityOpen, setActivityOpen] = useState(false);
   const financePeriod = useFinancePeriod("Asia/Jakarta");
+
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const updatePreference = () => setPrefersReducedMotion(media.matches);
+    updatePreference();
+    media.addEventListener("change", updatePreference);
+    return () => media.removeEventListener("change", updatePreference);
+  }, []);
 
   const usahaId = current?.usahaId;
   const adminId = current?.akunAdminId;
@@ -211,11 +297,11 @@ export function Dashboard() {
 
     Promise.all([
       listNotifications(usahaId, adminId, 8),
-      getFinancialReport(
+      getFinanceDashboardAnalytics(
         usahaId,
         financePeriod.period.startDate,
         financePeriod.period.endDateExclusive,
-      ),
+      ).catch(() => null),
       listRentals(usahaId, { ...DEFAULT_RENTAL_LIST_FILTERS, pageSize: 50 }),
       listReturnQueue(usahaId, { search: "", page: 1, pageSize: 50, rentalStatus: "all", dueState: "all" }),
       listReservations(usahaId, { search: "", status: "all", page: 1, pageSize: 50 }),
@@ -227,7 +313,7 @@ export function Dashboard() {
     ])
       .then(([
         notificationData,
-        reportData,
+        analyticsData,
         rentalData,
         returnData,
         reservationData,
@@ -239,8 +325,7 @@ export function Dashboard() {
       ]) => {
         if (!active) return;
         setNotifications(notificationData.items);
-        setUnreadCount(notificationData.unreadCount);
-        setReport(reportData);
+        setDashboardAnalytics(analyticsData);
         setRentals(rentalData.rentals);
         setReturns(returnData.returns);
         setReservations(reservationData.reservations);
@@ -270,6 +355,27 @@ export function Dashboard() {
     financePeriod.period.startDate,
     financePeriod.period.endDateExclusive,
   ]);
+
+  useEffect(() => {
+    if (!usahaId || !adminId) {
+      setOperationalAccounts(null);
+      return;
+    }
+
+    let active = true;
+    setOperationalAccounts(null);
+    getFinanceAccountSummary(usahaId)
+      .then((summary) => {
+        if (active) setOperationalAccounts(summary.accounts);
+      })
+      .catch(() => {
+        if (active) setOperationalAccounts(null);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [usahaId, adminId]);
 
   const currentRentals = useMemo(
     () =>
@@ -393,6 +499,7 @@ export function Dashboard() {
 
   const quickActions = [
     ["Rental Langsung", paths.penyewaanWalkIn, TentTree],
+    ["Penjualan", paths.penjualan, ShoppingBag],
     ["Selesaikan Sewa", paths.penyewaan, TentTree],
     ["Buat Perawatan", paths.perawatan, Wrench],
     ["Tambah Unit", paths.inventarisCreate, Mountain],
@@ -402,46 +509,81 @@ export function Dashboard() {
 
   const activityItems = notifications.slice(0, activityOpen ? 6 : 3);
 
-  const financeCards = [
+  const currencyOptions = dashboardAnalytics?.currencies?.length ? dashboardAnalytics.currencies : ["IDR"];
+  const activeCurrency = currencyOptions.includes(selectedCurrency)
+    ? selectedCurrency
+    : currencyOptions.includes("IDR")
+      ? "IDR"
+      : currencyOptions[0];
+  const currencyCashflow = (dashboardAnalytics?.cashflow ?? [])
+    .filter((item) => item.currency_code === activeCurrency)
+    .sort((left, right) => left.date.localeCompare(right.date));
+  const cashflowTotals = currencyCashflow.reduce(
+    (total, item) => ({
+      income: total.income + item.income,
+      expense: total.expense + item.expense,
+    }),
+    { income: 0, expense: 0 },
+  );
+  const cashflowDifference = cashflowTotals.income - cashflowTotals.expense;
+  const paymentSummary = dashboardAnalytics?.payment_summary?.find(
+    (item) => item.currency_code === activeCurrency,
+  );
+  const discountSummary = dashboardAnalytics?.promotions.discount_by_currency?.find(
+    (item) => item.currency_code === activeCurrency,
+  );
+  const operationalCashBalance = operationalAccounts
+    ?.filter((account) => (
+      account.status === "active" &&
+      account.fungsi_akun === "operasional" &&
+      account.mata_uang === activeCurrency
+    ))
+    .reduce((total, account) => total + (Number(account.saldo) || 0), 0) ?? null;
+  const hasOperationalCashBalance = operationalAccounts !== null && operationalAccounts.some((account) => (
+    account.status === "active" &&
+    account.fungsi_akun === "operasional" &&
+    account.mata_uang === activeCurrency
+  ));
+  const netCashValue = hasOperationalCashBalance ? operationalCashBalance : null;
+  const promotionSummary = dashboardAnalytics?.promotions;
+  const promoKpis = [
     {
-      label: "Belum Dibaca",
-      value: String(unreadCount),
-      helper: unreadCount > 0 ? "Perlu perhatian" : "Semua sudah dibaca",
-      icon: Bell,
-      surface: "bg-emerald-50/80 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300",
-      href: paths.pemberitahuan,
+      label: "Promo Aktif",
+      value: promotionSummary ? String(promotionSummary.active_count) : "—",
+      helper: promotionSummary
+        ? "Saat ini · " + promotionSummary.active_catalog_count + " katalog · " + promotionSummary.active_package_count + " paket" + (promotionSummary.loyalty_active ? " · loyalitas" : "")
+        : "Informasi promo belum tersedia",
+      icon: Tag,
+      tone: "emerald",
+      href: paths.eventPromotions,
     },
     {
-      label: "Pemasukan",
-      value: report ? money(report.summary.recorded_income) : "—",
-      helper: "Tercatat pada periode dipilih",
-      icon: CreditCard,
-      surface: "bg-emerald-50/80 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300",
-      href: paths.keuangan,
-    },
-    {
-      label: "Pengeluaran",
-      value: report ? money(report.summary.recorded_expense) : "—",
-      helper: "Tercatat pada periode dipilih",
-      icon: Receipt,
-      surface: "bg-red-50/80 text-red-600 dark:bg-red-950/25 dark:text-red-300",
-      href: paths.keuangan + "/pengeluaran",
-    },
-    {
-      label: "Pembayaran",
-      value: report ? `${report.summary.recorded_payment_count} transaksi` : "—",
-      helper: "Source Keuangan",
-      icon: FileBarChart,
-      surface: "bg-sky-50/80 text-sky-700 dark:bg-sky-950/25 dark:text-sky-300",
-      href: paths.keuangan + "/pembayaran",
-    },
-    {
-      label: "Net Operasional",
-      value: report ? money(report.summary.net_operational_movement) : "—",
-      helper: "Pemasukan − Pengeluaran",
-      icon: FileBarChart,
-      surface: "bg-violet-50/80 text-violet-700 dark:bg-violet-950/25 dark:text-violet-300",
+      label: "Total Transaksi",
+      value: dashboardAnalytics ? String(dashboardAnalytics.total_transaction_count) : "—",
+      helper: "Rental & penjualan · periode terpilih",
+      icon: ShoppingBag,
+      tone: "violet",
       href: paths.laporan,
+    },
+    {
+      label: "Nilai Diskon",
+      value: dashboardAnalytics
+        ? moneyForCurrency(discountSummary?.amount ?? 0, activeCurrency)
+        : "—",
+      helper: "Periode terpilih · " + activeCurrency,
+      icon: TrendingDown,
+      tone: "amber",
+      href: paths.laporan,
+    },
+    {
+      label: "Pembayaran Diterima",
+      value: dashboardAnalytics
+        ? moneyForCurrency(paymentSummary?.amount ?? 0, activeCurrency)
+        : "—",
+      helper: String(paymentSummary?.count ?? 0) + " pembayaran tercatat",
+      icon: CreditCard,
+      tone: "blue",
+      href: paths.keuangan + "/pembayaran",
     },
   ] as const;
 
@@ -450,90 +592,265 @@ export function Dashboard() {
       <section className="relative overflow-hidden rounded-[1.45rem] border border-border/60 bg-card shadow-[0_8px_30px_rgba(35,55,45,.08)]">
         <div
           aria-hidden="true"
-          className="absolute inset-0 bg-cover bg-center opacity-35"
+          className="absolute inset-0 bg-cover bg-center opacity-20"
           style={{ backgroundImage: "url('/login-bg.webp')" }}
         />
         <div
           aria-hidden="true"
-          className="absolute inset-0 bg-gradient-to-br from-white/80 via-white/70 to-emerald-50/40 dark:from-slate-950/85 dark:via-slate-950/75 dark:to-emerald-950/40"
+          className="absolute inset-0 bg-gradient-to-br from-white/88 via-white/80 to-emerald-50/55 dark:from-slate-950/85 dark:via-slate-950/75 dark:to-emerald-950/40"
         />
-        <div className="relative z-10 min-h-[178px] px-4 pb-4 pt-4 sm:min-h-[208px] sm:px-6 sm:pb-5 sm:pt-5">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">Beranda</p>
-            <div className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-background/85 px-3 py-2 text-[10px] font-semibold shadow-sm backdrop-blur-sm sm:text-[11px]">
-              <span className="grid size-5 shrink-0 place-items-center rounded-full bg-primary/10 text-primary">
-                <Mountain className="size-3" aria-hidden="true" />
-              </span>
-              <span className="truncate">Akasha Outdoor</span>
-            </div>
-          </div>
-
-          <div className="mt-6 max-w-[34rem] sm:mt-7">
-            <h1 className="text-[1.75rem] font-bold leading-[1.08] tracking-[-0.03em] text-foreground sm:text-3xl">
+        <div className="relative z-10 flex min-h-[82px] items-center justify-between gap-3 px-4 py-3 sm:min-h-[88px] sm:px-5 sm:py-3.5">
+          <div className="min-w-0 flex-1">
+            <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-muted-foreground sm:text-[9px]">Ringkasan Usaha</p>
+            <h1 className="mt-0.5 truncate text-lg font-bold leading-tight tracking-[-0.03em] text-foreground sm:text-2xl">
               Selamat datang, {greetingName}
             </h1>
-            <p className="mt-2 max-w-[27rem] text-[12px] leading-5 text-muted-foreground sm:text-sm sm:leading-6">
-              Pantau pekerjaan operasional yang membutuhkan perhatian hari ini.
-            </p>
+            <div className="mt-1.5 flex flex-wrap items-center gap-2">
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[9px] font-semibold",
+                  error
+                    ? "border-amber-200 bg-amber-50 text-amber-700"
+                    : "border-emerald-200 bg-emerald-50 text-emerald-700",
+                )}
+              >
+                <span className={cn("size-1.5 rounded-full", error ? "bg-amber-500" : "bg-emerald-500")} aria-hidden="true" />
+                {error ? "Perlu dimuat ulang" : "Source terhubung"}
+              </span>
+              <span className="text-[9px] text-muted-foreground sm:text-[10px]">Aktivitas rental & retail</span>
+            </div>
           </div>
-
-          <div className="mt-5 flex flex-wrap items-center gap-2">
-            <span
-              className={cn(
-                "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[9px] font-semibold",
-                error
-                  ? "border-amber-200 bg-amber-50 text-amber-700"
-                  : "border-emerald-200 bg-emerald-50 text-emerald-700",
-              )}
-            >
-              <span className={cn("size-1.5 rounded-full", error ? "bg-amber-500" : "bg-emerald-500")} aria-hidden="true" />
-              {error ? "Perlu dimuat ulang" : "Source terhubung"}
+          <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border/70 bg-background/85 px-2.5 py-2 text-[9px] font-bold shadow-sm backdrop-blur-sm sm:px-3 sm:text-[10px]">
+            <span className="grid size-5 shrink-0 place-items-center rounded-full bg-primary/10 text-primary">
+              <Mountain className="size-3" aria-hidden="true" />
             </span>
-            <span className="text-[10px] text-muted-foreground">Operational control center</span>
-          </div>
+            Akasha Outdoor
+          </span>
         </div>
       </section>
 
-      <div className="flex items-center justify-end">
-        <FinancePeriodCompact
-          timezone="Asia/Jakarta"
-          selection={financePeriod.period}
-          onPreset={financePeriod.setPreset}
-          onCustomStart={financePeriod.setCustomStart}
-          onCustomEnd={financePeriod.setCustomEnd}
-        />
-      </div>
-
-      <section
-        aria-label="Ringkasan"
-        className="grid grid-cols-6 gap-2.5 max-[359px]:grid-cols-2"
-      >
-        {financeCards.map((item, index) => {
+      <section aria-label="KPI promosi dan pembayaran" className="grid min-w-0 grid-cols-2 gap-2 sm:gap-2.5 lg:grid-cols-4">
+        {promoKpis.map((item) => {
           const Icon = item.icon;
-          const compactClass =
-            index < 3
-              ? "col-span-2 max-[359px]:col-span-1"
-              : index === 3
-                ? "col-span-2 max-[359px]:col-span-1"
-                : "col-span-4 max-[359px]:col-span-2";
-
+          const toneClass = item.tone === "emerald"
+            ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300"
+            : item.tone === "violet"
+              ? "bg-violet-50 text-violet-700 dark:bg-violet-950/30 dark:text-violet-300"
+              : item.tone === "amber"
+                ? "bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300"
+                : "bg-sky-50 text-sky-700 dark:bg-sky-950/30 dark:text-sky-300";
           return (
-            <Link key={item.label} to={item.href} className={cn("min-w-0", compactClass)}>
-              <div className="h-full rounded-[1.1rem] border border-border/60 bg-card p-3 shadow-[0_4px_20px_rgba(35,55,45,.05)] transition-colors hover:bg-muted/20 sm:p-3.5">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="truncate text-[10px] font-medium text-muted-foreground">{item.label}</p>
-                    <p className="mt-1 truncate text-[15px] font-bold tracking-tight sm:text-lg">{item.value}</p>
-                  </div>
-                  <span className={cn("grid size-8 shrink-0 place-items-center rounded-xl", item.surface)}>
-                    <Icon className="size-3.5" aria-hidden="true" />
-                  </span>
-                </div>
-                <p className="mt-2 truncate text-[9px] text-muted-foreground">{item.helper}</p>
+            <Link
+              key={item.label}
+              to={item.href}
+              className="group min-w-0 rounded-[1.05rem] border border-border/60 bg-card p-3 shadow-[0_3px_14px_rgba(35,55,45,.045)] transition-colors hover:border-primary/25 hover:bg-muted/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:p-3.5"
+            >
+              <div className="flex min-w-0 items-center justify-between gap-2">
+                <p className="min-w-0 truncate text-[9px] font-semibold text-muted-foreground sm:text-[10px]">{item.label}</p>
+                <span className={cn("grid size-7 shrink-0 place-items-center rounded-lg sm:size-8 sm:rounded-xl", toneClass)}>
+                  <Icon className="size-3.5 sm:size-4" aria-hidden="true" />
+                </span>
               </div>
+              <p className="mt-1 whitespace-nowrap text-[clamp(0.78rem,3.5vw,1.125rem)] font-bold leading-5 tracking-tight tabular-nums">{item.value}</p>
+              <p className="mt-1.5 line-clamp-2 min-h-[2rem] text-[9px] leading-4 text-muted-foreground">{item.helper}</p>
             </Link>
           );
         })}
+      </section>
+
+      <section className="min-w-0 overflow-hidden rounded-[1.2rem] border border-border/60 bg-card p-3.5 shadow-[0_6px_24px_rgba(35,55,45,.055)] sm:p-4 lg:p-5">
+        <div className="flex min-w-0 items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="grid size-8 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+              <TrendingUp className="size-4" aria-hidden="true" />
+            </span>
+            <div className="min-w-0">
+              <h2 className="truncate text-[13px] font-bold tracking-tight sm:text-sm">Arus Kas Usaha</h2>
+              <p className="truncate text-[9px] text-muted-foreground sm:text-[10px]">Pergerakan uang masuk dan keluar</p>
+            </div>
+          </div>
+          <FinancePeriodCompact
+            compact
+            timezone="Asia/Jakarta"
+            selection={financePeriod.period}
+            onPreset={financePeriod.setPreset}
+            onCustomStart={financePeriod.setCustomStart}
+            onCustomEnd={financePeriod.setCustomEnd}
+          />
+        </div>
+
+        <div className="mt-3 grid min-w-0 gap-2">
+          <div
+            className={cn(
+              "flex w-full min-w-0 items-center justify-between gap-3 rounded-xl border px-3.5 py-3 sm:px-4",
+              netCashValue !== null && netCashValue < 0
+                ? "border-rose-500/70 bg-rose-700 text-white dark:border-rose-400/40 dark:bg-rose-900"
+                : "border-emerald-500/70 bg-emerald-700 text-white dark:border-emerald-400/40 dark:bg-emerald-900",
+            )}
+            data-testid="dashboard-net-cash"
+          >
+            <div className="min-w-0">
+              <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-white">Net Cash</p>
+              <p className="mt-0.5 text-[9px] font-medium text-white/85">Kas Operasional · saldo saat ini</p>
+            </div>
+            <p className="shrink-0 text-right text-base font-extrabold leading-tight tracking-tight tabular-nums text-white sm:text-xl">
+              {netCashValue === null ? "—" : moneyForCurrency(netCashValue, activeCurrency)}
+            </p>
+          </div>
+          <div className="grid min-w-0 grid-cols-3 gap-1.5 sm:gap-2">
+            <div className="min-w-0 rounded-xl border border-border/70 bg-background/75 px-2.5 py-2.5 sm:px-3">
+              <p className="truncate text-[8px] font-semibold text-muted-foreground sm:text-[9px]">Uang Masuk</p>
+              <p className="mt-1 truncate text-[10px] font-bold tabular-nums text-emerald-700 dark:text-emerald-300 sm:text-sm">
+                {moneyForCurrency(cashflowTotals.income, activeCurrency)}
+              </p>
+            </div>
+            <div className="min-w-0 rounded-xl border border-border/70 bg-background/75 px-2.5 py-2.5 sm:px-3">
+              <p className="truncate text-[8px] font-semibold text-muted-foreground sm:text-[9px]">Uang Keluar</p>
+              <p className="mt-1 truncate text-[10px] font-bold tabular-nums text-orange-700 dark:text-orange-300 sm:text-sm">
+                {moneyForCurrency(cashflowTotals.expense, activeCurrency)}
+              </p>
+            </div>
+            <div
+              className={cn(
+                "min-w-0 rounded-xl border px-2.5 py-2.5 sm:px-3",
+                cashflowDifference > 0
+                  ? "border-sky-400 bg-sky-50 dark:border-sky-800 dark:bg-sky-950/45"
+                  : cashflowDifference < 0
+                    ? "border-rose-400 bg-rose-50 dark:border-rose-800 dark:bg-rose-950/45"
+                    : "border-border bg-muted/50",
+              )}
+              data-testid="dashboard-cashflow-difference"
+              aria-label="Selisih arus kas pada rentang tanggal terpilih"
+              title="Selisih uang masuk dan uang keluar pada periode terpilih"
+            >
+              <p className={cn(
+                "truncate text-[8px] font-extrabold sm:text-[9px]",
+                cashflowDifference > 0
+                  ? "text-sky-800 dark:text-sky-200"
+                  : cashflowDifference < 0
+                    ? "text-rose-800 dark:text-rose-200"
+                    : "text-foreground",
+              )}>Selisih</p>
+              <p className={cn(
+                "mt-1 truncate text-[10px] font-extrabold tabular-nums sm:text-sm",
+                cashflowDifference > 0
+                  ? "text-sky-900 dark:text-sky-100"
+                  : cashflowDifference < 0
+                    ? "text-rose-900 dark:text-rose-100"
+                    : "text-foreground",
+              )}>
+                {moneyForCurrency(cashflowDifference, activeCurrency)}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <button
+              type="button"
+              aria-pressed={showIncome}
+              disabled={!showExpense}
+              onClick={() => setShowIncome((value) => !value)}
+              className={cn("inline-flex h-7 items-center gap-1.5 rounded-full px-2.5 text-[9px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60", showIncome ? "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/35 dark:text-emerald-200" : "bg-muted text-muted-foreground")}
+            >
+              <span className="size-1.5 rounded-full bg-emerald-500" /> Pemasukan
+            </button>
+            <button
+              type="button"
+              aria-pressed={showExpense}
+              disabled={!showIncome}
+              onClick={() => setShowExpense((value) => !value)}
+              className={cn("inline-flex h-7 items-center gap-1.5 rounded-full px-2.5 text-[9px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60", showExpense ? "bg-orange-50 text-orange-800 dark:bg-orange-950/35 dark:text-orange-200" : "bg-muted text-muted-foreground")}
+            >
+              <span className="size-1.5 rounded-full bg-orange-500" /> Pengeluaran
+            </button>
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {currencyOptions.length > 1 ? (
+              <select
+                aria-label="Mata uang grafik"
+                value={activeCurrency}
+                onChange={(event) => setSelectedCurrency(event.target.value)}
+                className="h-7 max-w-[76px] rounded-lg border border-border/70 bg-background px-1.5 text-[9px] font-semibold text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring sm:max-w-none sm:px-2 sm:text-[10px]"
+              >
+                {currencyOptions.map((currency) => <option key={currency} value={currency}>{currency}</option>)}
+              </select>
+            ) : (
+              <span className="inline-flex h-7 items-center rounded-lg border border-border/70 bg-background px-2 text-[9px] font-semibold text-muted-foreground">{activeCurrency}</span>
+            )}
+            <div className="inline-flex rounded-lg border border-border/60 bg-muted/40 p-0.5">
+            <button
+              type="button"
+              aria-pressed={chartMode === "area"}
+              onClick={() => setChartMode("area")}
+              className={cn("h-6 rounded-md px-2.5 text-[9px] font-semibold transition-colors", chartMode === "area" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground")}
+            >
+              Area
+            </button>
+            <button
+              type="button"
+              aria-pressed={chartMode === "line"}
+              onClick={() => setChartMode("line")}
+              className={cn("h-6 rounded-md px-2.5 text-[9px] font-semibold transition-colors", chartMode === "line" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground")}
+            >
+              Line
+            </button>
+            </div>
+          </div>
+        </div>
+
+        {dashboardAnalytics ? (
+          currencyCashflow.length ? (
+            <ChartContainer config={cashflowChartConfig} className="mt-2 h-[190px] w-full min-w-0 aspect-auto sm:h-[230px] lg:mt-3 lg:h-[260px]">
+              {chartMode === "area" ? (
+                <AreaChart data={currencyCashflow} margin={{ top: 8, right: 6, left: -14, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="dashboard-income-gradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#0F9F72" stopOpacity={0.3} />
+                      <stop offset="92%" stopColor="#0F9F72" stopOpacity={0.015} />
+                    </linearGradient>
+                    <linearGradient id="dashboard-expense-gradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#E77A5D" stopOpacity={0.24} />
+                      <stop offset="92%" stopColor="#E77A5D" stopOpacity={0.012} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid vertical={false} strokeDasharray="3 5" className="stroke-border/60" />
+                  <XAxis dataKey="date" tickFormatter={formatBusinessDate} tickLine={false} axisLine={false} minTickGap={22} tick={{ fontSize: 9 }} />
+                  <YAxis tickFormatter={compactMoney} tickLine={false} axisLine={false} width={48} tick={{ fontSize: 9 }} />
+                  <ChartTooltip cursor={{ stroke: "var(--border)", strokeDasharray: "3 3" }} content={<CashflowTooltip currencyCode={activeCurrency} />} />
+                  {showIncome ? <Area type="monotone" dataKey="income" name="Pemasukan" stroke="#0F9F72" strokeWidth={2.5} fill="url(#dashboard-income-gradient)" activeDot={{ r: 4, strokeWidth: 2 }} isAnimationActive={!prefersReducedMotion} animationDuration={750} animationEasing="ease-out" /> : null}
+                  {showExpense ? <Area type="monotone" dataKey="expense" name="Pengeluaran" stroke="#E77A5D" strokeWidth={2.3} fill="url(#dashboard-expense-gradient)" activeDot={{ r: 4, strokeWidth: 2 }} isAnimationActive={!prefersReducedMotion} animationDuration={750} animationEasing="ease-out" /> : null}
+                </AreaChart>
+              ) : (
+                <LineChart data={currencyCashflow} margin={{ top: 8, right: 6, left: -14, bottom: 0 }}>
+                  <CartesianGrid vertical={false} strokeDasharray="3 5" className="stroke-border/60" />
+                  <XAxis dataKey="date" tickFormatter={formatBusinessDate} tickLine={false} axisLine={false} minTickGap={22} tick={{ fontSize: 9 }} />
+                  <YAxis tickFormatter={compactMoney} tickLine={false} axisLine={false} width={48} tick={{ fontSize: 9 }} />
+                  <ChartTooltip cursor={{ stroke: "var(--border)", strokeDasharray: "3 3" }} content={<CashflowTooltip currencyCode={activeCurrency} />} />
+                  {showIncome ? <Line type="monotone" dataKey="income" name="Pemasukan" stroke="#0F9F72" strokeWidth={2.5} dot={false} activeDot={{ r: 4, strokeWidth: 2 }} isAnimationActive={!prefersReducedMotion} animationDuration={650} /> : null}
+                  {showExpense ? <Line type="monotone" dataKey="expense" name="Pengeluaran" stroke="#E77A5D" strokeWidth={2.3} dot={false} activeDot={{ r: 4, strokeWidth: 2 }} isAnimationActive={!prefersReducedMotion} animationDuration={650} /> : null}
+                </LineChart>
+              )}
+            </ChartContainer>
+          ) : (
+            <div className="mt-3 grid h-[170px] place-items-center rounded-xl border border-dashed border-border/70 text-center">
+              <div>
+                <TrendingUp className="mx-auto size-6 text-muted-foreground/50" />
+                <p className="mt-2 text-[11px] font-semibold">Belum ada pergerakan keuangan</p>
+                <p className="mt-1 text-[9px] text-muted-foreground">Transaksi tercatat akan muncul pada periode ini.</p>
+              </div>
+            </div>
+          )
+        ) : (
+          <div className="mt-3 grid h-[170px] place-items-center rounded-xl border border-dashed border-border/70 px-4 text-center">
+            <div>
+              <TrendingUp className="mx-auto size-6 text-muted-foreground/50" />
+              <p className="mt-2 text-[11px] font-semibold">Grafik belum tersedia</p>
+              <p className="mt-1 text-[9px] leading-4 text-muted-foreground">Pembaruan struktur ringkasan keuangan diperlukan sebelum grafik dapat dimuat.</p>
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="rounded-[1.2rem] border border-border/60 bg-card p-3.5 shadow-[0_5px_24px_rgba(35,55,45,.05)] sm:p-4">
@@ -563,7 +880,7 @@ export function Dashboard() {
           href={paths.penyewaan}
           actionLabel="Lainnya"
         />
-        <div className="mt-3 grid grid-cols-3 gap-2 max-[359px]:grid-cols-2 sm:grid-cols-6">
+        <div className="mt-3 grid grid-cols-4 gap-2 max-[359px]:grid-cols-2 xl:grid-cols-7">
           {quickActions.map(([label, href, Icon]) => (
             <Link
               key={label}

@@ -135,6 +135,17 @@ export type RentalDetailLine = {
   paket_nama: string | null;
 };
 
+export type RentalSaleLine = {
+  detail_penjualan_id: string;
+  nama_barang_snapshot: string;
+  nama_varian_snapshot: string | null;
+  inventory_mode: "serialized" | "quantity";
+  jumlah: string | number;
+  unit_price: string | number;
+  subtotal: string | number;
+  currency_code: string;
+};
+
 export type RentalAssignment = {
   penetapan_unit_id: string;
   usaha_id: string;
@@ -225,6 +236,7 @@ export type RentalDetail = Omit<RentalListItem, "lines"> & {
   discount_amount: string | number;
   penyewa_telepon: string | null;
   lines: RentalDetailLine[];
+  sale_lines: RentalSaleLine[];
   components: RentalComponent[];
   assignments: RentalAssignment[];
   handover: RentalHandover | null;

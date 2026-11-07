@@ -25,6 +25,10 @@ const product: CatalogProductDetail = {
   ringkasan_publik: "Carrier hiking dengan kapasitas luas.",
   status: "active",
   is_public: false,
+  is_rentable: true,
+  is_sellable: false,
+  harga_jual: null,
+  inventory_mode: "serialized",
   updated_at: "2026-11-02T00:00:00.000Z",
   kategori: { kategori_barang_id: "category-1", nama: "Tas & Carrier", status: "active" },
   active_tariff: {
@@ -52,6 +56,10 @@ const product: CatalogProductDetail = {
     deskripsi: "Kapasitas ringkas untuk perjalanan singkat.",
     atribut_pembeda: { kapasitas: "45 L" },
     status: "active",
+    is_rentable: null,
+    is_sellable: null,
+    harga_jual: null,
+    inventory_mode: null,
     updated_at: "2026-11-01T00:00:00.000Z",
   }],
   tariffs: [{

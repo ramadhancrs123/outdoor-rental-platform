@@ -1,10 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const operationalMock = vi.hoisted(() => ({
   getOperationalReturnWorkspace: vi.fn(),
-  processOperationalUnitReturn: vi.fn(),
+  processOperationalUnitReturns: vi.fn(),
 }));
 
 vi.mock("@/features/pengembalian/operational", () => operationalMock);
@@ -17,7 +17,7 @@ vi.mock("@/features/penyewaan", () => ({
 }));
 
 import { RentalOperationalWorkspace } from "@/components/penyewaan/rental-operational-workspace";
-import type { OperationalReturnInspectionInput, OperationalReturnWorkspace } from "@/features/pengembalian/operational";
+import type { OperationalReturnWorkspace } from "@/features/pengembalian/operational";
 
 const baseWorkspace = {
   rental: {
@@ -58,6 +58,45 @@ const unit = (id: string, code: string) => ({
   readiness_state: "inspection_pending" as const,
 });
 
+function returned(unitId: string, choice: "normal" | "damage" | "loss") {
+  const ready = choice === "normal";
+  const lost = choice === "loss";
+  return {
+    ...unit(unitId, unitId === "unit-a" ? "TD4P-001" : unitId === "unit-b" ? "TD4P-002" : unitId === "unit-loss" ? "CARRIER-EIGER-005" : unitId.toUpperCase()),
+    unit_status: ready ? "ready" : lost ? "lost" : "maintenance",
+    return: {
+      detail_pengembalian_id: "detail-return-" + unitId,
+      pengembalian_id: "return-" + unitId,
+      diterima_at: "2026-10-05T11:00:00Z",
+      kondisi_awal: null,
+      status_pemeriksaan: "completed",
+      catatan: null,
+    },
+    inspection: {
+      pemeriksaan_id: "inspection-" + unitId,
+      detail_pengembalian_id: "detail-return-" + unitId,
+      hasil: ready ? "normal" : "issue_found",
+      kelengkapan_status: choice === "loss" ? "incomplete" : "complete",
+      keputusan_operasional: ready ? "ready_review" : lost ? "unavailable" : "maintenance_required",
+      diperiksa_at: "2026-10-05T11:00:00Z",
+      catatan: null,
+      finding_count: ready ? 0 : 1,
+    },
+    maintenance: choice === "damage" ? {
+      perawatan_id: "maintenance-" + unitId,
+      pemeriksaan_id: "inspection-" + unitId,
+      jenis_perawatan: "perbaikan",
+      status: "planned",
+      dimulai_at: null,
+      selesai_at: null,
+      biaya: null,
+      currency_code: "IDR",
+      pelaksana: null,
+    } : null,
+    readiness_state: ready ? "ready" as const : lost ? "lost" as const : "maintenance_required" as const,
+  };
+}
+
 function renderWorkspace() {
   return render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
@@ -66,47 +105,171 @@ function renderWorkspace() {
   );
 }
 
+function getUnitCard(code: string) {
+  const heading = screen.getByText(code + " · Tenda Dome 4P");
+  const card = heading.closest("div.rounded-2xl.border");
+  if (!card) throw new Error("Unit card tidak ditemukan: " + code);
+  return within(card as HTMLElement);
+}
+
 describe("Rental operational workspace", () => {
   beforeEach(() => {
     operationalMock.getOperationalReturnWorkspace.mockReset();
-    operationalMock.processOperationalUnitReturn.mockReset();
+    operationalMock.processOperationalUnitReturns.mockReset();
     operationalMock.getOperationalReturnWorkspace.mockResolvedValue({
       ...baseWorkspace,
       units: [],
       operational_units: [unit("unit-a", "TD4P-001"), unit("unit-b", "TD4P-002")],
     });
-    operationalMock.processOperationalUnitReturn.mockResolvedValue({
-      pengembalian_id: "return-1",
-      detail_pengembalian_id: "return-detail-1",
-      pemeriksaan_id: "inspection-1",
-      perawatan_id: null,
-      penyewaan_id: "rental-1",
-      unit_barang_id: "unit-a",
-      return: {},
-      inspection: {},
-      maintenance_required: false,
-      readiness_state: "ready",
-      block_reason: null,
-      unit_status: "ready",
-      ready_response: {},
+    operationalMock.processOperationalUnitReturns.mockResolvedValue({
+      state: "completed",
+      processed: [{ unitBarangId: "unit-a", result: {} }, { unitBarangId: "unit-b", result: {} }],
     });
   });
 
-  it("requires explicit condition before processing a unit", async () => {
+  it("requires an explicit condition for every unit before the common action can run", async () => {
     renderWorkspace();
     await screen.findByText("TD4P-001 · Tenda Dome 4P");
+
     expect(screen.queryAllByRole("radio")).toHaveLength(0);
-    const pickers = screen.getAllByRole("button", { name: /Pilih kondisi/ });
-    expect(pickers).toHaveLength(2);
-    const actions = screen.getAllByRole("button", { name: /Terima Unit \+ Proses Kondisi/ });
-    expect(actions[0]).toBeDisabled();
-    fireEvent.click(pickers[0]);
+    const firstPicker = getUnitCard("TD4P-001").getByRole("button", { name: "Pilih kondisi unit" });
+    const commonAction = screen.getAllByRole("button", { name: "Pilih kondisi unit" }).at(-1)!;
+    expect(commonAction).toBeDisabled();
+
+    fireEvent.click(firstPicker);
     expect(screen.getAllByRole("radio")).toHaveLength(5);
-    expect(actions[0]).toBeDisabled();
-    expect(screen.queryByText(/Sistem tidak menganggap unit normal/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: /Baik:/ }));
+
+    expect(getUnitCard("TD4P-001").getByText("Baik")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /Proses Pengembalian · 1 Unit/ }).at(-1)).toBeEnabled();
+    expect(operationalMock.processOperationalUnitReturns).not.toHaveBeenCalled();
   });
 
-  it("blocks receiving a unit that is not in rented inventory state", async () => {
+  it("processes selected units through one sequential orchestration while preserving each condition payload", async () => {
+    let state = {
+      ...baseWorkspace,
+      units: [],
+      operational_units: [unit("unit-a", "TD4P-001"), unit("unit-b", "TD4P-002")],
+    } as unknown as OperationalReturnWorkspace;
+    operationalMock.getOperationalReturnWorkspace.mockImplementation(async () => state);
+    operationalMock.processOperationalUnitReturns.mockImplementation(async (
+      _usahaId: string,
+      input: {
+        rentalId: string;
+        units: Array<{ unitBarangId: string; inspection: Record<string, unknown> }>;
+      },
+      options: { onProgress?: (progress: { index: number; total: number; unitBarangId: string }) => void },
+    ) => {
+      input.units.forEach((entry, index) => {
+        options.onProgress?.({ index: index + 1, total: input.units.length, unitBarangId: entry.unitBarangId });
+      });
+      state = {
+        ...state,
+        rental: { ...state.rental, updated_at: "rental-v3" },
+        operational_units: [
+          returned("unit-a", "normal"),
+          returned("unit-b", "damage"),
+        ] as unknown as typeof state.operational_units,
+      };
+      return {
+        state: "completed",
+        processed: [
+          { unitBarangId: "unit-a", result: {} },
+          { unitBarangId: "unit-b", result: {} },
+        ],
+      };
+    });
+
+    renderWorkspace();
+    await screen.findByText("TD4P-001 · Tenda Dome 4P");
+
+    const firstCard = getUnitCard("TD4P-001");
+    fireEvent.click(firstCard.getByRole("button", { name: "Pilih kondisi unit" }));
+    fireEvent.click(screen.getByRole("radio", { name: /Baik:/ }));
+
+    const secondCard = getUnitCard("TD4P-002");
+    fireEvent.click(secondCard.getByRole("button", { name: "Pilih kondisi unit" }));
+    fireEvent.click(screen.getByRole("radio", { name: /Rusak:/ }));
+
+    const finishButton = screen.getAllByRole("button", { name: /Selesaikan Sewa/ }).at(-1)!;
+    expect(finishButton).toBeEnabled();
+    fireEvent.click(finishButton);
+
+    await waitFor(() => expect(operationalMock.processOperationalUnitReturns).toHaveBeenCalledTimes(1));
+    expect(operationalMock.processOperationalUnitReturns).toHaveBeenCalledWith(
+      "usaha-1",
+      expect.objectContaining({
+        rentalId: "rental-1",
+        units: [
+          {
+            unitBarangId: "unit-a",
+            inspection: expect.objectContaining({
+              hasil: "normal",
+              kelengkapanStatus: "complete",
+              keputusanOperasional: "ready_review",
+              findings: [],
+            }),
+          },
+          {
+            unitBarangId: "unit-b",
+            inspection: expect.objectContaining({
+              hasil: "issue_found",
+              kelengkapanStatus: "complete",
+              keputusanOperasional: "maintenance_required",
+              findings: [expect.objectContaining({ jenis_temuan: "damage" })],
+            }),
+          },
+        ],
+      }),
+      expect.objectContaining({ onProgress: expect.any(Function) }),
+    );
+
+    await waitFor(() => expect(getUnitCard("TD4P-001").getByText("Siap Disewakan")).toBeInTheDocument());
+    expect(getUnitCard("TD4P-002").getByText("Masuk Perawatan")).toBeInTheDocument();
+    expect(getUnitCard("TD4P-002").getByText(/Perawatan .* planned/)).toBeInTheDocument();
+  });
+
+  it("keeps a failed damaged unit visible and preserves selection after a partial batch", async () => {
+    let state = {
+      ...baseWorkspace,
+      units: [],
+      operational_units: [unit("unit-a", "TD4P-001"), unit("unit-b", "TD4P-002")],
+    } as unknown as OperationalReturnWorkspace;
+    operationalMock.getOperationalReturnWorkspace.mockImplementation(async () => state);
+    operationalMock.processOperationalUnitReturns.mockImplementation(async () => {
+      state = {
+        ...state,
+        rental: { ...state.rental, updated_at: "rental-v2" },
+        operational_units: [
+          returned("unit-a", "normal"),
+          unit("unit-b", "TD4P-002"),
+        ] as unknown as typeof state.operational_units,
+      };
+      return {
+        state: "partial",
+        processed: [{ unitBarangId: "unit-a", result: {} }],
+        failedUnitId: "unit-b",
+        error: "RPC ERROR: maintenance handoff rejected for finding type damage.",
+        unknownOutcome: false,
+      };
+    });
+
+    renderWorkspace();
+    await screen.findByText("TD4P-001 · Tenda Dome 4P");
+    fireEvent.click(getUnitCard("TD4P-001").getByRole("button", { name: "Pilih kondisi unit" }));
+    fireEvent.click(screen.getByRole("radio", { name: /Baik:/ }));
+    fireEvent.click(getUnitCard("TD4P-002").getByRole("button", { name: "Pilih kondisi unit" }));
+    fireEvent.click(screen.getByRole("radio", { name: /Rusak:/ }));
+    fireEvent.click(screen.getAllByRole("button", { name: /Selesaikan Sewa/ }).at(-1)!);
+
+    await waitFor(() => expect(screen.getByText(/RPC ERROR: maintenance handoff rejected/)).toBeInTheDocument());
+    expect(getUnitCard("TD4P-001").getByText("Siap Disewakan")).toBeInTheDocument();
+    expect(getUnitCard("TD4P-002").getByText("Belum kembali")).toBeInTheDocument();
+    expect(getUnitCard("TD4P-002").getByText("Kondisi: Rusak")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /Selesaikan Sewa/ }).at(-1)).toBeEnabled();
+  });
+
+  it("blocks a unit that is not in rented inventory state", async () => {
     operationalMock.getOperationalReturnWorkspace.mockResolvedValue({
       ...baseWorkspace,
       units: [],
@@ -120,152 +283,46 @@ describe("Rental operational workspace", () => {
     const blockedAlert = screen.getByRole("alert");
     expect(blockedAlert.textContent?.toLowerCase()).toContain("sistem hanya menerima pengembalian");
     expect(blockedAlert.textContent?.toLowerCase()).toContain("rented");
-    expect(screen.queryByRole("button", { name: /Pilih kondisi/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Terima Unit \+ Proses Kondisi/ })).not.toBeInTheDocument();
-    expect(operationalMock.processOperationalUnitReturn).not.toHaveBeenCalled();
+    expect(getUnitCard("PERLENGKAPAN-TRACKING-POLE-001").queryByRole("button", { name: "Pilih kondisi unit" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Tidak ada unit untuk diproses" })).toBeDisabled();
+    expect(operationalMock.processOperationalUnitReturns).not.toHaveBeenCalled();
   });
 
-  it("processes a normal unit as ready and a damaged unit as maintenance independently", async () => {
-    let state = {
-      ...baseWorkspace,
-      units: [],
-      operational_units: [unit("unit-a", "TD4P-001"), unit("unit-b", "TD4P-002")],
-    } as unknown as OperationalReturnWorkspace;
-    operationalMock.getOperationalReturnWorkspace.mockImplementation(async () => state);
-    operationalMock.processOperationalUnitReturn.mockImplementation(async (_usahaId: string, input: { unitBarangId: string; inspection: OperationalReturnInspectionInput }) => {
-      const target = state.operational_units.find((item) => item.unit_barang_id === input.unitBarangId)!;
-      const ready = input.inspection.hasil === "normal";
-      state = {
-        ...state,
-        rental: { ...state.rental, updated_at: ready ? "rental-v2" : "rental-v3" },
-        operational_units: state.operational_units.map((item) => item.unit_barang_id === target.unit_barang_id ? {
-          ...item,
-          unit_status: ready ? "ready" : "maintenance",
-          return: { detail_pengembalian_id: "detail-" + target.unit_barang_id, pengembalian_id: "return-" + target.unit_barang_id, diterima_at: "2026-10-05T11:00:00Z", kondisi_awal: null, status_pemeriksaan: "completed", catatan: null },
-          inspection: { pemeriksaan_id: "inspection-" + target.unit_barang_id, detail_pengembalian_id: "detail-" + target.unit_barang_id, hasil: ready ? "normal" : "issue_found", kelengkapan_status: ready ? "complete" : "complete", keputusan_operasional: ready ? "ready_review" : "maintenance_required", diperiksa_at: "2026-10-05T11:00:00Z", catatan: null, finding_count: ready ? 0 : 1 },
-          maintenance: ready ? null : { perawatan_id: "maintenance-" + target.unit_barang_id, pemeriksaan_id: "inspection-" + target.unit_barang_id, jenis_perawatan: "perbaikan", status: "planned", dimulai_at: null, selesai_at: null, biaya: null, currency_code: "IDR", pelaksana: null },
-          readiness_state: ready ? "ready" : "maintenance_required",
-        } : item),
-      };
-      return {
-        pengembalian_id: "return-1",
-        detail_pengembalian_id: "detail-1",
-        pemeriksaan_id: "inspection-1",
-        perawatan_id: ready ? null : "maintenance-" + target.unit_barang_id,
-        penyewaan_id: "rental-1",
-        unit_barang_id: target.unit_barang_id,
-        return: {}, inspection: {}, maintenance_required: !ready,
-        readiness_state: ready ? "ready" : "maintenance_required",
-        block_reason: ready ? null : "Unit memerlukan tindak lanjut perawatan sebelum readiness.",
-        unit_status: ready ? "ready" : "maintenance",
-        ready_response: ready ? {} : null,
-      };
-    });
-
-    renderWorkspace();
-    await screen.findByText("TD4P-001 · Tenda Dome 4P");
-
-    fireEvent.click(screen.getAllByRole("button", { name: /Pilih kondisi/ })[0]);
-    fireEvent.click(screen.getAllByRole("radio")[0]);
-    const firstProcessButton = screen.getAllByRole("button", { name: /Terima Unit \+ Proses Kondisi/ })[0];
-    expect(firstProcessButton).toBeEnabled();
-    fireEvent.click(firstProcessButton);
-
-    await waitFor(() => expect(operationalMock.processOperationalUnitReturn).toHaveBeenCalledWith(
-      "usaha-1",
-      expect.objectContaining({
-        unitBarangId: "unit-a",
-        inspection: expect.objectContaining({ hasil: "normal", keputusanOperasional: "ready_review", findings: [] }),
-        expectedRentalUpdatedAt: "rental-v1",
-      }),
-      expect.objectContaining({ idempotencyKey: expect.any(String), requestId: expect.any(String) }),
-    ));
-
-    await waitFor(() => expect(screen.getByText("Siap Disewakan")).toBeInTheDocument());
-    expect(screen.getByText("Unit sudah dikembalikan ke pool siap disewakan.")).toBeInTheDocument();
-
-    fireEvent.click(screen.getAllByRole("button", { name: /Pilih kondisi/ })[0]);
-    fireEvent.click(screen.getAllByRole("radio")[2]);
-    const processButtons = screen.getAllByRole("button", { name: /Terima Unit \+ Proses Kondisi/ });
-    fireEvent.click(processButtons[0]);
-
-    await waitFor(() => expect(operationalMock.processOperationalUnitReturn).toHaveBeenLastCalledWith(
-      "usaha-1",
-      expect.objectContaining({
-        unitBarangId: "unit-b",
-        inspection: expect.objectContaining({
-          hasil: "issue_found",
-          keputusanOperasional: "maintenance_required",
-          findings: [expect.objectContaining({ jenis_temuan: "damage" })],
-        }),
-        expectedRentalUpdatedAt: "rental-v2",
-      }),
-      expect.objectContaining({ idempotencyKey: expect.any(String), requestId: expect.any(String) }),
-    ));
-
-    await waitFor(() => expect(screen.getByText("Masuk Perawatan")).toBeInTheDocument());
-    expect(screen.getByText(/Perawatan .* planned/)).toBeInTheDocument();
-    expect(screen.getByText("Siap Disewakan")).toBeInTheDocument();
-  });
-
-  it("processes loss as unavailable and surfaces the lost state", async () => {
+  it("preserves the unavailable outcome for a lost unit", async () => {
     let state = {
       ...baseWorkspace,
       units: [],
       operational_units: [unit("unit-loss", "CARRIER-EIGER-005")],
     } as unknown as OperationalReturnWorkspace;
-
     operationalMock.getOperationalReturnWorkspace.mockImplementation(async () => state);
-    operationalMock.processOperationalUnitReturn.mockImplementation(async (_usahaId: string, input: { unitBarangId: string; inspection: OperationalReturnInspectionInput }) => {
-      expect(input.unitBarangId).toBe("unit-loss");
-      expect(input.inspection).toEqual(expect.objectContaining({
-        hasil: "issue_found",
-        kelengkapanStatus: "incomplete",
-        keputusanOperasional: "unavailable",
-        findings: [expect.objectContaining({ jenis_temuan: "loss" })],
+    operationalMock.processOperationalUnitReturns.mockImplementation(async (
+      _usahaId: string,
+      input: { units: Array<{ unitBarangId: string; inspection: Record<string, unknown> }> },
+    ) => {
+      expect(input.units[0]).toEqual(expect.objectContaining({
+        unitBarangId: "unit-loss",
+        inspection: expect.objectContaining({
+          hasil: "issue_found",
+          kelengkapanStatus: "incomplete",
+          keputusanOperasional: "unavailable",
+          findings: [expect.objectContaining({ jenis_temuan: "loss" })],
+        }),
       }));
-
       state = {
         ...state,
-        rental: { ...state.rental, updated_at: "rental-v2" },
-        operational_units: state.operational_units.map((item) => item.unit_barang_id === "unit-loss" ? {
-          ...item,
-          unit_status: "lost",
-          return: { detail_pengembalian_id: "detail-loss", pengembalian_id: "return-loss", diterima_at: "2026-10-05T11:00:00Z", kondisi_awal: null, status_pemeriksaan: "completed", catatan: null },
-          inspection: { pemeriksaan_id: "inspection-loss", detail_pengembalian_id: "detail-loss", hasil: "issue_found", kelengkapan_status: "incomplete", keputusan_operasional: "unavailable", diperiksa_at: "2026-10-05T11:00:00Z", catatan: "Unit hilang", finding_count: 1 },
-          maintenance: null,
-          readiness_state: "lost",
-        } : item),
+        operational_units: [returned("unit-loss", "loss")] as unknown as typeof state.operational_units,
       };
-
-      return {
-        pengembalian_id: "return-loss",
-        detail_pengembalian_id: "detail-loss",
-        pemeriksaan_id: "inspection-loss",
-        perawatan_id: null,
-        penyewaan_id: "rental-1",
-        unit_barang_id: "unit-loss",
-        return: {},
-        inspection: {},
-        maintenance_required: false,
-        readiness_state: "lost",
-        block_reason: "Unit dinyatakan hilang dan tidak tersedia secara fisik.",
-        unit_status: "lost",
-        ready_response: null,
-      };
+      return { state: "completed", processed: [{ unitBarangId: "unit-loss", result: {} }] };
     });
 
     renderWorkspace();
     await screen.findByText("CARRIER-EIGER-005 · Tenda Dome 4P");
+    fireEvent.click(getUnitCard("CARRIER-EIGER-005").getByRole("button", { name: "Pilih kondisi unit" }));
+    fireEvent.click(screen.getByRole("radio", { name: /Hilang:/ }));
+    fireEvent.click(screen.getAllByRole("button", { name: /Selesaikan Sewa/ }).at(-1)!);
 
-    fireEvent.click(screen.getByRole("button", { name: /Pilih kondisi/ }));
-    fireEvent.click(screen.getAllByRole("radio")[4]);
-    const processButton = screen.getByRole("button", { name: /Terima Unit \+ Proses Kondisi/ });
-    fireEvent.click(processButton);
-
-    await waitFor(() => expect(screen.getByText("Hilang")).toBeInTheDocument());
-    expect(screen.getByText("Unit ditandai Hilang dan tidak tersedia untuk penyewaan baru.")).toBeInTheDocument();
-    expect(screen.getByText(/Tidak ada pekerjaan Perawatan yang dibuat/)).toBeInTheDocument();
+    await waitFor(() => expect(getUnitCard("CARRIER-EIGER-005").getByText("Hilang")).toBeInTheDocument());
+    expect(getUnitCard("CARRIER-EIGER-005").getByText("Unit ditandai Hilang dan tidak tersedia untuk penyewaan baru.")).toBeInTheDocument();
+    expect(getUnitCard("CARRIER-EIGER-005").getByText(/Tidak ada pekerjaan Perawatan yang dibuat/)).toBeInTheDocument();
   });
-
 });

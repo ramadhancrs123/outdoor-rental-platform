@@ -195,12 +195,22 @@ describe("Laporan exports", () => {
           "Pengeluaran",
           "Pendapatan Barang",
           "Pendapatan Unit",
+          "Penjualan Retail",
+          "Rincian Penjualan",
+          "Pembelian",
+          "Rincian Pembelian",
+          "Penerimaan Barang",
+          "Rincian Penerimaan",
+          "Ringkasan Promo",
+          "Penggunaan Promo",
         ]),
       );
       const summarySheet = workbook.getWorksheet("Ringkasan");
       expect(summarySheet?.getCell(6, 1).value).toBe("Mata Uang");
       expect(summarySheet?.getCell(6, 2).value).toBe("Indikator");
-      expect(summarySheet?.getCell(7, 2).value).toBe("Pemasukan tercatat");
+      expect(summarySheet?.getCell(7, 2).value).toBe("Pendapatan penyewaan");
+      expect(summarySheet?.getCell(8, 2).value).toBe("Pendapatan penjualan retail");
+      expect(summarySheet?.getCell(10, 2).value).toBe("Pemasukan tercatat");
     } finally {
       if (originalCreate) Object.defineProperty(URL, "createObjectURL", { configurable: true, value: originalCreate });
       else delete (URL as unknown as { createObjectURL?: unknown }).createObjectURL;

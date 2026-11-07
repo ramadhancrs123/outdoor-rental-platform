@@ -249,6 +249,44 @@ export type SupplierOption = {
   name: string;
 };
 
+export type FinanceDashboardCashflowPoint = {
+  date: string;
+  currency_code: string;
+  income: number;
+  expense: number;
+  rental_income: number;
+  retail_income: number;
+  purchase_expense: number;
+  other_expense: number;
+  net: number;
+};
+
+export type FinanceDashboardPaymentSummary = {
+  currency_code: string;
+  amount: number;
+  count: number;
+};
+
+export type FinanceDashboardDiscountSummary = {
+  currency_code: string;
+  amount: number;
+};
+
+export type FinanceDashboardAnalytics = FinancePeriod & {
+  total_transaction_count: number;
+  currencies: string[];
+  cashflow: FinanceDashboardCashflowPoint[];
+  payment_summary: FinanceDashboardPaymentSummary[];
+  promotions: {
+    active_catalog_count: number;
+    active_package_count: number;
+    loyalty_active: boolean;
+    active_count: number;
+    used_transaction_count: number;
+    discount_by_currency: FinanceDashboardDiscountSummary[];
+  };
+};
+
 export type FinancePeriod = { start_date: string; end_date_exclusive: string; timezone: string; };
 export type FinanceSummary = FinancePeriod & {
   recorded_income:number;

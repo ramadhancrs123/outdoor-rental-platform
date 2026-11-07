@@ -54,6 +54,53 @@ describe("Katalog trusted mutation service", () => {
     });
   });
 
+  test("create product can atomically initialize rental and retail channels", async () => {
+    rpcMock.mockResolvedValue({
+      data: {
+        barang_id: "gas-parent-1",
+        usaha_id: "usaha-1",
+        nama: "Gas LPG",
+        is_rentable: false,
+        is_sellable: false,
+        inventory_mode: "serialized",
+      },
+      error: null,
+    });
+
+    await createCatalogProduct("usaha-1", {
+      kategoriBarangId: "category-1",
+      nama: "Gas LPG",
+      slug: "gas-lpg",
+      salesConfig: {
+        isRentable: false,
+        isSellable: false,
+        hargaJual: null,
+        inventoryMode: "serialized",
+      },
+    }, {
+      idempotencyKey: "catalog-gas-create",
+      requestId: "request-gas-create",
+    });
+
+    expect(rpcMock).toHaveBeenCalledWith("command_create_barang_with_channels", {
+      p_usaha_id: "usaha-1",
+      p_kategori_barang_id: "category-1",
+      p_nama: "Gas LPG",
+      p_slug: "gas-lpg",
+      p_deskripsi: null,
+      p_ringkasan_publik: null,
+      p_status: "active",
+      p_is_public: false,
+      p_metadata: null,
+      p_is_rentable: false,
+      p_is_sellable: false,
+      p_harga_jual: null,
+      p_inventory_mode: "serialized",
+      p_idempotency_key: "catalog-gas-create",
+      p_request_id: "request-gas-create",
+    });
+  });
+
   test("create category reconciles a committed response after unknown command response", async () => {
     rpcMock
       .mockResolvedValueOnce({ data: null, error: new Error("network timeout") })

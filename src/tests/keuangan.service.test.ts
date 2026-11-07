@@ -8,6 +8,9 @@ vi.mock("@/app/providers/supabase/client", () => ({
 
 import {
   getFinanceSummary,
+  getFinanceDashboardAnalytics,
+  getFinanceRetailAnalysis,
+  getFinancePaymentPage,
   getFinanceProductRevenue,
   getFinanceUnitRevenue,
   getFinanceHealth,
@@ -44,6 +47,105 @@ describe("Finance F3 server-side contracts", () => {
       p_usaha_id: "usaha-1",
       p_start_date: "2026-09-01",
       p_end_date: "2026-10-01",
+    });
+  });
+
+  test("retail analysis delegates the bounded read model to the trusted RPC", async () => {
+    rpcMock.mockResolvedValueOnce({
+      data: {
+        period: { start_date: "2026-11-01", end_date_exclusive: "2026-12-01", timezone: "Asia/Jakarta" },
+        summary: {
+          sales_count: 2,
+          sales_revenue: 25000,
+          sold_quantity: 3,
+          known_hpp: 10000,
+          gross_profit_known: 15000,
+          hpp_unknown_revenue: 0,
+          hpp_unknown_lines: 0,
+          known_hpp_lines: 2,
+          sales_with_incomplete_hpp: 0,
+          hpp_coverage_pct: 100,
+          payment_received: 25000,
+          payment_count: 2,
+          completed_purchase_count: 1,
+          completed_purchase_value: 10000,
+          purchase_cash_out: 10000,
+          receiving_count: 1,
+          received_quantity: 2,
+          received_stock_value: 10000,
+          currency_code: "IDR",
+        },
+        top_products: [],
+        recent_sales: [],
+        purchase_history: [],
+        stock_snapshot: [],
+        read_only: true,
+        account_policy: "shared cash account",
+        hpp_policy: "HPP at sale",
+      },
+      error: null,
+    });
+
+    await expect(getFinanceRetailAnalysis("usaha-1", "2026-11-01", "2026-12-01")).resolves.toMatchObject({
+      start_date: "2026-11-01",
+      summary: { sales_revenue: 25000, gross_profit_known: 15000 },
+      read_only: true,
+    });
+
+    expect(rpcMock).toHaveBeenCalledWith("finance_retail_analysis", {
+      p_usaha_id: "usaha-1",
+      p_start_date: "2026-11-01",
+      p_end_date: "2026-12-01",
+      p_limit: 50,
+    });
+  });
+
+  test("unified payment page preserves the source ledger discriminator", async () => {
+    rpcMock.mockResolvedValueOnce({
+      data: {
+        period: { start_date: "2026-11-01", end_date_exclusive: "2026-12-01", timezone: "Asia/Jakarta" },
+        items: [{
+          pembayaran_id: "sale-payment-1",
+          usaha_id: "usaha-1",
+          reservasi_id: null,
+          penyewaan_id: null,
+          penjualan_id: "sale-1",
+          nomor_penjualan: "POS-2026-0001",
+          transaksi_keuangan_id: "transaction-1",
+          nomor_transaksi: "TRX-2026-0001",
+          nomor_pembayaran: "POSPAY-2026-0001",
+          jenis: "pembayaran_penjualan",
+          metode: "cash",
+          amount: 10000,
+          currency_code: "IDR",
+          dibayar_at: "2026-11-05T10:00:00+07:00",
+          dicatat_by_admin_id: "admin-1",
+          reference_text: null,
+          catatan: null,
+          status: "recorded",
+          created_at: "2026-11-05T10:00:00+07:00",
+          updated_at: "2026-11-05T10:00:00+07:00",
+          payment_source_type: "sale",
+          source_label: "Penjualan POS-2026-0001",
+        }],
+        total: 1,
+        limit: 20,
+        offset: 0,
+        has_more: false,
+      },
+      error: null,
+    });
+
+    await expect(getFinancePaymentPage("usaha-1", "2026-11-01", "2026-12-01", 20, 0)).resolves.toMatchObject({
+      total: 1,
+      items: [{ payment_source_type: "sale", penjualan_id: "sale-1", source_label: "Penjualan POS-2026-0001" }],
+    });
+    expect(rpcMock).toHaveBeenCalledWith("finance_payment_page", {
+      p_usaha_id: "usaha-1",
+      p_start_date: "2026-11-01",
+      p_end_date: "2026-12-01",
+      p_limit: 20,
+      p_offset: 0,
     });
   });
 
@@ -307,6 +409,60 @@ describe("Manual expense cash-out command", () => {
     expect(rpcMock).toHaveBeenCalledWith("command_reconcile_expense_with_finance_cashout", {
       p_usaha_id: "usaha-1",
       p_idempotency_key: "expense-cashout-reconcile",
+    });
+  });
+});
+
+
+describe("Dashboard finance analytics contract", () => {
+  test("loads daily cashflow and promo summary for the selected period", async () => {
+    rpcMock.mockResolvedValueOnce({
+      data: {
+        period: {
+          start_date: "2026-11-01",
+          end_date_exclusive: "2026-12-01",
+          timezone: "Asia/Jakarta",
+        },
+        total_transaction_count: 6,
+        currencies: ["IDR"],
+        cashflow: [{
+          date: "2026-11-07",
+          currency_code: "IDR",
+          income: 600000,
+          expense: 250000,
+          rental_income: 450000,
+          retail_income: 150000,
+          purchase_expense: 200000,
+          other_expense: 50000,
+          net: 350000,
+        }],
+        payment_summary: [{ currency_code: "IDR", amount: 600000, count: 4 }],
+        promotions: {
+          active_catalog_count: 2,
+          active_package_count: 1,
+          loyalty_active: true,
+          active_count: 4,
+          used_transaction_count: 3,
+          discount_by_currency: [{ currency_code: "IDR", amount: 75000 }],
+        },
+      },
+      error: null,
+    });
+
+    await expect(
+      getFinanceDashboardAnalytics("usaha-1", "2026-11-01", "2026-12-01"),
+    ).resolves.toMatchObject({
+      total_transaction_count: 6,
+      currencies: ["IDR"],
+      cashflow: [{ date: "2026-11-07", rental_income: 450000, retail_income: 150000, net: 350000 }],
+      payment_summary: [{ currency_code: "IDR", amount: 600000, count: 4 }],
+      promotions: { active_count: 4, used_transaction_count: 3 },
+    });
+
+    expect(rpcMock).toHaveBeenCalledWith("finance_dashboard_analytics", {
+      p_usaha_id: "usaha-1",
+      p_start_date: "2026-11-01",
+      p_end_date: "2026-12-01",
     });
   });
 });

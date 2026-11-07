@@ -10,6 +10,7 @@ import type {
   FinanceProductRevenueReport,
   FinanceReportPage,
   FinanceSummary,
+  FinanceDashboardAnalytics,
   FinanceTransaction,
   FinanceUnitRevenueReport,
   FinanceCommandOptions,
@@ -726,6 +727,38 @@ export async function getFinanceSummary(
     p_end_date: endDateExclusive,
   });
   return normalizeFinancePeriod(assertFinanceRpcResult(data as (FinanceSummary & { period?: FinancePeriod }) | null, error, "Ringkasan keuangan"));
+}
+
+export async function getFinanceDashboardAnalytics(
+  usahaId: string,
+  startDate: string,
+  endDateExclusive: string,
+): Promise<FinanceDashboardAnalytics> {
+  const { data, error } = await supabase.rpc("finance_dashboard_analytics", {
+    p_usaha_id: usahaId,
+    p_start_date: startDate,
+    p_end_date: endDateExclusive,
+  });
+  if (error) throw error;
+  if (!data || typeof data !== "object") {
+    throw new Error("Analisis dashboard belum tersedia.");
+  }
+  const result = normalizeFinancePeriod(
+    data as FinanceDashboardAnalytics & { period?: FinancePeriod },
+  ) as FinanceDashboardAnalytics;
+  if (
+    result.start_date !== startDate ||
+    result.end_date_exclusive !== endDateExclusive ||
+    !Array.isArray(result.cashflow) ||
+    !Array.isArray(result.currencies) ||
+    !Array.isArray(result.payment_summary) ||
+    !Number.isInteger(result.total_transaction_count) ||
+    result.total_transaction_count < 0 ||
+    !result.promotions
+  ) {
+    throw new Error("Data analisis dashboard tidak konsisten dengan periode yang dipilih.");
+  }
+  return result;
 }
 
 export async function getFinanceTransactionPage(

@@ -15,7 +15,9 @@ import {
   completeRentalHandover,
   createDirectRental,
   createDirectRentalAndActivate,
+  createDirectRentalWithDiscount,
   createRentalFromReservation,
+  createRentalFromReservationWithDiscount,
   getBlockedAssignableUnitIds,
   previewDirectRentalAvailability,
   getRentalCapabilities,
@@ -178,6 +180,129 @@ describe("Penyewaan trusted command service", () => {
       })],
       p_idempotency_key: "walkin-atomic-test",
       p_request_id: "request-atomic-test",
+    }));
+  });
+
+
+  test("direct rental discount uses the phase-3 atomic discount command", async () => {
+    rpcMock.mockResolvedValue({
+      data: {
+        penyewaan_id: "rental-discount-1",
+        nomor_penyewaan: "RNT-2026-030",
+        status: "draft",
+        total_amount: 90000,
+        discount_amount: 10000,
+        currency_code: "IDR",
+      },
+      error: null,
+    });
+
+    await expect(createDirectRentalWithDiscount("usaha-1", {
+      penyewa_id: "renter-1",
+      jadwal_mulai: "2026-11-06T02:00:00.000Z",
+      jadwal_kembali: "2026-11-07T02:00:00.000Z",
+      lines: [{
+        barang_id: "barang-1",
+        tarif_sewa_id: "tariff-1",
+        duration_periods: 1,
+        jumlah: 1,
+        unit_price: 100000,
+        subtotal: 100000,
+        currency_code: "IDR",
+      }],
+      catatan: "walk-in diskon",
+    }, { mode: "loyalty" }, {
+      idempotencyKey: "walkin-discount-key",
+      requestId: "walkin-discount-request",
+    })).resolves.toMatchObject({
+      penyewaan_id: "rental-discount-1",
+      total_amount: 90000,
+      discount_amount: 10000,
+    });
+
+    expect(rpcMock).toHaveBeenCalledTimes(1);
+    expect(rpcMock).toHaveBeenCalledWith("command_create_direct_rental_with_discount", expect.objectContaining({
+      p_usaha_id: "usaha-1",
+      p_penyewa_id: "renter-1",
+      p_discount_request: { mode: "loyalty" },
+      p_idempotency_key: "walkin-discount-key",
+      p_request_id: "walkin-discount-request",
+      p_lines: [expect.objectContaining({
+        barang_id: "barang-1",
+        varian_barang_id: null,
+        subtotal: 100000,
+      })],
+    }));
+  });
+
+  test("reservation conversion with manual discount preserves the reservation RPC contract", async () => {
+    rpcMock.mockResolvedValue({
+      data: {
+        penyewaan_id: "rental-reservation-discount-1",
+        reservasi_id: "reservation-1",
+        status: "draft",
+        total_amount: 85000,
+        discount_amount: 15000,
+      },
+      error: null,
+    });
+
+    await createRentalFromReservationWithDiscount("usaha-1", {
+      reservasiId: "reservation-1",
+      jadwalMulai: "2026-11-06T02:00:00.000Z",
+      jadwalKembali: "2026-11-07T02:00:00.000Z",
+    }, {
+      mode: "manual",
+      amount: 15000,
+      reason_code: "service_recovery",
+      reason_note: "Kompensasi layanan",
+    }, {
+      idempotencyKey: "reservation-discount-key",
+      requestId: "reservation-discount-request",
+    });
+
+    expect(rpcMock).toHaveBeenCalledTimes(1);
+    expect(rpcMock).toHaveBeenCalledWith("command_create_rental_from_reservation_with_discount", {
+      p_usaha_id: "usaha-1",
+      p_reservasi_id: "reservation-1",
+      p_jadwal_mulai: "2026-11-06T02:00:00.000Z",
+      p_jadwal_kembali: "2026-11-07T02:00:00.000Z",
+      p_discount_request: {
+        mode: "manual",
+        amount: 15000,
+        reason_code: "service_recovery",
+        reason_note: "Kompensasi layanan",
+      },
+      p_idempotency_key: "reservation-discount-key",
+      p_request_id: "reservation-discount-request",
+    });
+  });
+
+  test("reservation conversion can atomically create, discount, and activate", async () => {
+    rpcMock.mockResolvedValue({
+      data: {
+        penyewaan_id: "rental-reservation-active-1",
+        status: "active",
+        rental_activation: { status: "active" },
+      },
+      error: null,
+    });
+
+    await createRentalFromReservationWithDiscount("usaha-1", {
+      reservasiId: "reservation-2",
+      jadwalMulai: "2026-11-06T02:00:00.000Z",
+      jadwalKembali: "2026-11-07T02:00:00.000Z",
+    }, { mode: "none" }, {
+      idempotencyKey: "reservation-active-discount-key",
+      requestId: "reservation-active-discount-request",
+    }, true);
+
+    expect(rpcMock).toHaveBeenCalledWith("command_create_reservation_rental_activate_discount", expect.objectContaining({
+      p_usaha_id: "usaha-1",
+      p_reservasi_id: "reservation-2",
+      p_catatan: "Aktivasi langsung dari konversi reservasi.",
+      p_discount_request: { mode: "none" },
+      p_idempotency_key: "reservation-active-discount-key",
     }));
   });
 

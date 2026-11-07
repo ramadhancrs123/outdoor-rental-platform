@@ -13,6 +13,7 @@ import type {
   RentalComponent,
   RentalDetail,
   RentalDetailLine,
+  RentalSaleLine,
   RentalExtension,
   RentalHandover,
   RentalListFilters,
@@ -490,13 +491,15 @@ export async function getRental(usahaId: string, id: string): Promise<RentalDeta
   if (!data) throw new Error("Penyewaan tidak ditemukan dalam Usaha aktif.");
   const header = data as RentalHeader;
 
-  const [detailResult, assignmentResult, componentResult, handoverResult, extensionResult, renterResult] = await Promise.all([
+  const [detailResult, assignmentResult, componentResult, handoverResult, extensionResult, renterResult, checkoutResult] = await Promise.all([
     supabase.from("detail_penyewaan").select(DETAIL_SELECT).eq("usaha_id", usahaId).eq("penyewaan_id", id).order("created_at", { ascending: true }),
     supabase.from("penetapan_unit").select("penetapan_unit_id,usaha_id,detail_penyewaan_id,komponen_penyewaan_id,unit_barang_id,asal_pilihan_unit_id,status,ditetapkan_at,dibatalkan_at,alasan_substitusi,ditetapkan_by_admin_id,catatan").eq("usaha_id", usahaId).in("detail_penyewaan_id", await getDetailIds(usahaId, [id])).order("ditetapkan_at", { ascending: false }),
     supabase.from("komponen_penyewaan").select("komponen_penyewaan_id,detail_penyewaan_id,barang_id,varian_barang_id,paket_sewa_id,jumlah,catatan").eq("usaha_id", usahaId).in("detail_penyewaan_id", await getDetailIds(usahaId, [id])).order("created_at", { ascending: true }),
     supabase.from("serah_terima").select("serah_terima_id,usaha_id,penyewaan_id,serah_terima_at,actor_admin_id,status,catatan").eq("usaha_id", usahaId).eq("penyewaan_id", id).order("serah_terima_at", { ascending: false }).limit(1),
     supabase.from("perpanjangan_sewa").select("perpanjangan_sewa_id,usaha_id,penyewaan_id,jadwal_kembali_sebelum,jadwal_kembali_sesudah,diminta_at,disetujui_at,disetujui_by_admin_id,status,tambahan_amount,currency_code,alasan").eq("usaha_id", usahaId).eq("penyewaan_id", id).order("diminta_at", { ascending: false }),
     supabase.from("penyewa").select("penyewa_id,nama_lengkap,nomor_telepon").eq("usaha_id", usahaId).eq("penyewa_id", header.penyewa_id).maybeSingle(),
+    // Keep retail rows scoped to this exact mixed checkout and rental; independent POS sales are excluded.
+    supabase.from("checkout").select("penjualan_id").eq("usaha_id", usahaId).eq("penyewaan_id", id).eq("source", "mixed").eq("status", "completed"),
   ]);
   if (detailResult.error) throw detailResult.error;
   if (assignmentResult.error) throw assignmentResult.error;
@@ -504,6 +507,31 @@ export async function getRental(usahaId: string, id: string): Promise<RentalDeta
   if (handoverResult.error) throw handoverResult.error;
   if (extensionResult.error) throw extensionResult.error;
   if (renterResult.error) throw renterResult.error;
+  if (checkoutResult.error) throw checkoutResult.error;
+
+  const linkedSaleIds = [...new Set((checkoutResult.data ?? []).map((row) => row.penjualan_id).filter((value): value is string => Boolean(value)))];
+  let saleLines: RentalSaleLine[] = [];
+  if (linkedSaleIds.length) {
+    const { data: completedSales, error: salesError } = await supabase
+      .from("penjualan")
+      .select("penjualan_id")
+      .eq("usaha_id", usahaId)
+      .in("penjualan_id", linkedSaleIds)
+      .eq("status", "completed");
+    if (salesError) throw salesError;
+
+    const completedSaleIds = (completedSales ?? []).map((row) => row.penjualan_id).filter((value): value is string => Boolean(value));
+    if (completedSaleIds.length) {
+      const { data: saleLineRows, error: saleLinesError } = await supabase
+        .from("detail_penjualan")
+        .select("detail_penjualan_id,nama_barang_snapshot,nama_varian_snapshot,inventory_mode,jumlah,unit_price,subtotal,currency_code")
+        .eq("usaha_id", usahaId)
+        .in("penjualan_id", completedSaleIds)
+        .order("created_at", { ascending: true });
+      if (saleLinesError) throw saleLinesError;
+      saleLines = (saleLineRows ?? []) as RentalSaleLine[];
+    }
+  }
 
   const rawLines = (detailResult.data ?? []) as Array<{
     detail_penyewaan_id: string; usaha_id: string; penyewaan_id: string;
@@ -552,6 +580,7 @@ export async function getRental(usahaId: string, id: string): Promise<RentalDeta
       varian_nama: component.varian_barang_id ? componentCatalog.variant.get(component.varian_barang_id) ?? null : null,
     })),
     assignments: rawAssignments.map((row): RentalAssignment => ({ ...row, kode_unit: unitCodes.get(row.unit_barang_id) ?? null })),
+    sale_lines: saleLines,
     handover: ((handoverResult.data ?? [])[0] as RentalHandover | undefined) ?? null,
     extensions: (extensionResult.data ?? []) as RentalExtension[],
   };

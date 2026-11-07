@@ -4,11 +4,10 @@ import {
   Camera,
   CameraOff,
   CheckCircle2,
-  ChevronRight,
   Copy,
   FileCheck2,
   FilePlus2,
-  LockKeyhole,
+
   MapPin,
   Pencil,
   Phone,
@@ -17,6 +16,7 @@ import {
   Upload,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -49,13 +49,14 @@ import {
   type RenterPhoto,
 } from "@/features/penyewa/service";
 import {
-  CurrentUsahaCard,
+  CurrentUsahaInline,
   IdentityVerificationBadge,
-  PrivacyCard,
   RenterAvatar,
 } from "@/components/penyewa/renter-ui";
 import { renterStatusLabel, renterStatusVariant } from "@/features/penyewa/ui";
 import { listRentalsByRenter } from "@/features/penyewaan";
+import { getLoyaltyProgram, previewLoyaltyDiscount } from "@/features/event-promotions";
+import { LoyaltyProgressCard } from "@/components/penyewa/loyalty-progress-card";
 import { formatRentalDateTime, formatRentalMoney, semanticRentalLabel } from "@/features/penyewaan";
 import { paths } from "@/routes/paths";
 
@@ -332,6 +333,20 @@ export function RenterShow() {
 
   const activeError = usahaStatus === "error" ? usahaError : error;
   const activeRentals = useMemo(() => rentals.filter((rental) => rental.status === "active"), [rentals]);
+  const historicalRentals = useMemo(() => rentals.filter((rental) => rental.status !== "active"), [rentals]);
+  const loyaltyProgramQuery = useQuery({
+    queryKey: ["event-promotions", "loyalty", usaha?.usahaId],
+    queryFn: () => getLoyaltyProgram(usaha!.usahaId),
+    enabled: Boolean(usaha?.usahaId && renter),
+    staleTime: 30_000,
+  });
+  const loyaltyPreviewQuery = useQuery({
+    queryKey: ["event-promotions", "renter-loyalty-preview", usaha?.usahaId, renter?.penyewa_id],
+    queryFn: () => previewLoyaltyDiscount(usaha!.usahaId, renter!.penyewa_id, 0),
+    enabled: Boolean(usaha?.usahaId && renter?.penyewa_id && renter.status === "active"),
+    staleTime: 30_000,
+    refetchOnWindowFocus: true,
+  });
 
   const handleTabChange = (value: string) => {
     setActiveTab(value);
@@ -609,131 +624,148 @@ export function RenterShow() {
           </Link>
         </Button>
         <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="outline" className="hidden rounded-full sm:inline-flex">
-            Scope: {usaha.usahaNama}
-          </Badge>
-          <Button type="button" variant="outline" className="rounded-xl" onClick={openEdit}>
-            <Pencil />Ubah Profil Penyewa
+          <CurrentUsahaInline />
+          <Button type="button" size="sm" variant="outline" className="h-9 rounded-lg" onClick={openEdit}>
+            <Pencil className="size-3.5" />Ubah profil
           </Button>
-          <Button asChild className="rounded-xl">
-            <Link to={paths.penyewaanWalkIn + "?renter_id=" + renter.penyewa_id}>
-              Buat Penyewaan
-            </Link>
+          <Button asChild size="sm" className="h-9 rounded-lg">
+            <Link to={paths.penyewaanWalkIn + "?renter_id=" + renter.penyewa_id}>Buat rental</Link>
           </Button>
         </div>
       </div>
 
-      <CurrentUsahaCard />
-
-      <section className="rounded-2xl border border-border/80 bg-card p-4 shadow-sm sm:p-5">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+      <section className="rounded-2xl border border-border/80 bg-card p-3.5 shadow-sm sm:p-4">
+        <div className="flex items-center gap-3">
           <RenterAvatar name={renter.nama_lengkap} src={photo?.photoUrl} size="lg" />
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-xl font-bold tracking-tight sm:text-2xl">{renter.nama_lengkap}</h1>
-              <Badge variant={renterStatusVariant(renter.status)} className="rounded-full">
+              <h1 className="truncate text-lg font-bold tracking-tight sm:text-xl">{renter.nama_lengkap}</h1>
+              <Badge variant={renterStatusVariant(renter.status)} className="rounded-full text-[10px]">
                 {renterStatusLabel(renter.status)}
               </Badge>
             </div>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Penyewa · {usaha.usahaNama}
-            </p>
-            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <span>Terakhir diperbarui {formatDate(renter.updated_at)}</span>
-              {photo?.photoUrl ? (
-                <span className="inline-flex items-center gap-1">
-                  <Camera className="size-3.5" aria-hidden="true" />
-                  Foto privat tersedia
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1">
-                  <CameraOff className="size-3.5" aria-hidden="true" />
-                  Foto belum tersedia
-                </span>
-              )}
-            </div>
+            <p className="mt-0.5 truncate text-sm text-muted-foreground">{maskPhone(renter.nomor_telepon)}</p>
+            <p className="mt-1 truncate text-[11px] text-muted-foreground">Diperbarui {formatDate(renter.updated_at)}</p>
           </div>
+
         </div>
+
       </section>
 
       <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-4">
         <div className="overflow-x-auto">
           <TabsList className="w-max min-w-full justify-start rounded-xl bg-muted/60 p-1 sm:w-auto sm:min-w-0">
             <TabsTrigger value="ringkasan" className="rounded-lg px-4">Ringkasan</TabsTrigger>
+            <TabsTrigger value="penyewaan" className="rounded-lg px-4">Penyewaan</TabsTrigger>
             <TabsTrigger value="identitas" className="rounded-lg px-4">Identitas</TabsTrigger>
             <TabsTrigger value="kontak" className="rounded-lg px-4">Kontak</TabsTrigger>
-            <TabsTrigger value="operasional" className="rounded-lg px-4">Operasional</TabsTrigger>
           </TabsList>
         </div>
 
-        <TabsContent value="ringkasan" className="space-y-4">
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
-            <Card className="shadow-sm">
-              <CardHeader>
-                <CardTitle className="text-base">Ringkasan Identitas</CardTitle>
-              </CardHeader>
-              <CardContent className="grid gap-4 sm:grid-cols-2">
-                <div>
-                  <p className="text-xs text-muted-foreground">Nama lengkap</p>
-                  <p className="mt-1 font-semibold">{renter.nama_lengkap}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Status</p>
-                  <p className="mt-1 font-semibold">{renterStatusLabel(renter.status)}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Nomor telepon</p>
-                  <p className="mt-1 font-semibold">{maskPhone(renter.nomor_telepon)}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Alamat</p>
-                  <p className="mt-1 font-semibold">{renter.alamat || "Belum tersedia"}</p>
-                </div>
+        <TabsContent value="ringkasan" className="space-y-3">
+          <LoyaltyProgressCard
+            program={loyaltyProgramQuery.data}
+            preview={loyaltyPreviewQuery.data}
+            isLoading={loyaltyProgramQuery.isLoading || loyaltyPreviewQuery.isLoading}
+            isError={Boolean(loyaltyProgramQuery.error || loyaltyPreviewQuery.error)}
+            renterActive={renter.status === "active"}
+            onRetry={() => {
+              void loyaltyProgramQuery.refetch();
+              if (renter.status === "active") void loyaltyPreviewQuery.refetch();
+            }}
+          />
+
+          <section className="grid grid-cols-3 gap-2 sm:gap-3" aria-label="Aktivitas penyewa">
+            <Card className="border-border/80 shadow-none">
+              <CardContent className="p-3 sm:p-4">
+                <p className="text-[10px] font-medium text-muted-foreground sm:text-xs">Total rental</p>
+                <p className="mt-1.5 text-xl font-bold tabular-nums sm:text-2xl">{rentals.length}</p>
               </CardContent>
             </Card>
-            <PrivacyCard />
-          </div>
+            <Card className="border-border/80 shadow-none">
+              <CardContent className="p-3 sm:p-4">
+                <p className="text-[10px] font-medium text-muted-foreground sm:text-xs">Rental aktif</p>
+                <p className="mt-1.5 text-xl font-bold tabular-nums sm:text-2xl">{activeRentals.length}</p>
+              </CardContent>
+            </Card>
+            <Card className="border-border/80 shadow-none">
+              <CardContent className="p-3 sm:p-4">
+                <p className="text-[10px] font-medium text-muted-foreground sm:text-xs">Rental selesai</p>
+                <p className="mt-1.5 text-xl font-bold tabular-nums sm:text-2xl">{loyaltyPreviewQuery.data?.completed_rental_count ?? "—"}</p>
+              </CardContent>
+            </Card>
+          </section>
 
-          <Card className="shadow-sm">
-            <CardHeader>
-              <CardTitle className="text-base">Riwayat Penyewaan</CardTitle>
-              <p className="text-sm text-muted-foreground">
-                Fakta transaksi berasal dari source owner Penyewaan.
-              </p>
+          <Card className="border-border/80 shadow-none">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm">Informasi pelanggan</CardTitle>
             </CardHeader>
-            <CardContent>
-              {rentalsLoading ? (
-                <div className="space-y-2" aria-busy="true">
-                  <Skeleton className="h-16 rounded-xl" />
-                  <Skeleton className="h-16 rounded-xl" />
-                </div>
-              ) : rentals.length ? (
-                <div className="space-y-2">
-                  {rentals.slice(0, 6).map((rental) => (
-                    <div key={rental.penyewaan_id} className="flex flex-col gap-2 rounded-xl border p-3 sm:flex-row sm:items-center">
-                      <div className="min-w-0 flex-1">
-                        <p className="font-semibold">{rental.nomor_penyewaan}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {formatRentalDateTime(rental.jadwal_mulai)} · {semanticRentalLabel(rental.status)}
-                        </p>
+            <CardContent className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <p className="text-[11px] text-muted-foreground">Nama lengkap</p>
+                <p className="mt-0.5 text-sm font-semibold">{renter.nama_lengkap}</p>
+              </div>
+              <div>
+                <p className="text-[11px] text-muted-foreground">Nomor telepon</p>
+                <p className="mt-0.5 text-sm font-semibold">{maskPhone(renter.nomor_telepon)}</p>
+              </div>
+              <div className="sm:col-span-2">
+                <p className="text-[11px] text-muted-foreground">Alamat</p>
+                <p className="mt-0.5 text-sm font-medium">{renter.alamat || "Belum diisi"}</p>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="penyewaan" className="space-y-4">
+          {activeRentals.length ? (
+            <section className="space-y-2">
+              <h2 className="text-sm font-semibold">Penyewaan aktif</h2>
+              {activeRentals.map((rental) => (
+                <OperationalRentalCard key={rental.penyewaan_id} rental={rental} />
+              ))}
+            </section>
+          ) : null}
+
+          <section className="space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-sm font-semibold">Riwayat penyewaan</h2>
+              <span className="text-xs text-muted-foreground">{historicalRentals.length} transaksi</span>
+            </div>
+            {rentalsLoading ? (
+              <div className="space-y-2" aria-busy="true">
+                <Skeleton className="h-16 rounded-xl" />
+                <Skeleton className="h-16 rounded-xl" />
+              </div>
+            ) : historicalRentals.length ? (
+              <Card className="overflow-hidden border-border/80 shadow-none">
+                <div className="divide-y">
+                  {historicalRentals.slice(0, 12).map((rental) => (
+                    <div key={rental.penyewaan_id} className="flex flex-wrap items-center gap-3 p-3">
+                      <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">
+                        <CheckCircle2 className="size-4" aria-hidden="true" />
                       </div>
-                      <div className="text-sm font-semibold">{formatRentalMoney(rental.total_amount, rental.currency_code)}</div>
-                      <Badge variant="outline" className="w-fit rounded-full">
-                        {semanticRentalLabel(rental.status)}
-                      </Badge>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-semibold">{rental.nomor_penyewaan}</p>
+                        <p className="mt-0.5 text-[11px] text-muted-foreground">{formatRentalDateTime(rental.jadwal_mulai)}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm font-semibold">{formatRentalMoney(rental.total_amount, rental.currency_code)}</p>
+                        <Badge variant="outline" className="mt-1 rounded-full text-[10px]">{semanticRentalLabel(rental.status)}</Badge>
+                      </div>
                     </div>
                   ))}
                 </div>
-              ) : (
-                <div className="rounded-xl border border-dashed p-6 text-center">
-                  <p className="font-semibold">Belum ada riwayat penyewaan</p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Penyewa ini belum memiliki transaksi rental yang tersedia pada read-side.
-                  </p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+              </Card>
+            ) : (
+              <Card className="border-dashed shadow-none">
+                <CardContent className="flex min-h-32 flex-col items-center justify-center p-5 text-center">
+                  <p className="text-sm font-semibold">Belum ada riwayat penyewaan</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Aktivitas rental pelanggan akan muncul di sini.</p>
+                </CardContent>
+              </Card>
+            )}
+          </section>
         </TabsContent>
 
         <TabsContent value="identitas" className="space-y-4">
@@ -742,9 +774,7 @@ export function RenterShow() {
               <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <CardTitle className="text-base">Bukti Identitas</CardTitle>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Upload dan verifikasi adalah dua langkah berbeda. Bukti lama tetap disimpan sebagai histori.
-                  </p>
+                  <p className="mt-1 text-sm text-muted-foreground">KTP/SIM dan status verifikasi pelanggan.</p>
                 </div>
                 <Button type="button" className="rounded-xl" onClick={() => setEvidenceOpen(true)}>
                   <FilePlus2 />Tambah KTP/SIM
@@ -794,9 +824,7 @@ export function RenterShow() {
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <CardTitle className="text-base">Foto Penyewa</CardTitle>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      Disimpan terpisah dari dokumen identitas dan tetap privat.
-                    </p>
+                    <p className="mt-1 text-sm text-muted-foreground">Foto profil pelanggan.</p>
                   </div>
                   <Button type="button" size="sm" variant="outline" className="rounded-lg" onClick={() => setPhotoOpen(true)}>
                     <Camera />Ambil Foto
@@ -830,14 +858,6 @@ export function RenterShow() {
             </Card>
           </div>
 
-          <Card className="border-border/80 bg-muted/20 shadow-none">
-            <CardContent className="flex gap-3 p-4 text-sm leading-6 text-muted-foreground">
-              <LockKeyhole className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-              <p>
-                Dokumen dan foto hanya ditampilkan setelah akses admin dan Usaha aktif terotorisasi. Detail nomor identitas tetap diminimalkan.
-              </p>
-            </CardContent>
-          </Card>
         </TabsContent>
 
         <TabsContent value="kontak" className="space-y-4">
@@ -884,42 +904,8 @@ export function RenterShow() {
             </CardContent>
           </Card>
 
-          <Card className="border-border/80 bg-muted/20 shadow-none">
-            <CardContent className="flex gap-3 p-4 text-sm leading-6 text-muted-foreground">
-              <LockKeyhole className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-              <p>
-                Perubahan profil menggunakan optimistic concurrency dengan updated_at agar edit bersamaan tidak diam-diam menimpa perubahan admin lain.
-              </p>
-            </CardContent>
-          </Card>
         </TabsContent>
 
-        <TabsContent value="operasional" className="space-y-4">
-          {activeRentals.length ? (
-            activeRentals.map((rental) => (
-              <OperationalRentalCard key={rental.penyewaan_id} rental={rental} />
-            ))
-          ) : (
-            <Card className="shadow-sm">
-              <CardContent className="flex min-h-48 flex-col items-center justify-center p-6 text-center">
-                <CheckCircle2 className="size-8 text-muted-foreground" aria-hidden="true" />
-                <p className="mt-3 font-semibold">Tidak ada penyewaan aktif</p>
-                <p className="mt-1 max-w-md text-sm leading-5 text-muted-foreground">
-                  Read-side Penyewaan saat ini tidak menunjukkan rental dengan status aktif untuk penyewa ini.
-                </p>
-              </CardContent>
-            </Card>
-          )}
-
-          <Card className="border-dashed shadow-none">
-            <CardContent className="flex gap-3 p-4 text-sm leading-6 text-muted-foreground">
-              <ChevronRight className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-              <p>
-                Reservasi dan Pengembalian tetap dimiliki modul masing-masing; halaman Penyewa tidak membuat salinan status lintas modul yang belum terverifikasi.
-              </p>
-            </CardContent>
-          </Card>
-        </TabsContent>
       </Tabs>
 
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
@@ -927,7 +913,7 @@ export function RenterShow() {
           <DialogHeader>
             <DialogTitle>Ubah Profil Penyewa</DialogTitle>
             <DialogDescription>
-              Perubahan ini hanya mengubah identitas canonical penyewa, bukan membuat transaksi baru.
+              Perbarui informasi kontak dan data pelanggan.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -1091,7 +1077,7 @@ export function RenterShow() {
           <DialogHeader>
             <DialogTitle>Ambil Foto Penyewa</DialogTitle>
             <DialogDescription>
-              Tinjau hasil terlebih dahulu. Foto tersimpan privat dan terpisah dari bukti identitas.
+              Pastikan foto terlihat jelas sebelum disimpan.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">

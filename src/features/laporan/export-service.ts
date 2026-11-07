@@ -170,6 +170,9 @@ export function formatPaymentKind(kind: string) {
 
 export type FinanceCurrencySummary = {
   currency_code: string;
+  rental_income: number;
+  retail_income: number;
+  other_income: number;
   recorded_income: number;
   recorded_expense: number;
   net_operational_movement: number;
@@ -186,6 +189,125 @@ export type FinanceExpenseBreakdown = {
   key: string;
   amount: number;
   count: number;
+};
+
+export type FinanceExportSale = {
+  penjualan_id: string;
+  nomor_penjualan: string;
+  source: string;
+  nama_pelanggan: string | null;
+  nomor_telepon: string | null;
+  status: string;
+  payment_status: string;
+  total_amount: number;
+  total_hpp: number | null;
+  gross_profit: number | null;
+  created_at: string;
+  currency_code: string;
+  item_count: number;
+  quantity: number;
+  known_hpp: number;
+  gross_profit_known: number;
+  hpp_unknown_lines: number;
+};
+
+export type FinanceExportSaleLine = {
+  detail_penjualan_id: string;
+  penjualan_id: string;
+  nomor_penjualan: string;
+  tanggal_transaksi: string;
+  barang_id: string;
+  varian_barang_id: string | null;
+  nama_barang: string;
+  nama_varian: string | null;
+  inventory_mode: string;
+  jumlah: number;
+  harga_normal: number;
+  diskon_persen: number;
+  nominal_diskon: number;
+  unit_price: number;
+  subtotal: number;
+  harga_beli_satuan: number | null;
+  hpp_total: number | null;
+  gross_profit_known: number | null;
+  currency_code: string;
+  promosi_katalog_id: string | null;
+  is_bonus_rental: boolean;
+  bonus_reason: string | null;
+};
+
+export type FinanceExportPurchase = {
+  pembelian_id: string;
+  nomor_pembelian: string;
+  tanggal_pembelian: string;
+  status: string;
+  pemasok_id: string | null;
+  nama_pemasok: string;
+  total_amount: number;
+  currency_code: string;
+  catatan: string | null;
+  item_count: number;
+  received_quantity: number;
+  received_stock_value: number;
+  cash_out_amount: number;
+};
+
+export type FinanceExportPurchaseLine = {
+  detail_pembelian_id: string;
+  pembelian_id: string;
+  nomor_pembelian: string;
+  barang_id: string;
+  varian_barang_id: string | null;
+  deskripsi: string | null;
+  jumlah: number;
+  unit_price: number;
+  subtotal: number;
+  received_quantity: number;
+  inventory_mode_snapshot: string | null;
+  currency_code: string;
+};
+
+export type FinanceExportReceipt = {
+  penerimaan_pembelian_id: string;
+  pembelian_id: string;
+  nomor_pembelian: string;
+  nomor_penerimaan: string;
+  status: string;
+  received_at: string;
+  received_quantity: number;
+  received_stock_value: number;
+};
+
+export type FinanceExportReceiptLine = {
+  detail_penerimaan_pembelian_id: string;
+  penerimaan_pembelian_id: string;
+  pembelian_id: string;
+  nomor_penerimaan: string;
+  nomor_pembelian: string;
+  detail_pembelian_id: string;
+  barang_id: string;
+  varian_barang_id: string | null;
+  inventory_mode: string;
+  quantity_received: number;
+  unit_cost: number;
+  subtotal_cost: number;
+  currency_code: string;
+};
+
+export type FinanceExportPromotionUse = {
+  tanggal: string;
+  sumber: "Penjualan" | "Penyewaan";
+  nomor_transaksi: string;
+  jenis_promo: string;
+  promo_id: string | null;
+  barang_paket: string;
+  jumlah: number;
+  mata_uang: string;
+  harga_normal: number;
+  diskon: number;
+  nilai_akhir: number;
+  hpp_bonus: number | null;
+  catatan: string | null;
 };
 
 export type FinanceExportReport = {
@@ -211,6 +333,13 @@ export type FinanceExportReport = {
   stakeholderCashSegregations: InvestorHistoryCashSegregation[];
   financeHealth: FinanceHealth;
   reconciliationFindings: FinanceFinding[];
+  retailSales: FinanceExportSale[];
+  retailSaleLines: FinanceExportSaleLine[];
+  purchases: FinanceExportPurchase[];
+  purchaseLines: FinanceExportPurchaseLine[];
+  purchaseReceipts: FinanceExportReceipt[];
+  purchaseReceiptLines: FinanceExportReceiptLine[];
+  promotionUsage: FinanceExportPromotionUse[];
 };
 
 export type RentalExportPayment = {
@@ -330,11 +459,490 @@ async function getAllFinanceRows<T>(
   return rows;
 }
 
+
+type ExportRowsPage<T> = { rows: T[]; total: number };
+
+async function readCompleteRows<T>(
+  label: string,
+  loadPage: (offset: number) => Promise<ExportRowsPage<T>>,
+): Promise<T[]> {
+  return getCompleteRentalRelatedRows(label, loadPage);
+}
+
+async function readRowsForIds<T>(
+  label: string,
+  ids: string[],
+  loadBatch: (batch: string[], offset: number) => Promise<ExportRowsPage<T>>,
+): Promise<T[]> {
+  if (!ids.length) return [];
+  const batches: string[][] = [];
+  for (let offset = 0; offset < ids.length; offset += 200) {
+    batches.push(ids.slice(offset, offset + 200));
+  }
+  const results = await mapWithConcurrency(batches, 3, async (batch) =>
+    readCompleteRows(label, (offset) => loadBatch(batch, offset)));
+  return results.flat();
+}
+
+async function loadFinanceOperationalExports(
+  usahaId: string,
+  startDate: string,
+  endDateExclusive: string,
+  timeZone: string,
+) {
+  const startAt = localDateTimeToUtcIso(startDate + "T00:00", timeZone);
+  const endAt = localDateTimeToUtcIso(endDateExclusive + "T00:00", timeZone);
+
+  const salesRaw = await readCompleteRows("penjualan retail", async (offset) => {
+    const result = await supabase
+      .from("penjualan")
+      .select("penjualan_id,usaha_id,nomor_penjualan,source,nama_pelanggan,nomor_telepon,status,payment_status,total_amount,total_hpp,gross_profit,currency_code,created_at", { count: "exact" })
+      .eq("usaha_id", usahaId)
+      .gte("created_at", startAt)
+      .lt("created_at", endAt)
+      .order("created_at", { ascending: true })
+      .order("penjualan_id", { ascending: true })
+      .range(offset, offset + REPORT_PAGE_SIZE - 1);
+    if (result.error) throw result.error;
+    return { rows: result.data ?? [], total: result.count ?? 0 };
+  });
+
+  const saleIds = salesRaw.map((row) => String(row.penjualan_id));
+  const saleLineRaw = await readRowsForIds("rincian penjualan retail", saleIds, async (ids, offset) => {
+    const result = await supabase
+      .from("detail_penjualan")
+      .select("detail_penjualan_id,usaha_id,penjualan_id,barang_id,varian_barang_id,nama_barang_snapshot,nama_varian_snapshot,inventory_mode,jumlah,unit_price,subtotal,currency_code,harga_beli_satuan,hpp_total,promosi_katalog_id,harga_normal_snapshot,diskon_persen_snapshot,nominal_diskon_snapshot,is_bonus_rental,bonus_reason", { count: "exact" })
+      .eq("usaha_id", usahaId)
+      .in("penjualan_id", ids)
+      .order("penjualan_id", { ascending: true })
+      .order("detail_penjualan_id", { ascending: true })
+      .range(offset, offset + REPORT_PAGE_SIZE - 1);
+    if (result.error) throw result.error;
+    return { rows: result.data ?? [], total: result.count ?? 0 };
+  });
+
+  const salesById = new Map(salesRaw.map((sale) => [String(sale.penjualan_id), sale]));
+  const saleLines: FinanceExportSaleLine[] = saleLineRaw.map((line) => {
+    const sale = salesById.get(String(line.penjualan_id));
+    const quantity = Number(line.jumlah ?? 0);
+    const subtotal = Number(line.subtotal ?? 0);
+    const discount = Number(line.nominal_diskon_snapshot ?? 0);
+    const hpp = line.hpp_total == null ? null : Number(line.hpp_total);
+    return {
+      detail_penjualan_id: String(line.detail_penjualan_id),
+      penjualan_id: String(line.penjualan_id),
+      nomor_penjualan: String(sale?.nomor_penjualan ?? "-"),
+      tanggal_transaksi: String(sale?.created_at ?? ""),
+      barang_id: String(line.barang_id),
+      varian_barang_id: line.varian_barang_id == null ? null : String(line.varian_barang_id),
+      nama_barang: String(line.nama_barang_snapshot ?? "Barang"),
+      nama_varian: line.nama_varian_snapshot == null ? null : String(line.nama_varian_snapshot),
+      inventory_mode: String(line.inventory_mode ?? "unknown"),
+      jumlah: quantity,
+      harga_normal: Number(line.harga_normal_snapshot ?? line.unit_price ?? 0),
+      diskon_persen: Number(line.diskon_persen_snapshot ?? 0),
+      nominal_diskon: discount,
+      unit_price: Number(line.unit_price ?? 0),
+      subtotal,
+      harga_beli_satuan: line.harga_beli_satuan == null ? null : Number(line.harga_beli_satuan),
+      hpp_total: hpp,
+      gross_profit_known: hpp == null ? null : subtotal - hpp,
+      currency_code: String(line.currency_code ?? sale?.currency_code ?? "IDR").trim(),
+      promosi_katalog_id: line.promosi_katalog_id == null ? null : String(line.promosi_katalog_id),
+      is_bonus_rental: Boolean(line.is_bonus_rental),
+      bonus_reason: line.bonus_reason == null ? null : String(line.bonus_reason),
+    };
+  });
+
+  const retailSales: FinanceExportSale[] = salesRaw.map((sale) => {
+    const saleLinesForHeader = saleLines.filter((line) => line.penjualan_id === String(sale.penjualan_id));
+    const knownLines = saleLinesForHeader.filter((line) => line.hpp_total != null);
+    const unknownLines = saleLinesForHeader.filter((line) => line.hpp_total == null);
+    const knownHpp = knownLines.reduce((total, line) => total + (line.hpp_total ?? 0), 0);
+    const grossProfitKnown = knownLines.reduce((total, line) => total + (line.gross_profit_known ?? 0), 0);
+    return {
+      penjualan_id: String(sale.penjualan_id),
+      nomor_penjualan: String(sale.nomor_penjualan),
+      source: String(sale.source ?? "pos"),
+      nama_pelanggan: sale.nama_pelanggan == null ? null : String(sale.nama_pelanggan),
+      nomor_telepon: sale.nomor_telepon == null ? null : String(sale.nomor_telepon),
+      status: String(sale.status ?? "unknown"),
+      payment_status: String(sale.payment_status ?? "unknown"),
+      total_amount: Number(sale.total_amount ?? 0),
+      total_hpp: sale.total_hpp == null ? null : Number(sale.total_hpp),
+      gross_profit: sale.gross_profit == null ? null : Number(sale.gross_profit),
+      created_at: String(sale.created_at ?? ""),
+      currency_code: String(sale.currency_code ?? "IDR").trim(),
+      item_count: saleLinesForHeader.length,
+      quantity: saleLinesForHeader.reduce((total, line) => total + line.jumlah, 0),
+      known_hpp: knownHpp,
+      gross_profit_known: grossProfitKnown,
+      hpp_unknown_lines: unknownLines.length,
+    };
+  });
+
+  const purchaseRaw = await readCompleteRows("dokumen pembelian", async (offset) => {
+    const result = await supabase
+      .from("pembelian")
+      .select("pembelian_id,usaha_id,pemasok_id,nomor_pembelian,tanggal_pembelian,status,total_amount,currency_code,catatan,created_at,updated_at", { count: "exact" })
+      .eq("usaha_id", usahaId)
+      .gte("tanggal_pembelian", startDate)
+      .lt("tanggal_pembelian", endDateExclusive)
+      .order("tanggal_pembelian", { ascending: true })
+      .order("pembelian_id", { ascending: true })
+      .range(offset, offset + REPORT_PAGE_SIZE - 1);
+    if (result.error) throw result.error;
+    return { rows: result.data ?? [], total: result.count ?? 0 };
+  });
+  const purchaseIds = purchaseRaw.map((row) => String(row.pembelian_id));
+  const purchaseLineRaw = await readRowsForIds("rincian pembelian", purchaseIds, async (ids, offset) => {
+    const result = await supabase
+      .from("detail_pembelian")
+      .select("detail_pembelian_id,usaha_id,pembelian_id,barang_id,varian_barang_id,deskripsi,jumlah,unit_price,subtotal", { count: "exact" })
+      .eq("usaha_id", usahaId)
+      .in("pembelian_id", ids)
+      .order("pembelian_id", { ascending: true })
+      .order("detail_pembelian_id", { ascending: true })
+      .range(offset, offset + REPORT_PAGE_SIZE - 1);
+    if (result.error) throw result.error;
+    return { rows: result.data ?? [], total: result.count ?? 0 };
+  });
+  const purchaseById = new Map(purchaseRaw.map((purchase) => [String(purchase.pembelian_id), purchase]));
+  const purchaseLines: FinanceExportPurchaseLine[] = purchaseLineRaw.map((line) => {
+    const purchase = purchaseById.get(String(line.pembelian_id));
+    return {
+      detail_pembelian_id: String(line.detail_pembelian_id),
+      pembelian_id: String(line.pembelian_id),
+      nomor_pembelian: String(purchase?.nomor_pembelian ?? "-"),
+      barang_id: String(line.barang_id),
+      varian_barang_id: line.varian_barang_id == null ? null : String(line.varian_barang_id),
+      deskripsi: line.deskripsi == null ? null : String(line.deskripsi),
+      jumlah: Number(line.jumlah ?? 0),
+      unit_price: Number(line.unit_price ?? 0),
+      subtotal: Number(line.subtotal ?? 0),
+      // Receiving facts are sourced from the immutable receiving ledger below,
+      // not from detail_pembelian (those mutable snapshot columns were removed).
+      received_quantity: 0,
+      inventory_mode_snapshot: null,
+      currency_code: String(purchase?.currency_code ?? "IDR").trim(),
+    };
+  });
+
+  // Receiving tables are intentionally private (no direct authenticated SELECT).
+  // Use the tenant/admin-guarded RPC instead of querying those raw tables through PostgREST.
+  type PurchaseReceivingSummary = {
+    state?: string;
+    penerimaan_pembelian_id?: string;
+    nomor_penerimaan?: string;
+    status?: string;
+    received_at?: string;
+    details?: Array<{
+      detail_penerimaan_pembelian_id: string;
+      detail_pembelian_id: string;
+      barang_id: string;
+      varian_barang_id: string | null;
+      inventory_mode: string;
+      quantity_received: number;
+      unit_cost: number;
+      subtotal_cost: number;
+    }>;
+  };
+  const receivingSummaries = await mapWithConcurrency(purchaseIds, 4, async (pembelianId) => {
+    const result = await supabase.rpc("get_purchase_receiving_summary", {
+      p_usaha_id: usahaId,
+      p_pembelian_id: pembelianId,
+    });
+    if (result.error) throw result.error;
+    return {
+      pembelian_id: pembelianId,
+      summary: (result.data ?? { state: "not_received" }) as PurchaseReceivingSummary,
+    };
+  });
+  const receiptsRaw = receivingSummaries
+    .filter(({ summary }) => summary.state === "received" && summary.penerimaan_pembelian_id)
+    .map(({ pembelian_id, summary }) => ({
+      penerimaan_pembelian_id: String(summary.penerimaan_pembelian_id),
+      pembelian_id,
+      nomor_penerimaan: String(summary.nomor_penerimaan ?? "-"),
+      status: String(summary.status ?? "unknown"),
+      received_at: String(summary.received_at ?? ""),
+    }));
+  const receiptLineRaw = receivingSummaries.flatMap(({ pembelian_id, summary }) => {
+    const receipt = receiptsRaw.find((item) => item.pembelian_id === pembelian_id);
+    if (!receipt) return [];
+    return (summary.details ?? []).map((detail) => ({
+      ...detail,
+      penerimaan_pembelian_id: receipt.penerimaan_pembelian_id,
+    }));
+  });
+  const receiptById = new Map(receiptsRaw.map((receipt) => [String(receipt.penerimaan_pembelian_id), receipt]));
+  const receiptLines: FinanceExportReceiptLine[] = receiptLineRaw.map((line) => {
+    const receipt = receiptById.get(String(line.penerimaan_pembelian_id));
+    const purchase = purchaseById.get(String(receipt?.pembelian_id ?? ""));
+    return {
+      detail_penerimaan_pembelian_id: String(line.detail_penerimaan_pembelian_id),
+      penerimaan_pembelian_id: String(line.penerimaan_pembelian_id),
+      pembelian_id: String(receipt?.pembelian_id ?? ""),
+      nomor_penerimaan: String(receipt?.nomor_penerimaan ?? "-"),
+      nomor_pembelian: String(purchase?.nomor_pembelian ?? "-"),
+      detail_pembelian_id: String(line.detail_pembelian_id),
+      barang_id: String(line.barang_id),
+      varian_barang_id: line.varian_barang_id == null ? null : String(line.varian_barang_id),
+      inventory_mode: String(line.inventory_mode ?? "unknown"),
+      quantity_received: Number(line.quantity_received ?? 0),
+      unit_cost: Number(line.unit_cost ?? 0),
+      subtotal_cost: Number(line.subtotal_cost ?? 0),
+      currency_code: String(purchase?.currency_code ?? "IDR").trim(),
+    };
+  });
+  const receiptLinesByPurchaseLine = new Map<string, FinanceExportReceiptLine[]>();
+  for (const line of receiptLines) {
+    const existing = receiptLinesByPurchaseLine.get(line.detail_pembelian_id) ?? [];
+    existing.push(line);
+    receiptLinesByPurchaseLine.set(line.detail_pembelian_id, existing);
+  }
+  for (const purchaseLine of purchaseLines) {
+    const receivedLines = receiptLinesByPurchaseLine.get(purchaseLine.detail_pembelian_id) ?? [];
+    purchaseLine.received_quantity = receivedLines.reduce((total, line) => total + line.quantity_received, 0);
+    const inventoryModes = [...new Set(receivedLines.map((line) => line.inventory_mode).filter((mode) => mode && mode !== "unknown"))];
+    purchaseLine.inventory_mode_snapshot = inventoryModes.length === 1
+      ? inventoryModes[0]
+      : inventoryModes.length > 1
+        ? "mixed"
+        : null;
+  }
+
+  const purchaseReceipts: FinanceExportReceipt[] = receiptsRaw.map((receipt) => {
+    const lines = receiptLines.filter((line) => line.penerimaan_pembelian_id === String(receipt.penerimaan_pembelian_id));
+    return {
+      penerimaan_pembelian_id: String(receipt.penerimaan_pembelian_id),
+      pembelian_id: String(receipt.pembelian_id),
+      nomor_pembelian: String(purchaseById.get(String(receipt.pembelian_id))?.nomor_pembelian ?? "-"),
+      nomor_penerimaan: String(receipt.nomor_penerimaan),
+      status: String(receipt.status ?? "unknown"),
+      received_at: String(receipt.received_at ?? ""),
+      received_quantity: lines.reduce((total, line) => total + line.quantity_received, 0),
+      received_stock_value: lines.reduce((total, line) => total + line.subtotal_cost, 0),
+    };
+  });
+
+  const supplierIds = Array.from(new Set(purchaseRaw.map((row) => row.pemasok_id).filter((id): id is string => Boolean(id)).map(String)));
+  const supplierNames = new Map<string, string>();
+  if (supplierIds.length) {
+    const supplierRows = await readRowsForIds("nama pemasok", supplierIds, async (ids, offset) => {
+      const result = await supabase
+        .from("pemasok")
+        .select("pemasok_id,nama", { count: "exact" })
+        .eq("usaha_id", usahaId)
+        .in("pemasok_id", ids)
+        .order("pemasok_id", { ascending: true })
+        .range(offset, offset + REPORT_PAGE_SIZE - 1);
+      if (result.error) throw result.error;
+      return { rows: result.data ?? [], total: result.count ?? 0 };
+    });
+    supplierRows.forEach((row) => supplierNames.set(String(row.pemasok_id), String(row.nama)));
+  }
+
+  const rentalHeadersRaw = await readCompleteRows("penyewaan untuk laporan promo", async (offset) => {
+    const result = await supabase
+      .from("penyewaan")
+      .select("penyewaan_id,nomor_penyewaan,created_at,subtotal_amount,discount_amount,total_amount,currency_code", { count: "exact" })
+      .eq("usaha_id", usahaId)
+      .gte("created_at", startAt)
+      .lt("created_at", endAt)
+      .order("created_at", { ascending: true })
+      .order("penyewaan_id", { ascending: true })
+      .range(offset, offset + REPORT_PAGE_SIZE - 1);
+    if (result.error) throw result.error;
+    return { rows: result.data ?? [], total: result.count ?? 0 };
+  });
+  const rentalIds = rentalHeadersRaw.map((row) => String(row.penyewaan_id));
+  const rentalPromoLinesRaw = await readRowsForIds("rincian promo penyewaan", rentalIds, async (ids, offset) => {
+    const result = await supabase
+      .from("detail_penyewaan")
+      .select("detail_penyewaan_id,usaha_id,penyewaan_id,barang_id,varian_barang_id,paket_sewa_id,jumlah,unit_price,subtotal,currency_code,harga_normal_snapshot,diskon_persen_snapshot,nominal_diskon_snapshot,promosi_paket_id,promosi_katalog_id", { count: "exact" })
+      .eq("usaha_id", usahaId)
+      .in("penyewaan_id", ids)
+      .order("penyewaan_id", { ascending: true })
+      .order("detail_penyewaan_id", { ascending: true })
+      .range(offset, offset + REPORT_PAGE_SIZE - 1);
+    if (result.error) throw result.error;
+    return { rows: result.data ?? [], total: result.count ?? 0 };
+  });
+  const rentalDiscountRaw = await readRowsForIds("diskon checkout penyewaan", rentalIds, async (ids, offset) => {
+    const result = await supabase
+      .from("penyewaan_diskon")
+      .select("penyewaan_diskon_id,usaha_id,penyewaan_id,source,program_loyalitas_id,program_version,completed_rental_count,minimum_completed_rentals,recommended_discount_percent,recommended_amount,actual_amount,bonus_amount,reason_code,reason_note,created_at", { count: "exact" })
+      .eq("usaha_id", usahaId)
+      .in("penyewaan_id", ids)
+      .order("created_at", { ascending: true })
+      .order("penyewaan_diskon_id", { ascending: true })
+      .range(offset, offset + REPORT_PAGE_SIZE - 1);
+    if (result.error) throw result.error;
+    return { rows: result.data ?? [], total: result.count ?? 0 };
+  });
+
+  const productIds = Array.from(new Set(rentalPromoLinesRaw.map((line) => line.barang_id).filter(Boolean).map(String)));
+  const variantIds = Array.from(new Set(rentalPromoLinesRaw.map((line) => line.varian_barang_id).filter(Boolean).map(String)));
+  const packageIds = Array.from(new Set(rentalPromoLinesRaw.map((line) => line.paket_sewa_id).filter(Boolean).map(String)));
+  const catalogNames = new Map<string, string>();
+  const [productNameRows, variantNameRows, packageNameRows] = await Promise.all([
+    productIds.length
+      ? supabase.from("barang").select("barang_id,nama").eq("usaha_id", usahaId).in("barang_id", productIds)
+      : Promise.resolve({ data: [], error: null }),
+    variantIds.length
+      ? supabase.from("varian_barang").select("varian_barang_id,nama").eq("usaha_id", usahaId).in("varian_barang_id", variantIds)
+      : Promise.resolve({ data: [], error: null }),
+    packageIds.length
+      ? supabase.from("paket_sewa").select("paket_sewa_id,nama").eq("usaha_id", usahaId).in("paket_sewa_id", packageIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (productNameRows.error) throw productNameRows.error;
+  if (variantNameRows.error) throw variantNameRows.error;
+  if (packageNameRows.error) throw packageNameRows.error;
+  (productNameRows.data ?? []).forEach((row) => catalogNames.set(String(row.barang_id), String(row.nama)));
+  (variantNameRows.data ?? []).forEach((row) => catalogNames.set(String(row.varian_barang_id), String(row.nama)));
+  (packageNameRows.data ?? []).forEach((row) => catalogNames.set(String(row.paket_sewa_id), String(row.nama)));
+
+  const rentalHeaderById = new Map(rentalHeadersRaw.map((row) => [String(row.penyewaan_id), row]));
+  const promotionUsage: FinanceExportPromotionUse[] = [];
+  for (const line of saleLines) {
+    const hasDiscount = line.nominal_diskon > 0 || Boolean(line.promosi_katalog_id);
+    if (!hasDiscount && !line.is_bonus_rental) continue;
+    promotionUsage.push({
+      tanggal: line.tanggal_transaksi,
+      sumber: "Penjualan",
+      nomor_transaksi: line.nomor_penjualan,
+      jenis_promo: line.is_bonus_rental ? "Barang bonus retail" : "Promo katalog penjualan",
+      promo_id: line.promosi_katalog_id,
+      barang_paket: line.nama_varian ? line.nama_barang + " · " + line.nama_varian : line.nama_barang,
+      jumlah: line.jumlah,
+      mata_uang: line.currency_code,
+      harga_normal: line.subtotal + line.nominal_diskon,
+      diskon: line.nominal_diskon,
+      nilai_akhir: line.subtotal,
+      hpp_bonus: line.is_bonus_rental ? line.hpp_total : null,
+      catatan: line.is_bonus_rental ? line.bonus_reason : (line.diskon_persen ? line.diskon_persen + "% dari harga normal" : null),
+    });
+  }
+  for (const line of rentalPromoLinesRaw) {
+    const catalogPromoId = line.promosi_katalog_id == null ? null : String(line.promosi_katalog_id);
+    const packagePromoId = line.promosi_paket_id == null ? null : String(line.promosi_paket_id);
+    const discount = Number(line.nominal_diskon_snapshot ?? 0);
+    if (!catalogPromoId && !packagePromoId && discount <= 0) continue;
+    const productId = line.barang_id == null ? null : String(line.barang_id);
+    const variantId = line.varian_barang_id == null ? null : String(line.varian_barang_id);
+    const packageId = line.paket_sewa_id == null ? null : String(line.paket_sewa_id);
+    const label = packageId
+      ? catalogNames.get(packageId) ?? "Paket sewa"
+      : variantId
+        ? (catalogNames.get(productId ?? "") ?? "Barang") + " · " + (catalogNames.get(variantId) ?? "Varian")
+        : catalogNames.get(productId ?? "") ?? "Barang";
+    const header = rentalHeaderById.get(String(line.penyewaan_id));
+    const actual = Number(line.subtotal ?? 0);
+    const promoPercent = Number(line.diskon_persen_snapshot ?? 0);
+    promotionUsage.push({
+      tanggal: String(header?.created_at ?? ""),
+      sumber: "Penyewaan",
+      nomor_transaksi: String(header?.nomor_penyewaan ?? "-"),
+      jenis_promo: packagePromoId ? "Promo paket penyewaan" : "Promo katalog penyewaan",
+      promo_id: packagePromoId ?? catalogPromoId,
+      barang_paket: label,
+      jumlah: Number(line.jumlah ?? 0),
+      mata_uang: String(line.currency_code ?? header?.currency_code ?? "IDR").trim(),
+      harga_normal: actual + discount,
+      diskon: discount,
+      nilai_akhir: actual,
+      hpp_bonus: null,
+      catatan: promoPercent ? promoPercent + "% dari harga normal" : null,
+    });
+  }
+  for (const discount of rentalDiscountRaw) {
+    const header = rentalHeaderById.get(String(discount.penyewaan_id));
+    promotionUsage.push({
+      tanggal: String(discount.created_at ?? header?.created_at ?? ""),
+      sumber: "Penyewaan",
+      nomor_transaksi: String(header?.nomor_penyewaan ?? "-"),
+      jenis_promo: String(discount.source) === "loyalty" ? "Diskon loyalitas" : "Diskon manual",
+      promo_id: discount.program_loyalitas_id == null ? null : String(discount.program_loyalitas_id),
+      barang_paket: "Diskon tingkat transaksi",
+      jumlah: 1,
+      mata_uang: String(header?.currency_code ?? "IDR").trim(),
+      // Transaction-level discount is reported as a discount amount only.
+      // Do not repeat the rental's full subtotal/total across multiple discount rows.
+      harga_normal: 0,
+      diskon: Number(discount.actual_amount ?? 0),
+      nilai_akhir: 0,
+      hpp_bonus: null,
+      catatan: [
+        discount.reason_code ? String(discount.reason_code) : null,
+        discount.reason_note ? String(discount.reason_note) : null,
+        discount.program_version ? "Versi program " + String(discount.program_version) : null,
+        discount.completed_rental_count != null ? "Penyewaan selesai " + String(discount.completed_rental_count) + " kali" : null,
+      ].filter(Boolean).join(" · ") || null,
+    });
+  }
+
+  const purchaseCashOutBySource = new Map<string, number>();
+  const cashOutRows = await readCompleteRows("kas keluar pembelian", async (offset) => {
+    const result = await supabase
+      .from("transaksi_keuangan")
+      .select("sumber_id,amount,currency_code", { count: "exact" })
+      .eq("usaha_id", usahaId)
+      .eq("sumber_type", "purchase")
+      .eq("arah", "expense")
+      .eq("status", "recorded")
+      .gte("tanggal_transaksi", startAt)
+      .lt("tanggal_transaksi", endAt)
+      .order("tanggal_transaksi", { ascending: true })
+      .order("transaksi_keuangan_id", { ascending: true })
+      .range(offset, offset + REPORT_PAGE_SIZE - 1);
+    if (result.error) throw result.error;
+    return { rows: result.data ?? [], total: result.count ?? 0 };
+  });
+  for (const row of cashOutRows) {
+    if (!row.sumber_id) continue;
+    purchaseCashOutBySource.set(
+      String(row.sumber_id),
+      (purchaseCashOutBySource.get(String(row.sumber_id)) ?? 0) + Number(row.amount ?? 0),
+    );
+  }
+
+  return {
+    retailSales,
+    retailSaleLines: saleLines,
+    purchases: purchaseRaw.map((purchase) => {
+      const lines = purchaseLines.filter((line) => line.pembelian_id === String(purchase.pembelian_id));
+      const receipts = purchaseReceipts.filter((receipt) => receipt.pembelian_id === String(purchase.pembelian_id));
+      return {
+        pembelian_id: String(purchase.pembelian_id),
+        nomor_pembelian: String(purchase.nomor_pembelian),
+        tanggal_pembelian: String(purchase.tanggal_pembelian),
+        status: String(purchase.status ?? "unknown"),
+        pemasok_id: purchase.pemasok_id == null ? null : String(purchase.pemasok_id),
+        nama_pemasok: purchase.pemasok_id == null ? "Tanpa pemasok" : supplierNames.get(String(purchase.pemasok_id)) ?? "Pemasok tidak diketahui",
+        total_amount: Number(purchase.total_amount ?? 0),
+        currency_code: String(purchase.currency_code ?? "IDR").trim(),
+        catatan: purchase.catatan == null ? null : String(purchase.catatan),
+        item_count: lines.length,
+        received_quantity: receipts.reduce((total, receipt) => total + receipt.received_quantity, 0),
+        received_stock_value: receipts.reduce((total, receipt) => total + receipt.received_stock_value, 0),
+        cash_out_amount: purchaseCashOutBySource.get(String(purchase.pembelian_id)) ?? 0,
+      };
+    }),
+    purchaseLines,
+    purchaseReceipts,
+    purchaseReceiptLines: receiptLines,
+    promotionUsage,
+  };
+}
+
 export async function getFinanceExportReport(
   usahaId: string,
   startDate: string,
   endDateExclusive: string,
   includeSupportingDetails = true,
+  includeOperationalDetails = includeSupportingDetails,
 ): Promise<FinanceExportReport> {
   if (!usahaId) throw new Error("Usaha aktif tidak ditemukan.");
   if (!(startDate < endDateExclusive)) throw new Error("Rentang tanggal laporan tidak valid.");
@@ -413,6 +1021,18 @@ export async function getFinanceExportReport(
   } as FinanceHealth);
   const reconciliationFindings: FinanceReconciliationFindings["items"] = supporting?.[5]?.items ?? [];
 
+  const operationalExports = includeOperationalDetails
+    ? await loadFinanceOperationalExports(usahaId, startDate, endDateExclusive, summary.timezone)
+    : {
+      retailSales: [],
+      retailSaleLines: [],
+      purchases: [],
+      purchaseLines: [],
+      purchaseReceipts: [],
+      purchaseReceiptLines: [],
+      promotionUsage: [],
+    };
+
   [summary, productRevenue, unitRevenue].forEach((part, index) => {
     ensurePeriod(part, startDate, endDateExclusive, ["ringkasan", "pendapatan barang", "pendapatan unit"][index]);
   });
@@ -427,6 +1047,9 @@ export async function getFinanceExportReport(
     if (!row) {
       row = {
         currency_code: code,
+        rental_income: 0,
+        retail_income: 0,
+        other_income: 0,
         recorded_income: 0,
         recorded_expense: 0,
         net_operational_movement: 0,
@@ -450,6 +1073,10 @@ export async function getFinanceExportReport(
     if (transaction.arah === "income") {
       row.recorded_income += amount;
       row.recorded_income_transaction_count += 1;
+      const sourceType = String(transaction.sumber_type ?? "").toLowerCase();
+      if (sourceType === "sale") row.retail_income += amount;
+      else if (["rental", "reservation", "penyewaan", "reservasi"].includes(sourceType)) row.rental_income += amount;
+      else row.other_income += amount;
       if (transaction.jenis === "finance_reversal") row.reversal_income_in_period += amount;
     } else if (transaction.arah === "expense") {
       row.recorded_expense += amount;
@@ -558,6 +1185,7 @@ export async function getFinanceExportReport(
     stakeholderCashSegregations,
     financeHealth,
     reconciliationFindings,
+    ...operationalExports,
   };
 }
 

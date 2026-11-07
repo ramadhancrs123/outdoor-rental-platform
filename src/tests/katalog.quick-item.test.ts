@@ -13,6 +13,7 @@ vi.mock("@/app/providers/supabase/client", () => ({
 import {
   listQuickItemLocations,
   onboardQuickItem,
+  onboardQuickSaleItem,
   quickItemLocationSelection,
 } from "@/features/katalog/quick-item";
 
@@ -189,6 +190,129 @@ describe("Quick Item frontend contract", () => {
         ],
       }),
     }));
+  });
+
+  test("creates sell-only untracked items and forces variant quantities to zero", async () => {
+    rpcMock.mockResolvedValue({
+      data: {
+        state: "committed",
+        channel: "sale",
+        usaha_id: "usaha-1",
+        barang_id: "barang-refill",
+        barang_nama: "Isi Ulang LPG",
+        slug: "isi-ulang-lpg",
+        kategori_barang_id: "category-1",
+        kategori_dibuat: false,
+        inventory_mode: "untracked",
+        varian_mode: true,
+        variant_count: 2,
+        unit_count: 0,
+        stock_quantity: null,
+        min_price: 25000,
+        max_price: 35000,
+        currency_code: "IDR",
+        variants: [
+          { varian_barang_id: "variant-1", nama: "3 kg", harga_jual: 25000, harga_beli: 18000 },
+          { varian_barang_id: "variant-2", nama: "12 kg", harga_jual: 35000, harga_beli: 27000 },
+        ],
+        readiness: "ready",
+      },
+      error: null,
+    });
+
+    await expect(onboardQuickSaleItem("usaha-1", {
+      kategoriBarangId: "category-1",
+      namaBarang: "Isi Ulang LPG",
+      inventoryMode: "untracked",
+      varianMode: true,
+      variants: [
+        { attributes: { ukuran: "3 kg" }, quantity: 99, hargaJual: 25000, hargaBeli: 18000 },
+        { attributes: { ukuran: "12 kg" }, quantity: 88, hargaJual: 35000, hargaBeli: 27000 },
+      ],
+    }, {
+      idempotencyKey: "quick-sale-refill",
+      requestId: "request-refill",
+    })).resolves.toMatchObject({
+      barang_id: "barang-refill",
+      inventory_mode: "untracked",
+      variant_count: 2,
+      unit_count: 0,
+    });
+
+    expect(rpcMock).toHaveBeenCalledWith("command_quick_sale_item_onboarding", {
+      p_usaha_id: "usaha-1",
+      p_payload: {
+        kategori_barang_id: "category-1",
+        kategori_nama: null,
+        nama_barang: "Isi Ulang LPG",
+        deskripsi: null,
+        inventory_mode: "untracked",
+        harga_jual: null,
+        harga_beli: null,
+        jumlah: 0,
+        lokasi_id: null,
+        varian_mode: true,
+        variants: [
+          { attributes: { ukuran: "3 kg" }, jumlah: 0, harga_jual: 25000, harga_beli: 18000 },
+          { attributes: { ukuran: "12 kg" }, jumlah: 0, harga_jual: 35000, harga_beli: 27000 },
+        ],
+      },
+      p_idempotency_key: "quick-sale-refill",
+      p_request_id: "request-refill",
+    });
+  });
+
+  test("persists HPP for a single untracked sale item from Rental Cepat", async () => {
+    rpcMock.mockResolvedValue({
+      data: {
+        state: "committed",
+        channel: "sale",
+        usaha_id: "usaha-1",
+        barang_id: "barang-refill-single",
+        barang_nama: "Isi Ulang Gas",
+        slug: "isi-ulang-gas",
+        kategori_barang_id: "category-1",
+        kategori_dibuat: false,
+        inventory_mode: "untracked",
+        varian_mode: false,
+        variant_count: 0,
+        unit_count: 0,
+        stock_quantity: null,
+        min_price: 25000,
+        max_price: 25000,
+        currency_code: "IDR",
+        variants: [],
+        readiness: "ready",
+      },
+      error: null,
+    });
+
+    await onboardQuickSaleItem("usaha-1", {
+      kategoriBarangId: "category-1",
+      namaBarang: "Isi Ulang Gas",
+      inventoryMode: "untracked",
+      varianMode: false,
+      hargaJual: 25000,
+      hargaBeli: 5000,
+      jumlah: 0,
+    }, {
+      idempotencyKey: "quick-sale-single-hpp",
+      requestId: "request-single-hpp",
+    });
+
+    expect(rpcMock).toHaveBeenCalledWith("command_quick_sale_item_onboarding", {
+      p_usaha_id: "usaha-1",
+      p_payload: expect.objectContaining({
+        nama_barang: "Isi Ulang Gas",
+        inventory_mode: "untracked",
+        harga_jual: 25000,
+        harga_beli: 5000,
+        jumlah: 0,
+        varian_mode: false,
+      }),
+      p_idempotency_key: "quick-sale-single-hpp",
+      p_request_id: "request-single-hpp",
+    });
   });
 
   test("uses automatic location when exactly one active location exists", () => {

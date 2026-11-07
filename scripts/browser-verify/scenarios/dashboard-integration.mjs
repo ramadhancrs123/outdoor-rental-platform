@@ -13,13 +13,31 @@ export default async function dashboardIntegrationScenario({ page, capture }) {
     "Hari Ini",
     "Rental Berjalan",
     "Aktivitas Terbaru",
+    "Arus Kas Usaha",
   ];
 
   for (const label of requiredSections) {
     await page.getByRole("heading", { name: label, exact: true }).waitFor({ state: "visible", timeout: 10000 });
   }
 
-  await page.getByText("Operational control center", { exact: true }).waitFor({ state: "visible", timeout: 10000 });
+  await page.getByText("Aktivitas rental & retail", { exact: true }).waitFor({ state: "visible", timeout: 10000 });
+  await page.getByText("Promo Aktif", { exact: true }).waitFor({ state: "visible", timeout: 10000 });
+  await page.getByText("Total Transaksi", { exact: true }).waitFor({ state: "visible", timeout: 10000 });
+  await page.getByTestId("dashboard-net-cash").waitFor({ state: "visible", timeout: 10000 });
+  await page.getByText("Net Cash", { exact: true }).waitFor({ state: "visible", timeout: 10000 });
+  await page.getByTestId("dashboard-cashflow-difference").waitFor({ state: "visible", timeout: 10000 });
+  await page.getByText("Selisih", { exact: true }).waitFor({ state: "visible", timeout: 10000 });
+  if (await page.getByText(/Grafik mengikuti tanggal transaksi/).count()) {
+    throw new Error("Catatan teknis yang diminta dihapus masih muncul pada dashboard.");
+  }
+  await page.getByRole("button", { name: "Line", exact: true }).click();
+  if (await page.getByRole("button", { name: "Line", exact: true }).getAttribute("aria-pressed") !== "true") {
+    throw new Error("Pilihan grafik Line tidak aktif setelah dipilih.");
+  }
+  await page.getByRole("button", { name: "Area", exact: true }).click();
+  if (await page.getByRole("button", { name: "Area", exact: true }).getAttribute("aria-pressed") !== "true") {
+    throw new Error("Pilihan grafik Area tidak aktif setelah dipilih.");
+  }
 
   await page.getByRole("button", { name: "Atur periode keuangan", exact: true }).click();
   await page.getByRole("button", { name: "Rentang", exact: true }).click();

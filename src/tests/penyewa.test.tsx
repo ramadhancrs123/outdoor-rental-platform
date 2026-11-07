@@ -185,6 +185,21 @@ describe("Penyewa Phase 1 read-side contract", () => {
     });
   });
 
+  test("add renter action opens the compact modal form", async () => {
+    installTenantFetch([]);
+    renderList();
+    await screen.findByText("Belum ada penyewa");
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /Tambah penyewa/i }));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Tambah penyewa" })).toBeInTheDocument();
+    expect(screen.getByLabelText(/Nama lengkap/i)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("08xxxxxxxxxx")).toBeInTheDocument();
+    expect(screen.getByText("Informasi tambahan")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Daftarkan penyewa" })).toBeInTheDocument();
+  });
+
   test("empty database has a dedicated empty state", async () => {
     installTenantFetch([]);
     renderList();
@@ -239,7 +254,7 @@ describe("Penyewa Phase 1 read-side contract", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Siti Sintetis" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Identitas" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Kontak" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Operasional" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Penyewaan" })).toBeInTheDocument();
 
     const initialUrls = fetchMock.mock.calls.map(([input]) => String(input));
     expect(initialUrls.some((url) => url.includes("bukti_identitas_penyewa?"))).toBe(false);
@@ -265,11 +280,9 @@ describe("Penyewa Phase 1 read-side contract", () => {
     expect(screen.getByText("Belum ada bukti identitas")).toBeInTheDocument();
     expect(screen.getByText("Belum ada foto penyewa")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("tab", { name: "Operasional" }));
-    expect(screen.getByRole("tab", { name: "Operasional" })).toHaveAttribute("aria-selected", "true");
-    expect(await screen.findByText("Tidak ada penyewaan aktif")).toBeInTheDocument();
-    expect(screen.queryByText("Reservasi Aktif")).not.toBeInTheDocument();
-    expect(screen.queryByText("Pengembalian Terkait")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Penyewaan" }));
+    expect(screen.getByRole("tab", { name: "Penyewaan" })).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByText("Belum ada riwayat penyewaan")).toBeInTheDocument();
   });
 
   test("404 detail uses a security-safe not-found state", async () => {
