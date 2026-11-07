@@ -28,6 +28,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { InventoryPriceCorrectionDialog } from "@/components/inventaris/inventory-price-correction-dialog";
 import {
   formatInventoryDateTime,
   inventoryEventLabel,
@@ -625,6 +626,11 @@ export function InventoryProductShow() {
                       <Settings2 />
                     </Link>
                   </Button>
+                  <InventoryPriceCorrectionDialog
+                    usahaId={context.data!.usahaId}
+                    productId={product.barang_id}
+                    productName={product.nama}
+                  />
                   <Button asChild className="h-9 rounded-xl px-3 text-xs">
                     <Link to={paths.inventarisCreate + "?barangId=" + product.barang_id}>
                       <Plus />Tambah Unit
