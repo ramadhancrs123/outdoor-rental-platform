@@ -248,7 +248,7 @@ export async function onboardQuickSaleItem(
     deskripsi: input.deskripsi?.trim() || null,
     inventory_mode: input.inventoryMode,
     harga_jual: input.varianMode ? null : input.hargaJual ?? null,
-    harga_beli: input.inventoryMode === "untracked" && !input.varianMode ? input.hargaBeli ?? null : null,
+    harga_beli: input.inventoryMode !== "serialized" && !input.varianMode ? input.hargaBeli ?? null : null,
     jumlah: input.inventoryMode === "untracked" ? 0 : input.jumlah ?? 0,
     lokasi_id: input.inventoryMode === "serialized" ? input.lokasiId ?? null : null,
     varian_mode: input.varianMode,
@@ -256,7 +256,7 @@ export async function onboardQuickSaleItem(
       attributes: variant.attributes,
       jumlah: input.inventoryMode === "untracked" ? 0 : variant.quantity,
       harga_jual: variant.hargaJual,
-      ...(input.inventoryMode === "untracked" ? { harga_beli: variant.hargaBeli ?? null } : {}),
+      ...(input.inventoryMode !== "serialized" ? { harga_beli: variant.hargaBeli ?? null } : {}),
     })),
   };
   const { data, error } = await supabase.rpc("command_quick_sale_item_onboarding", {

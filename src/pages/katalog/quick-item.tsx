@@ -122,7 +122,7 @@ export function CatalogQuickItem() {
   const [resultChannel, setResultChannel] = useState<"rental" | "sale">("rental");
 
   const [channelMode, setChannelMode] = useState<"rental" | "sale">("rental");
-  const [saleInventoryMode, setSaleInventoryMode] = useState<"serialized" | "untracked">("serialized");
+  const [saleInventoryMode, setSaleInventoryMode] = useState<"serialized" | "quantity" | "untracked">("serialized");
   const [salePrice, setSalePrice] = useState("");
   const [saleCost, setSaleCost] = useState("");
 
@@ -188,6 +188,7 @@ export function CatalogQuickItem() {
     : 0;
 
   const physicalUnitLabels = useMemo(() => {
+    if (channelMode === "sale" && saleInventoryMode !== "serialized") return [];
     if (!variantMode) return Array.from({ length: physicalUnitCount }, () => null as string | null);
 
     return variants.flatMap((row) =>
@@ -198,7 +199,7 @@ export function CatalogQuickItem() {
           .join(" / ") || "Pilihan",
       ),
     );
-  }, [dimensions, physicalUnitCount, variantMode, variants]);
+  }, [channelMode, dimensions, physicalUnitCount, saleInventoryMode, variantMode, variants]);
 
   const photoPreviewUrl = useMemo(() => (
     photoFile ? URL.createObjectURL(photoFile) : null
@@ -297,7 +298,7 @@ export function CatalogQuickItem() {
           deskripsi: description.trim() || null,
           inventoryMode: saleInventoryMode,
           hargaJual: variantMode ? null : Number(salePrice),
-          hargaBeli: saleInventoryMode === "untracked" && !variantMode ? Number(saleCost) : null,
+          hargaBeli: saleInventoryMode !== "serialized" && !variantMode && saleCost.trim() ? Number(saleCost) : null,
           jumlah: saleInventoryMode === "untracked" ? 0 : (variantMode ? 0 : Number(quantity)),
           lokasiId: saleInventoryMode === "serialized" ? locationId : null,
           varianMode: variantMode,
@@ -309,7 +310,7 @@ export function CatalogQuickItem() {
                 },
                 quantity: saleInventoryMode === "untracked" ? 0 : Number(row.quantity),
                 hargaJual: Number(row.nominal),
-                hargaBeli: saleInventoryMode === "untracked" ? Number(row.cost) : null,
+                hargaBeli: saleInventoryMode !== "serialized" && row.cost.trim() ? Number(row.cost) : null,
               }))
             : [],
         }, { idempotencyKey: currentCommandKey });
@@ -381,6 +382,10 @@ export function CatalogQuickItem() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["katalog"] }),
         queryClient.invalidateQueries({ queryKey: ["inventaris"] }),
+        ...(channelMode === "sale" ? [
+          queryClient.invalidateQueries({ queryKey: ["penjualan", "catalog"] }),
+          queryClient.invalidateQueries({ queryKey: ["keuangan"] }),
+        ] : []),
       ]);
     },
     onError: (error) => {
@@ -403,6 +408,9 @@ export function CatalogQuickItem() {
       if (!variantMode) {
         if (!Number.isFinite(Number(salePrice)) || Number(salePrice) <= 0) return "Harga jual harus lebih dari nol.";
         if (saleInventoryMode === "untracked" && (!saleCost.trim() || !Number.isFinite(Number(saleCost)) || Number(saleCost) < 0)) return "HPP per unit wajib diisi nol atau lebih untuk barang tanpa stok.";
+        if (saleInventoryMode === "quantity" && (!Number.isInteger(Number(quantity)) || Number(quantity) < 0)) return "Stok awal harus berupa angka bulat nol atau lebih.";
+        if (saleInventoryMode === "quantity" && Number(quantity) > 0 && (!saleCost.trim() || !Number.isFinite(Number(saleCost)) || Number(saleCost) < 0)) return "HPP per unit wajib diisi untuk stok awal yang sudah tersedia.";
+        if (saleInventoryMode === "quantity" && saleCost.trim() && (!Number.isFinite(Number(saleCost)) || Number(saleCost) < 0)) return "HPP per unit tidak boleh negatif.";
         if (saleInventoryMode === "serialized" && (!Number.isInteger(Number(quantity)) || Number(quantity) < 0)) {
           return "Jumlah unit awal harus berupa angka bulat nol atau lebih.";
         }
@@ -414,8 +422,11 @@ export function CatalogQuickItem() {
         dimensions.some((dimension) => !row.attributes[dimension]?.trim()) ||
         !Number.isFinite(Number(row.nominal)) || Number(row.nominal) <= 0 ||
         (saleInventoryMode === "untracked" && (!row.cost.trim() || !Number.isFinite(Number(row.cost)) || Number(row.cost) < 0)) ||
+        (saleInventoryMode === "quantity" && (!Number.isInteger(Number(row.quantity)) || Number(row.quantity) < 0)) ||
+        (saleInventoryMode === "quantity" && Number(row.quantity) > 0 && (!row.cost.trim() || !Number.isFinite(Number(row.cost)) || Number(row.cost) < 0)) ||
+        (saleInventoryMode === "quantity" && row.cost.trim() && (!Number.isFinite(Number(row.cost)) || Number(row.cost) < 0)) ||
         (saleInventoryMode === "serialized" && (!Number.isInteger(Number(row.quantity)) || Number(row.quantity) < 0))
-      )) return "Lengkapi atribut, harga jual, dan jumlah unit untuk setiap pilihan.";
+      )) return "Lengkapi atribut, harga jual, stok awal, dan HPP bila stok awal lebih dari nol.";
       return null;
     }
 
@@ -570,7 +581,9 @@ export function CatalogQuickItem() {
                       ? (result as QuickItemOnboardingResult).unit_count + " unit"
                       : (result as QuickSaleItemOnboardingResult).inventory_mode === "untracked"
                         ? "Tanpa stok"
-                        : (result as QuickSaleItemOnboardingResult).unit_count + " unit"}
+                        : (result as QuickSaleItemOnboardingResult).inventory_mode === "quantity"
+                          ? Number((result as QuickSaleItemOnboardingResult).stock_quantity ?? 0).toLocaleString("id-ID") + " stok"
+                          : (result as QuickSaleItemOnboardingResult).unit_count + " unit fisik"}
                   </Badge>
                   {result.variant_count > 0 ? <Badge variant="secondary">{result.variant_count} pilihan</Badge> : null}
                   <Badge variant="secondary">
@@ -877,18 +890,19 @@ export function CatalogQuickItem() {
       </Card>
       </> ) : (
         <Card className="overflow-hidden rounded-2xl border-border/70 shadow-none">
-          <CardHeader className="p-4 pb-2 sm:p-6 sm:pb-3"><CardTitle className="text-base sm:text-lg">Pengaturan Penjualan</CardTitle><p className="mt-1 text-xs text-muted-foreground">Tentukan harga jual dan pencatatan unit fisik.</p></CardHeader>
+          <CardHeader className="p-4 pb-2 sm:p-6 sm:pb-3"><CardTitle className="text-base sm:text-lg">Pengaturan Penjualan</CardTitle><p className="mt-1 text-xs text-muted-foreground">Tentukan harga jual dan cara pencatatan persediaan.</p></CardHeader>
           <CardContent className="space-y-3 p-4 pt-1 sm:p-6 sm:pt-2">
-            <div className="grid grid-cols-2 gap-2">
-              <button type="button" onClick={() => setSaleInventoryMode("serialized")} aria-pressed={saleInventoryMode === "serialized"} className={`rounded-xl border p-3 text-left transition ${saleInventoryMode === "serialized" ? "border-primary bg-primary/5 ring-1 ring-primary/20" : "bg-background hover:bg-muted/40"}`}><span className="block text-sm font-semibold">Dengan stok</span><span className="mt-1 block text-[11px] leading-4 text-muted-foreground">Unit fisik terlacak dan berkurang saat terjual.</span></button>
-              <button type="button" onClick={() => setSaleInventoryMode("untracked")} aria-pressed={saleInventoryMode === "untracked"} className={`rounded-xl border p-3 text-left transition ${saleInventoryMode === "untracked" ? "border-primary bg-primary/5 ring-1 ring-primary/20" : "bg-background hover:bg-muted/40"}`}><span className="block text-sm font-semibold">Tanpa stok</span><span className="mt-1 block text-[11px] leading-4 text-muted-foreground">Tidak mengubah jumlah unit; cocok untuk isi ulang.</span></button>
+            <div className="grid gap-2 sm:grid-cols-3">
+              <button type="button" onClick={() => setSaleInventoryMode("serialized")} aria-pressed={saleInventoryMode === "serialized"} className={`rounded-xl border p-3 text-left transition ${saleInventoryMode === "serialized" ? "border-primary bg-primary/5 ring-1 ring-primary/20" : "bg-background hover:bg-muted/40"}`}><span className="block text-sm font-semibold">Unit fisik</span><span className="mt-1 block text-[11px] leading-4 text-muted-foreground">Setiap unit dibuat per baris, berkode dan dapat dilacak satu per satu.</span></button>
+              <button type="button" onClick={() => setSaleInventoryMode("quantity")} aria-pressed={saleInventoryMode === "quantity"} className={`rounded-xl border p-3 text-left transition ${saleInventoryMode === "quantity" ? "border-primary bg-primary/5 ring-1 ring-primary/20" : "bg-background hover:bg-muted/40"}`}><span className="block text-sm font-semibold">Stok kuantitas</span><span className="mt-1 block text-[11px] leading-4 text-muted-foreground">Satu saldo angka per barang/varian. Pembelian menambah, penjualan mengurangi.</span></button>
+              <button type="button" onClick={() => setSaleInventoryMode("untracked")} aria-pressed={saleInventoryMode === "untracked"} className={`rounded-xl border p-3 text-left transition ${saleInventoryMode === "untracked" ? "border-primary bg-primary/5 ring-1 ring-primary/20" : "bg-background hover:bg-muted/40"}`}><span className="block text-sm font-semibold">Tanpa stok</span><span className="mt-1 block text-[11px] leading-4 text-muted-foreground">Tidak memiliki saldo persediaan; transaksi tetap mencatat jumlah dan HPP.</span></button>
             </div>
             {!variantMode ? <label className="grid gap-1.5 text-xs font-semibold sm:text-sm">Harga Jual (IDR)<Input type="number" min="1" step="1000" inputMode="numeric" value={salePrice} onChange={(event) => setSalePrice(event.target.value)} className="h-10 rounded-xl sm:h-11" placeholder="Contoh: 150000" /></label> : <div className="rounded-xl border bg-muted/20 px-3 py-2.5 text-xs text-muted-foreground">Harga jual diatur pada setiap pilihan barang.</div>}
-            {saleInventoryMode === "untracked" && !variantMode ? <label className="grid gap-1.5 text-xs font-semibold sm:text-sm">HPP per Unit (IDR)<Input type="number" min="0" step="500" inputMode="numeric" value={saleCost} onChange={(event) => setSaleCost(event.target.value)} className="h-10 rounded-xl sm:h-11" placeholder="Contoh: 20000" /><span className="text-[11px] font-normal text-muted-foreground">Biaya isi ulang/pengadaan per unit untuk menghitung laba penjualan.</span></label> : null}
-            {saleInventoryMode === "serialized" ? <>
-              {!variantMode ? <label className="grid gap-1.5 text-xs font-semibold sm:text-sm">Jumlah Unit Awal<Input type="number" min="0" step="1" inputMode="numeric" value={quantity} onChange={(event) => setQuantity(event.target.value)} className="h-10 rounded-xl sm:h-11" /><span className="text-[11px] font-normal text-muted-foreground">Isi 0 bila stok akan ditambahkan melalui Pembelian.</span></label> : null}
-              <div className="grid gap-1.5"><label className="text-xs font-semibold sm:text-sm">Lokasi Penyimpanan</label>{locationSelection.selectionRequired ? <Select value={locationId ?? ""} onValueChange={setLocationId}><SelectTrigger className="h-10 rounded-xl sm:h-11"><SelectValue placeholder="Pilih lokasi" /></SelectTrigger><SelectContent>{(locations.data ?? []).map((location) => <SelectItem key={location.lokasi_id} value={location.lokasi_id}>{location.nama}</SelectItem>)}</SelectContent></Select> : locations.data?.length === 1 ? <div className="flex h-10 items-center justify-between rounded-xl border bg-muted/30 px-3.5 text-sm sm:h-11"><span>{locations.data[0].nama}</span><Badge variant="secondary" className="rounded-full">Otomatis</Badge></div> : <p className="rounded-xl border border-dashed px-3.5 py-3 text-xs leading-5 text-muted-foreground">Lokasi dapat ditentukan kemudian.</p>}</div>
-            </> : <div className="rounded-xl border border-dashed bg-muted/15 px-3 py-2.5 text-xs leading-5 text-muted-foreground">Tidak ada unit fisik yang dibuat atau dikurangi saat transaksi. Contoh: isi ulang LPG, tabung tetap kembali kepada pelanggan.</div>}
+            {saleInventoryMode !== "serialized" && !variantMode ? <label className="grid gap-1.5 text-xs font-semibold sm:text-sm">{saleInventoryMode === "quantity" ? "HPP Stok Awal per Unit (IDR)" : "HPP per Unit (IDR)"}<Input type="number" min="0" step="500" inputMode="numeric" value={saleCost} onChange={(event) => setSaleCost(event.target.value)} className="h-10 rounded-xl sm:h-11" placeholder="Contoh: 20000" /><span className="text-[11px] font-normal text-muted-foreground">{saleInventoryMode === "quantity" ? "Wajib diisi bila stok awal lebih dari nol. Jika stok awal 0, HPP mengikuti penerimaan pembelian pertama." : "Biaya isi ulang/pengadaan per unit untuk menghitung laba penjualan."}</span></label> : null}
+            {saleInventoryMode === "serialized" || saleInventoryMode === "quantity" ? <>
+              {!variantMode ? <label className="grid gap-1.5 text-xs font-semibold sm:text-sm">{saleInventoryMode === "quantity" ? "Stok Awal" : "Jumlah Unit Awal"}<Input type="number" min="0" step="1" inputMode="numeric" value={quantity} onChange={(event) => setQuantity(event.target.value)} className="h-10 rounded-xl sm:h-11" /><span className="text-[11px] font-normal text-muted-foreground">{saleInventoryMode === "quantity" ? "Dicatat sebagai satu saldo angka, bukan dibuatkan baris unit fisik." : "Isi 0 bila stok akan ditambahkan melalui Pembelian."}</span></label> : null}
+              {saleInventoryMode === "serialized" ? <div className="grid gap-1.5"><label className="text-xs font-semibold sm:text-sm">Lokasi Penyimpanan</label>{locationSelection.selectionRequired ? <Select value={locationId ?? ""} onValueChange={setLocationId}><SelectTrigger className="h-10 rounded-xl sm:h-11"><SelectValue placeholder="Pilih lokasi" /></SelectTrigger><SelectContent>{(locations.data ?? []).map((location) => <SelectItem key={location.lokasi_id} value={location.lokasi_id}>{location.nama}</SelectItem>)}</SelectContent></Select> : locations.data?.length === 1 ? <div className="flex h-10 items-center justify-between rounded-xl border bg-muted/30 px-3.5 text-sm sm:h-11"><span>{locations.data[0].nama}</span><Badge variant="secondary" className="rounded-full">Otomatis</Badge></div> : <p className="rounded-xl border border-dashed px-3.5 py-3 text-xs leading-5 text-muted-foreground">Lokasi dapat ditentukan kemudian.</p>}</div> : null}
+            </> : <div className="rounded-xl border border-dashed bg-muted/15 px-3 py-2.5 text-xs leading-5 text-muted-foreground">Tidak ada saldo persediaan yang dibuat atau dikurangi saat transaksi. Contoh: isi ulang LPG, tabung tetap kembali kepada pelanggan.</div>}
           </CardContent>
         </Card>
       )}
@@ -944,7 +958,7 @@ export function CatalogQuickItem() {
                   <div className="flex items-center justify-between gap-2">
                     <div>
                       <p className="text-sm font-semibold">Pilihan {index + 1}</p>
-                      <p className="text-[11px] text-muted-foreground">{channelMode === "rental" ? "Unit fisik dibuat sesuai jumlah." : saleInventoryMode === "untracked" ? "Pilihan tanpa pencatatan stok." : "Unit fisik tercatat sesuai jumlah awal."}</p>
+                      <p className="text-[11px] text-muted-foreground">{channelMode === "rental" ? "Unit fisik dibuat sesuai jumlah." : saleInventoryMode === "untracked" ? "Pilihan tanpa pencatatan stok." : saleInventoryMode === "quantity" ? "Saldo kuantitas disimpan sebagai angka." : "Unit fisik tercatat sesuai jumlah awal."}</p>
                     </div>
                     <Button
                       type="button"
@@ -981,8 +995,8 @@ export function CatalogQuickItem() {
                       </label>
                     ))}
 
-                    {channelMode === "rental" || saleInventoryMode === "serialized" ? <label className="grid gap-1">
-                      <span className="text-[10px] font-semibold text-muted-foreground">{channelMode === "rental" ? "Jumlah unit" : "Stok awal"}</span>
+                    {channelMode === "rental" || saleInventoryMode === "serialized" || saleInventoryMode === "quantity" ? <label className="grid gap-1">
+                      <span className="text-[10px] font-semibold text-muted-foreground">{channelMode === "rental" ? "Jumlah unit" : saleInventoryMode === "quantity" ? "Stok awal (angka)" : "Stok awal (unit fisik)"}</span>
                       <Input
                         type="number"
                         min={channelMode === "rental" ? "1" : "0"}
@@ -1016,8 +1030,8 @@ export function CatalogQuickItem() {
                         className="h-9 rounded-lg text-sm"
                       />
                     </label>
-                    {channelMode === "sale" && saleInventoryMode === "untracked" ? <label className="grid gap-1">
-                      <span className="text-[10px] font-semibold text-muted-foreground">HPP per unit (IDR)</span>
+                    {channelMode === "sale" && saleInventoryMode !== "serialized" ? <label className="grid gap-1">
+                      <span className="text-[10px] font-semibold text-muted-foreground">{saleInventoryMode === "quantity" ? "HPP stok awal / unit (IDR)" : "HPP per unit (IDR)"}</span>
                       <Input type="number" min="0" step="500" inputMode="numeric" value={row.cost}
                         onChange={(event) => {
                           const value = event.target.value;
@@ -1061,9 +1075,9 @@ export function CatalogQuickItem() {
                         {DIMENSIONS.find((item) => item.key === dimension)?.label ?? dimension}
                       </th>
                     ))}
-                    {channelMode === "rental" || saleInventoryMode === "serialized" ? <th className="px-3 py-3 font-medium">{channelMode === "rental" ? "Jumlah unit" : "Stok awal"}</th> : null}
+                    {channelMode === "rental" || saleInventoryMode === "serialized" || saleInventoryMode === "quantity" ? <th className="px-3 py-3 font-medium">{channelMode === "rental" ? "Jumlah unit" : saleInventoryMode === "quantity" ? "Stok awal (angka)" : "Stok awal (unit fisik)"}</th> : null}
                     <th className="px-3 py-3 font-medium">{channelMode === "rental" ? "Harga Sewa" : "Harga Jual"}</th>
-                    {channelMode === "sale" && saleInventoryMode === "untracked" ? <th className="px-3 py-3 font-medium">HPP per unit</th> : null}
+                    {channelMode === "sale" && saleInventoryMode !== "serialized" ? <th className="px-3 py-3 font-medium">{saleInventoryMode === "quantity" ? "HPP stok awal / unit" : "HPP per unit"}</th> : null}
                     {includeNote ? <th className="min-w-52 px-3 py-3 font-medium">Catatan</th> : null}
                     <th className="min-w-52 px-3 py-3 font-medium">Foto varian</th>
                     <th className="w-12 px-2 py-3" />
@@ -1089,7 +1103,7 @@ export function CatalogQuickItem() {
                           />
                         </td>
                       ))}
-                      {channelMode === "rental" || saleInventoryMode === "serialized" ? <td className="p-2">
+                      {channelMode === "rental" || saleInventoryMode === "serialized" || saleInventoryMode === "quantity" ? <td className="p-2">
                         <Input
                           type="number"
                           min={channelMode === "rental" ? "1" : "0"}
@@ -1121,7 +1135,7 @@ export function CatalogQuickItem() {
                           className="h-10 rounded-lg"
                         />
                       </td>
-                      {channelMode === "sale" && saleInventoryMode === "untracked" ? <td className="p-2">
+                      {channelMode === "sale" && saleInventoryMode !== "serialized" ? <td className="p-2">
                         <Input type="number" min="0" step="500" inputMode="numeric" value={row.cost}
                           onChange={(event) => {
                             const value = event.target.value;
@@ -1171,14 +1185,14 @@ export function CatalogQuickItem() {
               type="button"
               variant="outline"
               className="h-10 rounded-xl"
-              onClick={() => setVariants((current) => [...current, createVariantDraft(dimensions, channelMode === "sale" ? salePrice : price, channelMode === "sale" && saleInventoryMode === "untracked" ? saleCost : "")])}
+              onClick={() => setVariants((current) => [...current, createVariantDraft(dimensions, channelMode === "sale" ? salePrice : price, channelMode === "sale" && saleInventoryMode !== "serialized" ? saleCost : "")])}
             >
               <Plus />Tambah pilihan
             </Button>
 
             <div className="flex flex-col gap-1 rounded-2xl bg-muted/30 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
-              <span className="text-muted-foreground">{channelMode === "sale" && saleInventoryMode === "untracked" ? "Pilihan barang" : "Total unit fisik"}</span>
-              <strong>{channelMode === "sale" && saleInventoryMode === "untracked" ? variants.length + " pilihan" : variantUnitTotal + " unit"}</strong>
+              <span className="text-muted-foreground">{channelMode === "sale" && saleInventoryMode === "untracked" ? "Pilihan barang" : channelMode === "sale" && saleInventoryMode === "quantity" ? "Total stok kuantitas" : "Total unit fisik"}</span>
+              <strong>{channelMode === "sale" && saleInventoryMode === "untracked" ? variants.length + " pilihan" : variantUnitTotal + (channelMode === "sale" && saleInventoryMode === "quantity" ? " stok" : " unit")}</strong>
             </div>
           </CardContent>
         ) : (

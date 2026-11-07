@@ -177,6 +177,9 @@ export function PurchaseCreate() {
       setMode("success");
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["pembelian"] }),
+        queryClient.invalidateQueries({ queryKey: ["inventaris"] }),
+        queryClient.invalidateQueries({ queryKey: ["katalog"] }),
+        queryClient.invalidateQueries({ queryKey: ["penjualan", "catalog"] }),
         queryClient.invalidateQueries({ queryKey: ["keuangan"] }),
       ]);
     },
@@ -231,6 +234,13 @@ export function PurchaseCreate() {
         setCompletedWithPayment("cash_out_recorded" in result.response && result.response.cash_out_recorded === true);
         commandRef.current = null;
         setMode("success");
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["pembelian"] }),
+          queryClient.invalidateQueries({ queryKey: ["inventaris"] }),
+          queryClient.invalidateQueries({ queryKey: ["katalog"] }),
+          queryClient.invalidateQueries({ queryKey: ["penjualan", "catalog"] }),
+          queryClient.invalidateQueries({ queryKey: ["keuangan"] }),
+        ]);
       } else if (result.state === "not_found") {
         commandRef.current = null;
         setFeedback("Perubahan belum ditemukan. Status terbaru dapat diperiksa sebelum mencoba kembali.");

@@ -177,6 +177,7 @@ export function PenjualanPage() {
       await Promise.all([
         queryClient.invalidateQueries({queryKey:["penjualan","catalog",context.data?.usahaId]}),
         queryClient.invalidateQueries({queryKey:["penjualan","history",context.data?.usahaId]}),
+        queryClient.invalidateQueries({queryKey:["inventaris"]}),
         queryClient.invalidateQueries({queryKey:["keuangan"]}),
       ]);
       toast.success("Penjualan berhasil diselesaikan.");

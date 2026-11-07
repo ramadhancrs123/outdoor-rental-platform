@@ -366,6 +366,7 @@ export function ExpenseCreate() {
         queryClient.invalidateQueries({ queryKey: ["pembelian"] }),
         queryClient.invalidateQueries({ queryKey: ["inventaris"] }),
         queryClient.invalidateQueries({ queryKey: ["katalog"] }),
+        queryClient.invalidateQueries({ queryKey: ["penjualan", "catalog"] }),
       ]);
     },
     onError: async (error) => {

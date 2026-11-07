@@ -1009,6 +1009,13 @@ export function RentalWalkIn() {
       }
       setRentalId(id);
       await queryClient.invalidateQueries({ queryKey: ["penyewaan"] });
+      if ("penjualan_id" in result && typeof result.penjualan_id === "string") {
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["penjualan"] }),
+          queryClient.invalidateQueries({ queryKey: ["inventaris"] }),
+          queryClient.invalidateQueries({ queryKey: ["keuangan"] }),
+        ]);
+      }
 
       if (directActivationCommitted) {
         directAfterCreateRef.current = false;
@@ -1058,7 +1065,11 @@ export function RentalWalkIn() {
               if (committedSaleId) setMixedSaleId(committedSaleId);
               setSaleCart({});
               setSaleBonusReasons({});
-              await queryClient.invalidateQueries({ queryKey: ["penjualan"] });
+              await Promise.all([
+                queryClient.invalidateQueries({ queryKey: ["penjualan"] }),
+                queryClient.invalidateQueries({ queryKey: ["inventaris"] }),
+                queryClient.invalidateQueries({ queryKey: ["keuangan"] }),
+              ]);
             }
             setRentalCommandState("idle");
             if (directActivationRequested) {

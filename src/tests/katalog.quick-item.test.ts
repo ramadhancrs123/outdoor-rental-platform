@@ -192,6 +192,95 @@ describe("Quick Item frontend contract", () => {
     }));
   });
 
+  test("sends numeric quantity stock and opening HPP for products and variants", async () => {
+    rpcMock.mockResolvedValue({
+      data: {
+        state: "committed",
+        channel: "sale",
+        usaha_id: "usaha-1",
+        barang_id: "barang-quantity",
+        barang_nama: "Jas Hujan Sekali Pakai",
+        slug: "jas-hujan-sekali-pakai",
+        kategori_barang_id: "category-1",
+        kategori_dibuat: false,
+        inventory_mode: "quantity",
+        varian_mode: true,
+        variant_count: 2,
+        unit_count: 0,
+        stock_quantity: 18,
+        min_price: 15000,
+        max_price: 20000,
+        currency_code: "IDR",
+        variants: [],
+        readiness: "ready",
+      },
+      error: null,
+    });
+
+    await onboardQuickSaleItem("usaha-1", {
+      kategoriBarangId: "category-1",
+      namaBarang: "Jas Hujan Sekali Pakai",
+      inventoryMode: "quantity",
+      varianMode: true,
+      variants: [
+        { attributes: { ukuran: "M" }, quantity: 10, hargaJual: 15000, hargaBeli: 4500 },
+        { attributes: { ukuran: "L" }, quantity: 8, hargaJual: 20000, hargaBeli: 5000 },
+      ],
+    }, {
+      idempotencyKey: "quick-sale-quantity-variants",
+      requestId: "request-quantity-variants",
+    });
+
+    expect(rpcMock).toHaveBeenCalledWith("command_quick_sale_item_onboarding", {
+      p_usaha_id: "usaha-1",
+      p_payload: {
+        kategori_barang_id: "category-1",
+        kategori_nama: null,
+        nama_barang: "Jas Hujan Sekali Pakai",
+        deskripsi: null,
+        inventory_mode: "quantity",
+        harga_jual: null,
+        harga_beli: null,
+        jumlah: 0,
+        lokasi_id: null,
+        varian_mode: true,
+        variants: [
+          { attributes: { ukuran: "M" }, jumlah: 10, harga_jual: 15000, harga_beli: 4500 },
+          { attributes: { ukuran: "L" }, jumlah: 8, harga_jual: 20000, harga_beli: 5000 },
+        ],
+      },
+      p_idempotency_key: "quick-sale-quantity-variants",
+      p_request_id: "request-quantity-variants",
+    });
+  });
+
+  test("requires numeric quantity stock to send opening HPP to the backend", async () => {
+    rpcMock.mockResolvedValue({
+      data: { state: "committed", inventory_mode: "quantity", stock_quantity: 12 },
+      error: null,
+    });
+    await onboardQuickSaleItem("usaha-1", {
+      kategoriBarangId: "category-1",
+      namaBarang: "Baterai AA",
+      inventoryMode: "quantity",
+      hargaJual: 7000,
+      hargaBeli: 3500,
+      jumlah: 12,
+      varianMode: false,
+    }, {
+      idempotencyKey: "quick-sale-quantity-single",
+      requestId: "request-quantity-single",
+    });
+    expect(rpcMock).toHaveBeenCalledWith("command_quick_sale_item_onboarding", expect.objectContaining({
+      p_payload: expect.objectContaining({
+        inventory_mode: "quantity",
+        harga_beli: 3500,
+        jumlah: 12,
+        lokasi_id: null,
+      }),
+    }));
+  });
+
   test("creates sell-only untracked items and forces variant quantities to zero", async () => {
     rpcMock.mockResolvedValue({
       data: {

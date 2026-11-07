@@ -647,6 +647,11 @@ export function CatalogEdit() {
       setBusyKey("");
       toast.success("Channel dan harga jual varian diperbarui.");
       await refreshAll();
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["inventaris"] }),
+        queryClient.invalidateQueries({ queryKey: ["penjualan", "catalog"] }),
+        queryClient.invalidateQueries({ queryKey: ["keuangan"] }),
+      ]);
     },
     onError: (error) => {
       setBusyKey("");
@@ -678,6 +683,11 @@ export function CatalogEdit() {
       setBusyKey("");
       toast.success("Konfigurasi sewa dan penjualan disimpan.");
       await refreshAll();
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["inventaris"] }),
+        queryClient.invalidateQueries({ queryKey: ["penjualan", "catalog"] }),
+        queryClient.invalidateQueries({ queryKey: ["keuangan"] }),
+      ]);
     },
     onError:error=>{
       setBusyKey("");
@@ -922,7 +932,7 @@ export function CatalogEdit() {
                 </label>
                 <label className="grid gap-2 text-sm font-medium">Harga pokok / beli (IDR)
                   <Input className="h-11 rounded-xl" type="number" min="0" step="1" inputMode="decimal" value={salesDraft.hargaBeli} onChange={e=>setSalesDraft(d=>({...d,hargaBeli:e.target.value}))} placeholder="Modal per unit"/>
-                  <span className="text-[11px] font-normal text-muted-foreground">Disimpan sebagai snapshot HPP saat penjualan; tidak membuat pengeluaran kas ganda.</span>
+                  <span className="text-[11px] font-normal text-muted-foreground">{salesDraft.inventoryMode === "quantity" ? "Menjadi biaya awal saat saldo kuantitas dimulai dari nol; penerimaan pembelian berikutnya memperbarui HPP rata-rata tertimbang." : "Disimpan sebagai snapshot HPP saat penjualan; tidak membuat pengeluaran kas ganda."}</span>
                 </label>
                 <label className="grid gap-2 text-sm font-medium">Mode inventaris
                   <Select value={salesDraft.inventoryMode} onValueChange={value=>setSalesDraft(d=>({...d,inventoryMode:value as "serialized"|"quantity"|"untracked"}))}>

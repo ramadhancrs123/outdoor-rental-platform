@@ -60,6 +60,7 @@ import {
 import { paths } from "@/routes/paths";
 import { InventoryPackageAvailabilityView } from "@/components/inventaris/package-availability";
 import { UnitQrBatchPrintDialog } from "@/components/qr-operasional/qr-operasional";
+import { QuantityStockInventoryView } from "./quantity-stock";
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Inventaris gagal dimuat.";
@@ -67,11 +68,13 @@ function errorMessage(error: unknown) {
 
 export function InventoryList() {
   const [searchParams] = useSearchParams();
-  const initialMode = searchParams.get("mode") === "units"
-    ? "units"
-    : searchParams.get("mode") === "packages"
-      ? "packages"
-      : "products";
+  const initialMode = searchParams.get("mode") === "quantity"
+    ? "quantity"
+    : searchParams.get("mode") === "units"
+      ? "units"
+      : searchParams.get("mode") === "packages"
+        ? "packages"
+        : "products";
   const initialBarangId = searchParams.get("barangId");
   const [filters, setFilters] = useState<InventoryListFilters>({
     ...DEFAULT_INVENTORY_FILTERS,
@@ -101,25 +104,25 @@ export function InventoryList() {
   const locations = useQuery({
     queryKey: ["inventaris", "locations", context.data?.usahaId],
     queryFn: () => listInventoryLocations(context.data!.usahaId),
-    enabled: Boolean(context.data?.usahaId),
+    enabled: Boolean(context.data?.usahaId && viewMode !== "quantity" && viewMode !== "packages"),
     staleTime: 60_000,
   });
   const products = useQuery({
     queryKey: ["inventaris", "products", context.data?.usahaId],
     queryFn: () => listInventoryProducts(context.data!.usahaId),
-    enabled: Boolean(context.data?.usahaId),
+    enabled: Boolean(context.data?.usahaId && viewMode === "products"),
     staleTime: 60_000,
   });
   const productOverview = useQuery({
     queryKey: ["inventaris", "product-overview", context.data?.usahaId],
     queryFn: () => listInventoryProductOverview(context.data!.usahaId),
-    enabled: Boolean(context.data?.usahaId),
+    enabled: Boolean(context.data?.usahaId && viewMode === "products"),
     staleTime: 30_000,
   });
   const variants = useQuery({
     queryKey: ["inventaris", "variants", context.data?.usahaId],
     queryFn: () => listInventoryVariants(context.data!.usahaId),
-    enabled: Boolean(context.data?.usahaId),
+    enabled: Boolean(context.data?.usahaId && viewMode === "products"),
     staleTime: 60_000,
   });
   const units = useQuery({
@@ -255,6 +258,20 @@ export function InventoryList() {
 
   return (
     <div className="mx-auto w-full max-w-7xl space-y-4 pb-10 sm:space-y-5">
+      <nav className="flex gap-1 overflow-x-auto rounded-xl bg-muted/45 p-1" aria-label="Jenis inventaris">
+        <Button asChild size="sm" variant={viewMode === "products" ? "default" : "ghost"} className="h-9 shrink-0 rounded-lg px-3 text-xs">
+          <Link to={paths.inventaris}>Barang fisik</Link>
+        </Button>
+        <Button asChild size="sm" variant={viewMode === "quantity" ? "default" : "ghost"} className="h-9 shrink-0 rounded-lg px-3 text-xs">
+          <Link to={paths.inventaris + "?mode=quantity"}>Stok kuantitas</Link>
+        </Button>
+        <Button asChild size="sm" variant={viewMode === "units" ? "default" : "ghost"} className="h-9 shrink-0 rounded-lg px-3 text-xs">
+          <Link to={paths.inventaris + "?mode=units"}>Unit fisik</Link>
+        </Button>
+        <Button asChild size="sm" variant={viewMode === "packages" ? "default" : "ghost"} className="h-9 shrink-0 rounded-lg px-3 text-xs">
+          <Link to={paths.inventaris + "?mode=packages"}>Paket</Link>
+        </Button>
+      </nav>
       {viewMode === "products" ? (
         <>
           <div className="space-y-3">
@@ -438,14 +455,14 @@ export function InventoryList() {
         <header className="flex items-center justify-between gap-3">
           <div>
             <p className="text-xs font-medium text-muted-foreground">Inventaris</p>
-            <h1 className="text-xl font-bold tracking-tight">{viewMode === "units" ? "Semua Unit" : "Paket"}</h1>
+            <h1 className="text-xl font-bold tracking-tight">{viewMode === "units" ? "Semua Unit" : viewMode === "quantity" ? "Stok Kuantitas" : "Paket"}</h1>
           </div>
           <div className="flex gap-2">
-            <Button type="button" variant="outline" className="h-10 rounded-xl" onClick={() => void handleExport()} disabled={exporting}>
+            {viewMode !== "quantity" ? <Button type="button" variant="outline" className="h-10 rounded-xl" onClick={() => void handleExport()} disabled={exporting}>
               <Download />
               {exporting ? "Menyiapkan…" : "Ekspor"}
-            </Button>
-            {capabilities.mutation ? (
+            </Button> : null}
+            {capabilities.mutation && viewMode !== "quantity" ? (
               <Button asChild className="h-10 rounded-xl">
                 <Link to={paths.inventarisCreate}><PackagePlus />Daftarkan Unit</Link>
               </Button>
@@ -1039,6 +1056,10 @@ export function InventoryList() {
         </>
       )}
       </>
+      ) : null}
+
+      {viewMode === "quantity" ? (
+        <QuantityStockInventoryView usahaId={context.data.usahaId} canMutate={capabilities.mutation} />
       ) : null}
 
       {viewMode === "packages" ? (

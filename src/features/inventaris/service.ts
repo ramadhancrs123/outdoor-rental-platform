@@ -25,6 +25,8 @@ import type {
   InventoryUnit,
   InventoryUnitHistory,
   InventoryUnitMedia,
+  InventoryQuantityStock,
+  InventoryQuantityStockMovement,
   InventoryVariant,
   InventoryVariantMedia,
   InspectionPendingCommandInput,
@@ -1427,4 +1429,131 @@ export async function listInventoryReadyUnitCovers(
     ),
     ...Array.from(chosenVariant.values()),
   ];
+}
+
+
+/** Read aggregate retail stock separately from physical rental/serialized units. */
+export async function listQuantityInventoryStocks(usahaId: string): Promise<InventoryQuantityStock[]> {
+  const [productsResult, variantsResult, stockResult] = await Promise.all([
+    supabase.from("barang")
+      .select("barang_id,nama,satuan_jual,inventory_mode,status,updated_at")
+      .eq("usaha_id", usahaId),
+    supabase.from("varian_barang")
+      .select("varian_barang_id,barang_id,nama,inventory_mode,status,updated_at")
+      .eq("usaha_id", usahaId),
+    supabase.from("stok_barang")
+      .select("stok_barang_id,barang_id,varian_barang_id,jumlah,average_unit_cost,updated_at")
+      .eq("usaha_id", usahaId),
+  ]);
+  if (productsResult.error) throw productsResult.error;
+  if (variantsResult.error) throw variantsResult.error;
+  if (stockResult.error) throw stockResult.error;
+
+  const products = productsResult.data ?? [];
+  const variants = variantsResult.data ?? [];
+  const stockByTarget = new Map((stockResult.data ?? []).map((row) => [
+    row.varian_barang_id ? `variant:${row.varian_barang_id}` : `product:${row.barang_id}`, row,
+  ]));
+  const rows: InventoryQuantityStock[] = [];
+
+  for (const product of products) {
+    // Product-level and variant-level inventory balances are independent POS targets.
+    // Keep its balance independent from every variant-level balance.
+    if (product.inventory_mode !== "quantity") continue;
+    const stock = stockByTarget.get(`product:${product.barang_id}`);
+    const quantity = Number(stock?.jumlah ?? 0);
+    const averageCost = stock?.average_unit_cost == null ? null : Number(stock.average_unit_cost);
+    rows.push({
+      stok_barang_id: stock?.stok_barang_id ?? null,
+      barang_id: product.barang_id,
+      varian_barang_id: null,
+      barang_nama: product.nama,
+      varian_nama: null,
+      satuan_jual: product.satuan_jual || "pcs",
+      status: product.status,
+      stock_quantity: quantity,
+      average_unit_cost: averageCost,
+      stock_value: averageCost == null ? null : quantity * averageCost,
+      updated_at: stock?.updated_at ?? product.updated_at ?? null,
+    });
+  }
+
+  const productById = new Map(products.map((product) => [product.barang_id, product]));
+  for (const variant of variants) {
+    const parent = productById.get(variant.barang_id);
+    if (!parent || (variant.inventory_mode ?? parent.inventory_mode) !== "quantity") continue;
+    const stock = stockByTarget.get(`variant:${variant.varian_barang_id}`);
+    const quantity = Number(stock?.jumlah ?? 0);
+    const averageCost = stock?.average_unit_cost == null ? null : Number(stock.average_unit_cost);
+    rows.push({
+      stok_barang_id: stock?.stok_barang_id ?? null,
+      barang_id: parent.barang_id,
+      varian_barang_id: variant.varian_barang_id,
+      barang_nama: parent.nama,
+      varian_nama: variant.nama,
+      satuan_jual: parent.satuan_jual || "pcs",
+      status: variant.status,
+      stock_quantity: quantity,
+      average_unit_cost: averageCost,
+      stock_value: averageCost == null ? null : quantity * averageCost,
+      updated_at: stock?.updated_at ?? variant.updated_at ?? parent.updated_at ?? null,
+    });
+  }
+
+  return rows.sort((a, b) =>
+    a.barang_nama.localeCompare(b.barang_nama, "id") || (a.varian_nama ?? "").localeCompare(b.varian_nama ?? "", "id"),
+  );
+}
+
+export async function listQuantityStockMovements(
+  usahaId: string,
+  stokBarangId: string,
+): Promise<InventoryQuantityStockMovement[]> {
+  const { data, error } = await supabase.from("pergerakan_stok")
+    .select("pergerakan_stok_id,jenis_pergerakan,quantity_delta,source_type,source_id,catatan,metadata,created_at")
+    .eq("usaha_id", usahaId)
+    .eq("stok_barang_id", stokBarangId)
+    .order("created_at", { ascending: false })
+    .limit(30);
+  if (error) throw error;
+  return (data ?? []).map((row) => ({
+    ...row,
+    quantity_delta: Number(row.quantity_delta),
+    metadata: (row.metadata ?? null) as Record<string, unknown> | null,
+  }));
+}
+
+export async function adjustQuantityInventoryStock(input: {
+  usahaId: string;
+  barangId: string;
+  varianBarangId: string | null;
+  jumlahBaru: number;
+  alasan: string;
+  expectedUpdatedAt: string | null;
+}) {
+  if (!Number.isInteger(input.jumlahBaru) || input.jumlahBaru < 0) {
+    throw new Error("Stok baru harus berupa angka bulat nol atau lebih.");
+  }
+  if (input.alasan.trim().length < 5) {
+    throw new Error("Alasan penyesuaian minimal 5 karakter.");
+  }
+  const { data, error } = await supabase.rpc("command_adjust_sale_stock", {
+    p_usaha_id: input.usahaId,
+    p_barang_id: input.barangId,
+    p_varian_barang_id: input.varianBarangId,
+    p_jumlah_baru: input.jumlahBaru,
+    p_alasan: input.alasan.trim(),
+    p_expected_updated_at: input.expectedUpdatedAt,
+    p_idempotency_key: createClientId(),
+    p_request_id: createClientId(),
+  });
+  if (error) throw normalizeRpcError(error, "Penyesuaian stok kuantitas");
+  return data as {
+    stok_barang_id: string;
+    barang_id: string;
+    varian_barang_id: string | null;
+    jumlah: number;
+    updated_at: string;
+    state: "changed" | "unchanged";
+  };
 }

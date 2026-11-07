@@ -388,3 +388,29 @@ export type InventoryProductDetail = {
     unit_kode: string;
   }>;
 };
+
+
+export type InventoryQuantityStock = {
+  stok_barang_id: string | null;
+  barang_id: string;
+  varian_barang_id: string | null;
+  barang_nama: string;
+  varian_nama: string | null;
+  satuan_jual: string;
+  status: string;
+  stock_quantity: number;
+  average_unit_cost: number | null;
+  stock_value: number | null;
+  updated_at: string | null;
+};
+
+export type InventoryQuantityStockMovement = {
+  pergerakan_stok_id: string;
+  jenis_pergerakan: string;
+  quantity_delta: number;
+  source_type: string;
+  source_id: string | null;
+  catatan: string | null;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+};
