@@ -1,5 +1,9 @@
 const stripTrailingSlash = (value: string) => value.replace(/\/+$/, "");
 
+const akashaPublicSiteUrl = stripTrailingSlash(
+  (import.meta.env.VITE_AKASHA_PUBLIC_SITE_URL || "https://akashaoutdoor.vercel.app").trim(),
+);
+
 const projectRef = (import.meta.env.VITE_SUPABASE_PROJECT_REF ?? "").trim();
 const supabaseUrl = stripTrailingSlash(
   import.meta.env.VITE_SUPABASE_URL ||
@@ -24,6 +28,7 @@ export const appConfig = {
   title: "Panel Admin — Rental Outdoor",
   refineProjectId: "Q6Z7J5-LupTFw-JtaUXB",
   apiUrl: import.meta.env.VITE_API_URL || "https://api.fake-rest.refine.dev",
+  akashaPublicSiteUrl,
   supabase: {
     url: supabaseUrl,
     projectRef: projectRefOf(supabaseUrl),

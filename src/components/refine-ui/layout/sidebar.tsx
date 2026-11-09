@@ -8,6 +8,7 @@ import {
   Bell,
   Boxes,
   CalendarCheck,
+  ClipboardList,
   ChevronDown,
   CircleDollarSign,
   Coins,
@@ -62,6 +63,7 @@ const sections: MenuSection[] = [
     id: "operational",
     label: "Operasional",
     items: [
+      { label: "Booking Online", path: paths.akashaSmartBooking, icon: ClipboardList },
       { label: "Reservasi", path: paths.reservasi, icon: CalendarCheck },
       { label: "Penyewaan", path: paths.penyewaan, icon: TentTree },
       { label: "Penjualan", path: paths.penjualan, icon: ShoppingBag },

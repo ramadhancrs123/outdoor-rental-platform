@@ -23,13 +23,14 @@ import {
   Users,
   WalletCards,
 } from "lucide-react";
-import { Link, useSearchParams } from "react-router";
+import { Link, useNavigate, useSearchParams } from "react-router";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -56,6 +57,7 @@ import {
   listCatalogReadyStock,
   type CatalogPackage,
   type CatalogProduct,
+  type CatalogTariff,
   calculateRentalLineSubtotal,
   calculateTariffPeriods,
   resolvePackagePrice,
@@ -87,7 +89,12 @@ import type { CheckoutDiscountRequest } from "@/features/penyewaan/types";
 import { createMixedCheckout, getSaleReceiptData, listSaleCatalogItems } from "@/features/penjualan";
 import type { SaleCatalogItem, SaleReceiptData } from "@/features/penjualan";
 import { paths } from "@/routes/paths";
+import {
+  checkoutAkashaSmartBooking,
+  getAkashaSmartBooking,
+} from "@/features/akasha-smart-booking/service";
 import { cn } from "@/lib/utils";
+import { supabase } from "@/app/providers/supabase/client";
 
 type DraftRentalLine = {
   key: string;
@@ -98,8 +105,43 @@ type DraftRentalLine = {
   normalUnitPrice?: number;
   promoDiscountPercent?: number;
   promoId?: string | null;
+  tariffDurationUnit?: string | null;
+  tariffDurationValue?: number | null;
   input: DirectRentalLineInput;
 };
+
+type SmartBookingRentalCatalogRow = {
+  barang_id: string
+  varian_barang_id: string | null
+  tarif_sewa_id: string
+  barang_nama: string
+  varian_nama: string | null
+  harga_normal: number | string
+  diskon_persen: number | string | null
+  harga_efektif: number | string | null
+  currency_code: string
+  inventory_mode: string | null
+  durasi_unit: string
+  durasi_nilai: number
+}
+
+type SmartBookingPackageRow = {
+  paket_sewa_id: string
+  nama: string
+  status: string
+}
+
+type SmartBookingPackageTariffRow = Pick<
+  CatalogTariff,
+  "tarif_sewa_id" | "paket_sewa_id" | "durasi_unit" | "durasi_nilai" | "nominal" | "currency_code"
+>
+
+type SmartBookingPackagePromoRow = {
+  paket_sewa_id: string
+  tarif_sewa_id: string
+  harga_normal: number | string
+  harga_promo: number | string
+}
 
 type CatalogDialogState =
   | { open: false }
@@ -181,9 +223,12 @@ function matchesCatalogTerm(term: string, name: string, categoryName: string, sl
 
 export function RentalWalkIn() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const renterIdFromQuery = searchParams.get("renter_id");
   const reservationIdFromQuery = searchParams.get("reservasi_id");
+  const smartBookingIdFromQuery = searchParams.get("smart_booking_id");
   const isReservationFlow = Boolean(reservationIdFromQuery);
+  const isSmartBookingFlow = Boolean(smartBookingIdFromQuery);
   const queryClient = useQueryClient();
 
   const context = useQuery({
@@ -198,6 +243,14 @@ export function RentalWalkIn() {
     enabled: Boolean(context.data?.usahaId && reservationIdFromQuery),
     staleTime: 30_000,
   });
+
+  const smartBookingPrefill = useQuery({
+    queryKey: ["akasha-smart-booking", "walk-in-prefill", context.data?.usahaId, smartBookingIdFromQuery],
+    queryFn: () => getAkashaSmartBooking(smartBookingIdFromQuery!),
+    enabled: Boolean(context.data?.usahaId && smartBookingIdFromQuery),
+    staleTime: 10_000,
+  });
+
 
   const [selectedRenterId, setSelectedRenterId] = useState(renterIdFromQuery ?? "");
   const [renterPickerOpen, setRenterPickerOpen] = useState(false);
@@ -244,6 +297,10 @@ export function RentalWalkIn() {
   const [rentalId, setRentalId] = useState("");
   const [rentalCommandKey, setRentalCommandKey] = useState(() => createClientId());
   const [rentalCommandState, setRentalCommandState] = useState<CommandState>("idle");
+  const [smartBookingPrefillState, setSmartBookingPrefillState] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [smartBookingPrefillError, setSmartBookingPrefillError] = useState("");
+  const [smartBookingPrefillAttempt, setSmartBookingPrefillAttempt] = useState(0);
+  const smartBookingPrefillStartedRef = useRef(false);
   const directAfterCreateRef = useRef(false);
   const [operationalFeedback, setOperationalFeedback] = useState<string>("");
   const [unitExceptionOpen, setUnitExceptionOpen] = useState(false);
@@ -289,21 +346,21 @@ export function RentalWalkIn() {
   const saleCatalog = useQuery<SaleCatalogItem[]>({
     queryKey: ["penjualan", "catalog", context.data?.usahaId],
     queryFn: () => listSaleCatalogItems(context.data!.usahaId),
-    enabled: Boolean(context.data?.usahaId && catalogPickerOpen && !rentalId && !isReservationFlow),
+    enabled: Boolean(context.data?.usahaId && catalogPickerOpen && !rentalId && !isReservationFlow && !isSmartBookingFlow),
     staleTime: 20_000,
   });
 
   const products = useQuery({
     queryKey: ["penyewaan", "walk-in", "products", context.data?.usahaId],
     queryFn: () => listCatalogProducts(context.data!.usahaId, { ...DEFAULT_CATALOG_FILTERS, pageSize: 100 }),
-    enabled: Boolean(context.data?.usahaId && catalogPickerOpen && selectionMode === "rental" && !rentalId && !isReservationFlow),
+    enabled: Boolean(context.data?.usahaId && catalogPickerOpen && selectionMode === "rental" && !rentalId && !isReservationFlow && !isSmartBookingFlow),
     staleTime: 60_000,
   });
 
   const packages = useQuery({
     queryKey: ["penyewaan", "walk-in", "packages", context.data?.usahaId],
     queryFn: () => listCatalogPackages(context.data!.usahaId),
-    enabled: Boolean(context.data?.usahaId && catalogPickerOpen && selectionMode === "package" && !rentalId && !isReservationFlow),
+    enabled: Boolean(context.data?.usahaId && catalogPickerOpen && selectionMode === "package" && !rentalId && !isReservationFlow && !isSmartBookingFlow),
     staleTime: 60_000,
   });
 
@@ -397,6 +454,217 @@ export function RentalWalkIn() {
     enabled: Boolean(context.data?.usahaId && rentalId && (unitExceptionOpen || operationalWorkspace.data?.rental.status === "active")),
     staleTime: 5_000,
   });
+
+  useEffect(() => {
+    const booking = smartBookingPrefill.data;
+    if (!isSmartBookingFlow || !context.data || !booking || smartBookingPrefillStartedRef.current) return;
+    smartBookingPrefillStartedRef.current = true;
+
+    void (async () => {
+      try {
+        setSmartBookingPrefillState("loading");
+        setSmartBookingPrefillError("");
+
+        if (booking.workflow_status !== "ready_for_checkout") {
+          throw new Error("Booking belum berstatus Siap checkout. Kembali ke detail booking untuk meninjau status dan permintaan customer.");
+        }
+        if (booking.change_requests.some((request) => request.status === "pending")) {
+          throw new Error("Selesaikan atau tolak seluruh permintaan perubahan customer sebelum checkout.");
+        }
+
+        const nextStart = booking.requested_pickup_at
+          ? formatDateTimeLocalInTimezone(new Date(booking.requested_pickup_at), context.data.timezone)
+          : "";
+        const nextEnd = booking.requested_return_at
+          ? formatDateTimeLocalInTimezone(new Date(booking.requested_return_at), context.data.timezone)
+          : "";
+        if (booking.renter_id) setSelectedRenterId(booking.renter_id);
+        setStartAt(nextStart);
+        setEndAt(nextEnd);
+
+        const [rentalResult, packageResult, packageTariffResult, packagePromoResult, saleOptions] = await Promise.all([
+          supabase.from("v_public_katalog_rental")
+            .select("barang_id,varian_barang_id,tarif_sewa_id,barang_nama,varian_nama,harga_normal,diskon_persen,harga_efektif,currency_code,inventory_mode,durasi_unit,durasi_nilai")
+            .eq("usaha_id", context.data.usahaId),
+          supabase.from("v_public_paket_sewa")
+            .select("paket_sewa_id,nama,status")
+            .eq("usaha_id", context.data.usahaId)
+            .eq("status", "active"),
+          supabase.from("v_public_tarif_sewa")
+            .select("tarif_sewa_id,paket_sewa_id,durasi_unit,durasi_nilai,nominal,currency_code")
+            .eq("usaha_id", context.data.usahaId),
+          supabase.from("v_public_paket_promo")
+            .select("paket_sewa_id,tarif_sewa_id,harga_normal,harga_promo")
+            .eq("usaha_id", context.data.usahaId),
+          listSaleCatalogItems(context.data.usahaId),
+        ]);
+        for (const result of [rentalResult, packageResult, packageTariffResult, packagePromoResult]) {
+          if (result.error) throw result.error;
+        }
+
+        const rentalRows = (rentalResult.data ?? []) as unknown as SmartBookingRentalCatalogRow[];
+        const packageRows = (packageResult.data ?? []) as unknown as SmartBookingPackageRow[];
+        const packageTariffs = (packageTariffResult.data ?? []) as unknown as SmartBookingPackageTariffRow[];
+        const packagePromos = (packagePromoResult.data ?? []) as unknown as SmartBookingPackagePromoRow[];
+        const nextRentalLines: DraftRentalLine[] = [];
+        const nextSaleCart: Record<string, { item: SaleCatalogItem; jumlah: number }> = {};
+
+        for (const line of booking.lines) {
+          if (line.kind === "sale") {
+            const saleOption = saleOptions.find((item) =>
+              line.varian_barang_id
+                ? item.varian_barang_id === line.varian_barang_id
+                : !item.varian_barang_id && item.barang_id === line.barang_id,
+            );
+            if (!saleOption) {
+              throw new Error("Barang pembelian pada booking tidak lagi aktif di katalog. Ajukan perubahan item sebelum checkout.");
+            }
+            nextSaleCart[saleOption.key] = {
+              item: saleOption,
+              jumlah: Number(line.quantity),
+            };
+            continue;
+          }
+
+          const quantity = Number(line.quantity);
+          if (!Number.isFinite(quantity) || quantity < 1 || quantity > 20) {
+            throw new Error("Jumlah item rental pada snapshot booking tidak valid.");
+          }
+
+          if (line.paket_sewa_id) {
+            const packageRow = packageRows.find((item) => item.paket_sewa_id === line.paket_sewa_id);
+            if (!packageRow) {
+              throw new Error("Paket rental pada booking tidak lagi aktif. Ajukan alternatif melalui portal customer.");
+            }
+            const tariff = packageTariffs.find((item) =>
+              item.paket_sewa_id === line.paket_sewa_id &&
+              item.tarif_sewa_id === line.tarif_sewa_id,
+            );
+            if (!tariff) {
+              throw new Error("Tarif aktif untuk paket " + packageRow.nama + " belum tersedia.");
+            }
+            const promo = packagePromos.find((item) =>
+              item.paket_sewa_id === line.paket_sewa_id && item.tarif_sewa_id === tariff.tarif_sewa_id,
+            );
+            const normalPrice = Number(promo?.harga_normal ?? tariff.nominal);
+            const effectivePrice = Number(promo?.harga_promo ?? tariff.nominal);
+            const periods = nextStart && nextEnd
+              ? calculateTariffPeriods(nextStart, nextEnd, tariff)
+              : 1;
+            const identity = "package:" + line.paket_sewa_id;
+            nextRentalLines.push({
+              key: identity,
+              kind: "package",
+              label: packageRow.nama,
+              description: "Paket × " + quantity,
+              normalUnitPrice: normalPrice,
+              promoDiscountPercent: normalPrice > 0 && effectivePrice < normalPrice
+                ? Math.round((1 - effectivePrice / normalPrice) * 10000) / 100
+                : 0,
+              promoId: null,
+              tariffDurationUnit: tariff.durasi_unit,
+              tariffDurationValue: Number(tariff.durasi_nilai),
+              stockReadyAtSelection: null,
+              input: {
+                paket_sewa_id: line.paket_sewa_id,
+                tarif_sewa_id: tariff.tarif_sewa_id,
+                duration_periods: Math.max(1, periods),
+                jumlah: quantity,
+                unit_price: effectivePrice,
+                subtotal: calculateRentalLineSubtotal(quantity, effectivePrice, Math.max(1, periods)),
+                currency_code: "IDR",
+                catatan: null,
+              },
+            });
+            continue;
+          }
+
+          const catalogRow = rentalRows.find((item) =>
+            item.tarif_sewa_id === line.tarif_sewa_id &&
+            (line.varian_barang_id
+              ? item.varian_barang_id === line.varian_barang_id
+              : !item.varian_barang_id && item.barang_id === line.barang_id),
+          );
+          if (!catalogRow) {
+            throw new Error("Barang rental " + line.name + " tidak lagi memiliki tarif publik aktif. Ajukan perubahan melalui portal customer.");
+          }
+          const normalPrice = Number(catalogRow.harga_normal);
+          const effectivePrice = Number(catalogRow.harga_efektif ?? catalogRow.harga_normal);
+          const periods = nextStart && nextEnd
+            ? calculateTariffPeriods(nextStart, nextEnd, {
+                durasi_unit: catalogRow.durasi_unit,
+                durasi_nilai: Number(catalogRow.durasi_nilai),
+              })
+            : 1;
+          const identity = line.varian_barang_id
+            ? "item:" + catalogRow.barang_id + ":" + line.varian_barang_id
+            : "item:" + catalogRow.barang_id + ":base";
+          nextRentalLines.push({
+            key: identity,
+            kind: "item",
+            label: catalogRow.varian_nama
+              ? catalogRow.barang_nama + " · " + catalogRow.varian_nama
+              : catalogRow.barang_nama,
+            description: "× " + quantity + " unit",
+            normalUnitPrice: normalPrice,
+            promoDiscountPercent: Number(catalogRow.diskon_persen ?? 0),
+            promoId: null,
+            tariffDurationUnit: catalogRow.durasi_unit,
+            tariffDurationValue: Number(catalogRow.durasi_nilai),
+            stockReadyAtSelection: null,
+            input: {
+              barang_id: line.varian_barang_id ? null : catalogRow.barang_id,
+              varian_barang_id: line.varian_barang_id,
+              tarif_sewa_id: catalogRow.tarif_sewa_id,
+              duration_periods: Math.max(1, periods),
+              jumlah: quantity,
+              unit_price: effectivePrice,
+              subtotal: calculateRentalLineSubtotal(quantity, effectivePrice, Math.max(1, periods)),
+              currency_code: "IDR",
+              catatan: null,
+            },
+          });
+        }
+
+        setDraftLines(nextRentalLines);
+        setPickerLines(nextRentalLines.map((line) => ({ ...line, input: { ...line.input } })));
+        setSaleCart(nextSaleCart);
+        setSmartBookingPrefillState("ready");
+      } catch (error) {
+        setSmartBookingPrefillError(error instanceof Error ? error.message : "Snapshot booking gagal dipersiapkan.");
+        setSmartBookingPrefillState("error");
+      }
+    })();
+  }, [context.data, isSmartBookingFlow, smartBookingPrefill.data, smartBookingPrefillAttempt]);
+
+  useEffect(() => {
+    if (
+      !isSmartBookingFlow ||
+      !startAt ||
+      !endAt ||
+      new Date(endAt).getTime() <= new Date(startAt).getTime()
+    ) return;
+    setDraftLines((current) => current.map((line) => {
+      if (!line.tariffDurationUnit || !line.tariffDurationValue) return line;
+      const periods = calculateTariffPeriods(startAt, endAt, {
+        durasi_unit: line.tariffDurationUnit,
+        durasi_nilai: line.tariffDurationValue,
+      });
+      if (!periods) return line;
+      return {
+        ...line,
+        input: {
+          ...line.input,
+          duration_periods: periods,
+          subtotal: calculateRentalLineSubtotal(
+            Number(line.input.jumlah),
+            Number(line.input.unit_price),
+            periods,
+          ),
+        },
+      };
+    }));
+  }, [endAt, isSmartBookingFlow, startAt]);
 
   const accounts = useQuery<FinanceAccount[]>({
     queryKey: ["keuangan", "accounts", context.data?.usahaId],
@@ -838,9 +1106,9 @@ export function RentalWalkIn() {
   const receiptData = receiptQuery.data ?? null;
 
   useEffect(() => {
-    if (!context.data || startAt || rentalId || isReservationFlow) return;
+    if (!context.data || startAt || rentalId || isReservationFlow || isSmartBookingFlow) return;
     setStartAt(formatDateTimeLocalInTimezone(new Date(), context.data.timezone));
-  }, [context.data, isReservationFlow, rentalId, startAt]);
+  }, [context.data, isReservationFlow, isSmartBookingFlow, rentalId, startAt]);
 
   useEffect(() => {
     const reservation = reservationPrefill.data;
@@ -925,6 +1193,71 @@ export function RentalWalkIn() {
   const createRentalMutation = useMutation({
     mutationFn: async () => {
       if (!context.data) throw new Error("Konteks Usaha belum tersedia.");
+
+      if (isSmartBookingFlow) {
+        const booking = smartBookingPrefill.data;
+        if (!booking || smartBookingPrefillState !== "ready") {
+          throw new Error("Snapshot booking belum selesai dipersiapkan.");
+        }
+        if (booking.workflow_status !== "ready_for_checkout") {
+          throw new Error("Booking harus berstatus Siap checkout.");
+        }
+        if (booking.change_requests.some((request) => request.status === "pending")) {
+          throw new Error("Selesaikan permintaan perubahan customer sebelum checkout.");
+        }
+        if (!draftLines.length && !saleCartLines.length) {
+          throw new Error("Booking tidak memiliki barang untuk ditransaksikan.");
+        }
+        if (draftLines.length > 0) {
+          if (!booking.renter_id || selectedRenterId !== booking.renter_id) {
+            throw new Error("Identitas penyewa pada booking tidak sesuai.");
+          }
+          if (!canMoveFromPeriod) {
+            throw new Error("Jam aktual pengambilan dan pengembalian harus diisi terlebih dahulu.");
+          }
+          if (
+            startAt.slice(0, 10) !== booking.requested_pickup_date ||
+            endAt.slice(0, 10) !== booking.requested_return_date
+          ) {
+            throw new Error("Tanggal transaksi harus mengikuti jadwal booking yang telah disetujui.");
+          }
+        }
+        if (saleCartLines.length > 0 && !paymentAccountId) {
+          throw new Error("Pilih akun operasional penerima pembayaran sebelum checkout.");
+        }
+        if (hasBonusLineWithoutReason || saleCartLines.some(({ item }) =>
+          Object.prototype.hasOwnProperty.call(saleBonusReasons, item.key),
+        )) {
+          throw new Error("Item bonus tidak dapat ditambahkan saat konversi Smart Booking. Ajukan perubahan kepada customer terlebih dahulu.");
+        }
+
+        setRentalCommandState("processing");
+        return checkoutAkashaSmartBooking({
+          smartBookingId: booking.smart_booking_id,
+          expectedRevision: booking.revision,
+          pickupAt: draftLines.length
+            ? localDateTimeToUtcIso(startAt, context.data.timezone)
+            : null,
+          returnAt: draftLines.length
+            ? localDateTimeToUtcIso(endAt, context.data.timezone)
+            : null,
+          rentalLines: draftLines.map((line) => line.input),
+          saleLines: saleCartLines.map(({ item, jumlah }) => ({
+            barang_id: item.barang_id,
+            varian_barang_id: item.varian_barang_id,
+            jumlah,
+          })),
+          accountId: saleCartLines.length > 0 ? paymentAccountId : null,
+          paymentMethod,
+          paymentRentalAmount: 0,
+          note: "Transaksi dari AKASHA SMART BOOKING " + booking.reference_code,
+          discountRequest: draftLines.length ? discountRequest : { mode: "none" },
+          idempotencyKey: rentalCommandKey,
+          requestId: createClientId(),
+          activateRental: directAfterCreateRef.current && draftLines.length > 0,
+        });
+      }
+
       if (!selectedRenterId) throw new Error("Pilih penyewa terlebih dahulu.");
       if (!canMoveFromPeriod) throw new Error("Waktu mulai dan kembali wajib diisi dengan durasi yang valid.");
       if (isReservationFlow) {
@@ -999,6 +1332,27 @@ export function RentalWalkIn() {
       );
     },
     onSuccess: async (result) => {
+      if (isSmartBookingFlow) {
+        const booking = smartBookingPrefill.data;
+        directAfterCreateRef.current = false;
+        setRentalCommandState("idle");
+        if (!booking) throw new Error("Referensi Smart Booking tidak tersedia setelah checkout.");
+
+        setSaleCart({});
+        setSaleBonusReasons({});
+        setDraftLines([]);
+        setPickerLines([]);
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["penyewaan"] }),
+          queryClient.invalidateQueries({ queryKey: ["penjualan"] }),
+          queryClient.invalidateQueries({ queryKey: ["inventaris"] }),
+          queryClient.invalidateQueries({ queryKey: ["keuangan"] }),
+          queryClient.invalidateQueries({ queryKey: ["akasha-smart-booking"] }),
+        ]);
+        navigate(paths.akashaSmartBooking + "/" + booking.smart_booking_id);
+        return;
+      }
+
       const id = result.penyewaan_id;
       if (!id) throw new Error("Rental berhasil dibuat tetapi ID penyewaan tidak dikembalikan.");
       const directActivationCommitted = directAfterCreateRef.current;
@@ -1030,6 +1384,23 @@ export function RentalWalkIn() {
       }
     },
     onError: async (error) => {
+      if (isSmartBookingFlow) {
+        if (isUnknownOutcome(error)) {
+          setRentalCommandState("unknown");
+          setOperationalFeedback("Status konversi belum dapat dipastikan. Gunakan tombol yang sama untuk mengulang dengan kunci transaksi identik; server akan mengembalikan hasil yang sudah tersimpan tanpa membuat transaksi ganda.");
+          return;
+        }
+        directAfterCreateRef.current = false;
+        setRentalCommandState(isBusinessConflict(error) ? "conflict" : "error");
+        setOperationalFeedback(commandMessage(error, "Konversi Smart Booking gagal. Periksa jadwal, tariff, akun pembayaran, dan stok terkini."));
+        setRentalCommandKey(createClientId());
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["akasha-smart-booking", "detail", context.data?.usahaId, smartBookingIdFromQuery] }),
+          queryClient.invalidateQueries({ queryKey: ["akasha-smart-booking", "availability", context.data?.usahaId, smartBookingIdFromQuery] }),
+        ]);
+        return;
+      }
+
       if (!context.data) {
         directAfterCreateRef.current = false;
         setRentalCommandState("unknown");
@@ -1204,8 +1575,14 @@ export function RentalWalkIn() {
 
   const selectedRenterIsValid = isReservationFlow
     ? Boolean(reservationPrefill.data && selectedRenterId === reservationPrefill.data.penyewa_id)
-    : Boolean(selectedRenterId);
-  const selectedLinesExist = isReservationFlow ? reservationLines.length > 0 : draftLines.length > 0;
+    : isSmartBookingFlow && draftLines.length === 0
+      ? true
+      : Boolean(selectedRenterId);
+  const selectedLinesExist = isReservationFlow
+    ? reservationLines.length > 0
+    : isSmartBookingFlow
+      ? draftLines.length + saleCartLines.length > 0
+      : draftLines.length > 0;
   const reservationContinuationIsValid = !isReservationFlow || Boolean(
     reservationPrefill.data &&
     reservationPrefill.data.status === "confirmed" &&
@@ -1213,20 +1590,36 @@ export function RentalWalkIn() {
     startAt.slice(0, 10) === reservationPrefill.data.mulai_reservasi &&
     endAt.slice(0, 10) === reservationPrefill.data.selesai_reservasi,
   );
+  const smartBookingReady = !isSmartBookingFlow || Boolean(
+    smartBookingPrefillState === "ready" &&
+    smartBookingPrefill.data?.workflow_status === "ready_for_checkout" &&
+    !smartBookingPrefill.data.change_requests.some((request) => request.status === "pending"),
+  );
+  const rentalPeriodValid = isSmartBookingFlow
+    ? draftLines.length === 0 || canMoveFromPeriod
+    : canMoveFromPeriod;
+  const discountValidForFlow = isSmartBookingFlow && draftLines.length === 0
+    ? true
+    : discountInputIsValid;
+  const saleAccountReady = isSmartBookingFlow
+    ? saleCartLines.length === 0 || (Boolean(paymentAccountId) && accounts.isSuccess)
+    : saleSubtotal <= 0 || (Boolean(paymentAccountId) && accounts.isSuccess);
   const canPrepareRental = Boolean(
+    smartBookingReady &&
     selectedRenterIsValid &&
-    canMoveFromPeriod &&
+    rentalPeriodValid &&
     selectedLinesExist &&
-    discountInputIsValid &&
+    discountValidForFlow &&
     !hasBonusLineWithoutReason &&
-    (saleSubtotal <= 0 || (Boolean(paymentAccountId) && accounts.isSuccess)) &&
+    saleAccountReady &&
     reservationContinuationIsValid &&
-    (!isReservationFlow || !reservationPrefill.isPending),
+    (!isReservationFlow || !reservationPrefill.isPending) &&
+    (!isSmartBookingFlow || !smartBookingPrefill.isPending),
   );
 
   const handlePrepareRental = () => {
     if (!canPrepareRental || createRentalMutation.isPending || activationMutation.isPending) return;
-    directAfterCreateRef.current = false;
+    if (rentalCommandState !== "unknown") directAfterCreateRef.current = false;
     createRentalMutation.mutate();
   };
 
@@ -1236,7 +1629,7 @@ export function RentalWalkIn() {
       activationMutation.mutate(rentalId);
       return;
     }
-    directAfterCreateRef.current = true;
+    if (rentalCommandState !== "unknown") directAfterCreateRef.current = true;
     createRentalMutation.mutate();
   };
 
@@ -1579,7 +1972,7 @@ export function RentalWalkIn() {
                   ) : !Object.prototype.hasOwnProperty.call(saleBonusReasons, item.key) ? (
                     <p className="mt-0.5 text-[8px] font-semibold">Subtotal {formatCatalogMoney(Number(item.harga_jual_efektif ?? item.harga_jual ?? 0) * jumlah, "IDR")}</p>
                   ) : null}
-                  {canApplyRetailBonus ? (
+                  {!isSmartBookingFlow && canApplyRetailBonus ? (
                     <div className="mt-1.5 space-y-1.5">
                       <Button
                         type="button"
@@ -1607,6 +2000,8 @@ export function RentalWalkIn() {
                   ) : null}
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
+                  {!isSmartBookingFlow ? (
+                  <>
                   <Button type="button" variant="outline" size="icon" className="size-6 rounded-md" aria-label={"Kurangi " + item.nama}
                     onClick={() => {
                       if (jumlah <= 1) {
@@ -1644,6 +2039,10 @@ export function RentalWalkIn() {
                         return copy;
                       });
                     }}><Trash2 className="size-3" /></Button>
+                  </>
+                  ) : (
+                    <span className="rounded-md bg-background px-2 py-1 text-[9px] font-semibold">Snapshot × {jumlah}</span>
+                  )}
                 </div>
               </div>
             );
@@ -1653,7 +2052,7 @@ export function RentalWalkIn() {
             <span className="text-muted-foreground">Subtotal pembelian</span>
             <strong>{formatCatalogMoney(saleSubtotal, "IDR")}</strong>
           </div>
-          {saleSubtotal > 0 ? (
+          {saleSubtotal > 0 || (isSmartBookingFlow && saleCartLines.length > 0) ? (
             <label className="grid gap-1 text-[9px] font-medium">
               Pembayaran penjualan masuk ke
               <Select value={paymentAccountId} onValueChange={setPaymentAccountId}>
@@ -2310,30 +2709,32 @@ export function RentalWalkIn() {
                             <p className="mt-0.5 text-[9px] font-semibold">{formatCatalogMoney(line.input.subtotal, line.input.currency_code ?? "IDR")}</p>
                             {Number(line.promoDiscountPercent ?? 0) > 0 ? <Badge variant="secondary" className="mt-1 rounded-full px-1.5 py-0 text-[8px] text-emerald-700">Promo {line.promoDiscountPercent}%</Badge> : null}
                           </div>
-                          <div className="flex shrink-0 items-center gap-1">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="h-7 rounded-lg px-2 text-[9px]"
-                              onClick={() => {
-                                if (line.kind === "item") editLine(line, true);
-                                else editPackageLine(line);
-                              }}
-                            >
-                              Ubah
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              className="size-7 rounded-lg text-destructive"
-                              aria-label={"Hapus " + line.label}
-                              onClick={() => setPickerLines((current) => current.filter((entry) => entry.key !== line.key))}
-                            >
-                              <Trash2 className="size-3.5" />
-                            </Button>
-                          </div>
+                          {!isSmartBookingFlow ? (
+                            <div className="flex shrink-0 items-center gap-1">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-7 rounded-lg px-2 text-[9px]"
+                                onClick={() => {
+                                  if (line.kind === "item") editLine(line, true);
+                                  else editPackageLine(line);
+                                }}
+                              >
+                                Ubah
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="size-7 rounded-lg text-destructive"
+                                aria-label={"Hapus " + line.label}
+                                onClick={() => setPickerLines((current) => current.filter((entry) => entry.key !== line.key))}
+                              >
+                                <Trash2 className="size-3.5" />
+                              </Button>
+                            </div>
+                          ) : null}
                         </div>
                       ))}
                       <div className="flex items-center justify-between border-t pt-2 text-[10px]">
@@ -2374,18 +2775,34 @@ export function RentalWalkIn() {
     <div className="mx-auto w-full max-w-7xl space-y-3 pb-28 lg:space-y-4 lg:pb-24">
       <header className="rounded-2xl border bg-card px-3 py-3 shadow-[0_3px_14px_rgba(23,61,51,.05)] sm:px-4">
         <div className="flex items-center gap-2.5">
-          <Button asChild variant="ghost" size="icon" className="size-8 shrink-0 rounded-xl" aria-label={isReservationFlow ? "Kembali ke reservasi" : "Kembali ke penyewaan"}>
-            <Link to={isReservationFlow && reservationIdFromQuery ? paths.reservasi + "/" + reservationIdFromQuery : paths.penyewaan}><ArrowLeft className="size-4" /></Link>
+          <Button asChild variant="ghost" size="icon" className="size-8 shrink-0 rounded-xl" aria-label={isSmartBookingFlow ? "Kembali ke detail booking" : isReservationFlow ? "Kembali ke reservasi" : "Kembali ke penyewaan"}>
+            <Link to={isSmartBookingFlow && smartBookingIdFromQuery
+              ? paths.akashaSmartBooking + "/" + smartBookingIdFromQuery
+              : isReservationFlow && reservationIdFromQuery
+                ? paths.reservasi + "/" + reservationIdFromQuery
+                : paths.penyewaan}>
+              <ArrowLeft className="size-4" />
+            </Link>
           </Button>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="truncate text-[17px] font-bold tracking-tight">{prepared ? (workspace?.rental.nomor_penyewaan ?? "Rental") : isReservationFlow ? "Lanjutkan Penyewaan" : "Rental Baru"}</h1>
-              <Badge variant="secondary" className="rounded-full px-2 py-0.5 text-[9px]">{prepared ? "Operasional" : isReservationFlow ? "Dari Reservasi" : "Penyewaan Langsung"}</Badge>
+              <h1 className="truncate text-[17px] font-bold tracking-tight">{prepared ? (workspace?.rental.nomor_penyewaan ?? "Rental") : isSmartBookingFlow ? "Proses Booking Online" : isReservationFlow ? "Lanjutkan Penyewaan" : "Rental Baru"}</h1>
+              <Badge variant="secondary" className="rounded-full px-2 py-0.5 text-[9px]">{prepared ? "Operasional" : isSmartBookingFlow ? "Smart Booking" : isReservationFlow ? "Dari Reservasi" : "Penyewaan Langsung"}</Badge>
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-muted-foreground">
-              <span className="font-semibold text-foreground">{prepared ? workspace?.renter.nama_lengkap : isReservationFlow ? reservationPrefill.data?.penyewa_nama ?? "Memuat penyewa reservasi…" : selectedRenter?.nama_lengkap ?? "Pilih penyewa"}</span>
+              <span className="font-semibold text-foreground">{prepared
+                ? workspace?.renter.nama_lengkap
+                : isSmartBookingFlow
+                  ? smartBookingPrefill.data?.customer_name ?? "Memuat customer booking…"
+                  : isReservationFlow
+                    ? reservationPrefill.data?.penyewa_nama ?? "Memuat penyewa reservasi…"
+                    : selectedRenter?.nama_lengkap ?? "Pilih penyewa"}</span>
               <span>·</span>
-              <span>{prepared ? workspace?.renter.nomor_telepon ?? "—" : selectedRenter?.nomor_telepon ?? "—"}</span>
+              <span>{prepared
+                ? workspace?.renter.nomor_telepon ?? "—"
+                : isSmartBookingFlow
+                  ? smartBookingPrefill.data?.customer_phone ?? "—"
+                  : selectedRenter?.nomor_telepon ?? "—"}</span>
             </div>
           </div>
         </div>
@@ -2424,6 +2841,48 @@ export function RentalWalkIn() {
 
       <main className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_23rem] lg:items-start lg:gap-4">
         <div className="order-1 space-y-3 lg:order-1">
+          {isSmartBookingFlow ? (
+            <Alert className="border-primary/20 bg-primary/[0.035]">
+              <ShoppingBag className="size-4 text-primary" />
+              <AlertTitle className="text-[12px]">
+                {smartBookingPrefillState === "loading" || smartBookingPrefill.isPending
+                  ? "Menyiapkan snapshot booking…"
+                  : "Snapshot customer · " + (smartBookingPrefill.data?.reference_code ?? "Booking online")}
+              </AlertTitle>
+              <AlertDescription className="text-[10px] leading-5">
+                {smartBookingPrefillState === "error"
+                  ? smartBookingPrefillError
+                  : "Daftar item dan jumlah mengikuti permintaan customer yang telah disetujui. Walk-in hanya menentukan waktu aktual dan pembayaran; harga, promo, serta stok akan dihitung ulang oleh server saat transaksi."}
+              </AlertDescription>
+              {smartBookingPrefillState === "error" ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mt-2 h-8 text-[10px]"
+                  onClick={() => {
+                    smartBookingPrefillStartedRef.current = false;
+                    setSmartBookingPrefillState("loading");
+                    setSmartBookingPrefillError("");
+                    void smartBookingPrefill.refetch().then((result) => {
+                      if (result.error || !result.data) {
+                        setSmartBookingPrefillError(
+                          result.error instanceof Error
+                            ? result.error.message
+                            : "Detail booking belum dapat dimuat. Periksa akses admin lalu coba lagi.",
+                        );
+                        setSmartBookingPrefillState("error");
+                        return;
+                      }
+                      setSmartBookingPrefillAttempt((value) => value + 1);
+                    });
+                  }}
+                >
+                  <RefreshCw className="size-3.5" /> Coba muat ulang
+                </Button>
+              ) : null}
+            </Alert>
+          ) : null}
           <section className="rounded-2xl border bg-card">
             <CardContent className="p-3 sm:p-4">
               <div className="flex items-start justify-between gap-3">
@@ -2436,7 +2895,27 @@ export function RentalWalkIn() {
 
               {!rentalCreated ? (
                 <>
-                  {isReservationFlow ? (
+                  {isSmartBookingFlow ? (
+                    <div className="mt-3 rounded-xl border bg-primary/[0.035] px-3 py-3">
+                      <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">Customer dari booking</p>
+                      {smartBookingPrefill.isPending ? (
+                        <Skeleton className="mt-2 h-12 rounded-lg" />
+                      ) : smartBookingPrefill.error ? (
+                        <Alert variant="destructive" className="mt-2 rounded-lg">
+                          <AlertDescription>{commandMessage(smartBookingPrefill.error, "Detail booking tidak dapat dimuat.")}</AlertDescription>
+                        </Alert>
+                      ) : smartBookingPrefill.data ? (
+                        <div className="mt-2 flex items-center gap-3">
+                          <span className="grid size-9 place-items-center rounded-xl bg-background text-primary"><Users className="size-4" /></span>
+                          <div className="min-w-0">
+                            <p className="truncate text-[12px] font-bold">{smartBookingPrefill.data.customer_name}</p>
+                            <p className="mt-0.5 truncate text-[10px] text-muted-foreground">{smartBookingPrefill.data.customer_phone}</p>
+                          </div>
+                          <Badge variant="outline" className="ml-auto shrink-0 text-[9px]">Terkait booking</Badge>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : isReservationFlow ? (
                     <div className="mt-3 rounded-xl border bg-primary/[0.035] px-3 py-3">
                       {reservationPrefill.isPending ? (
                         <p className="text-[10px] text-muted-foreground">Memuat penyewa dari reservasi…</p>
@@ -2523,8 +3002,16 @@ export function RentalWalkIn() {
                         <Input
                           type="datetime-local"
                           value={startAt}
-                          min={isReservationFlow && reservationPrefill.data ? reservationPrefill.data.mulai_reservasi + "T00:00" : undefined}
-                          max={isReservationFlow && reservationPrefill.data ? reservationPrefill.data.mulai_reservasi + "T23:59" : undefined}
+                          min={isSmartBookingFlow && smartBookingPrefill.data?.requested_pickup_date
+                            ? smartBookingPrefill.data.requested_pickup_date + "T00:00"
+                            : isReservationFlow && reservationPrefill.data
+                              ? reservationPrefill.data.mulai_reservasi + "T00:00"
+                              : undefined}
+                          max={isSmartBookingFlow && smartBookingPrefill.data?.requested_pickup_date
+                            ? smartBookingPrefill.data.requested_pickup_date + "T23:59"
+                            : isReservationFlow && reservationPrefill.data
+                              ? reservationPrefill.data.mulai_reservasi + "T23:59"
+                              : undefined}
                           onChange={(event) => setStartAt(event.target.value)}
                           className="h-10 rounded-xl text-xs"
                         />
@@ -2534,17 +3021,36 @@ export function RentalWalkIn() {
                         <Input
                           type="datetime-local"
                           value={endAt}
-                          min={isReservationFlow && reservationPrefill.data ? reservationPrefill.data.selesai_reservasi + "T00:00" : undefined}
-                          max={isReservationFlow && reservationPrefill.data ? reservationPrefill.data.selesai_reservasi + "T23:59" : undefined}
+                          min={isSmartBookingFlow && smartBookingPrefill.data?.requested_return_date
+                            ? smartBookingPrefill.data.requested_return_date + "T00:00"
+                            : isReservationFlow && reservationPrefill.data
+                              ? reservationPrefill.data.selesai_reservasi + "T00:00"
+                              : undefined}
+                          max={isSmartBookingFlow && smartBookingPrefill.data?.requested_return_date
+                            ? smartBookingPrefill.data.requested_return_date + "T23:59"
+                            : isReservationFlow && reservationPrefill.data
+                              ? reservationPrefill.data.selesai_reservasi + "T23:59"
+                              : undefined}
                           onChange={(event) => setEndAt(event.target.value)}
                           className="h-10 rounded-xl text-xs"
                         />
                       </label>
                     </div>
-                    {isReservationFlow ? (
+                    {isSmartBookingFlow ? (
+                      <p className="mt-2 text-[9px] leading-4 text-muted-foreground">
+                        Booking website hanya menetapkan tanggal. Pilih jam aktual pengambilan dan pengembalian sesuai serah-terima di lokasi. Tanggal tetap mengikuti booking; durasi dan tarif dihitung ulang oleh mesin rental.
+                      </p>
+                    ) : isReservationFlow ? (
                       <p className="mt-2 text-[9px] leading-4 text-muted-foreground">
                         Isi jam mulai saat penyewa benar-benar datang dan jam kembali sesuai kesepakatan. Tanggal mengikuti reservasi dan waktu dikonversi memakai timezone Usaha.
                       </p>
+                    ) : null}
+                    {isSmartBookingFlow && smartBookingPrefill.data && startAt && endAt &&
+                      (startAt.slice(0, 10) !== smartBookingPrefill.data.requested_pickup_date ||
+                        endAt.slice(0, 10) !== smartBookingPrefill.data.requested_return_date) ? (
+                      <Alert variant="destructive" className="mt-2 rounded-lg">
+                        <AlertDescription>Tanggal transaksi harus mengikuti tanggal booking yang sudah disetujui. Ubah jam tanpa menggeser tanggalnya.</AlertDescription>
+                      </Alert>
                     ) : null}
                     {isReservationFlow && reservationPrefill.data && startAt && endAt &&
                       (startAt.slice(0, 10) !== reservationPrefill.data.mulai_reservasi || endAt.slice(0, 10) !== reservationPrefill.data.selesai_reservasi) ? (
@@ -2650,8 +3156,8 @@ export function RentalWalkIn() {
                       <ShoppingBag className="size-4" />
                     </span>
                     <div className="min-w-0">
-                      <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Katalog</p>
-                      <h2 className="text-[14px] font-bold">Sewa apa?</h2>
+                      <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">{isSmartBookingFlow ? "Smart Booking" : "Katalog"}</p>
+                      <h2 className="text-[14px] font-bold">{isSmartBookingFlow ? "Item permintaan customer" : "Sewa apa?"}</h2>
                     </div>
                   </div>
                   <Badge variant="secondary" className="rounded-full text-[9px]">
@@ -2659,25 +3165,31 @@ export function RentalWalkIn() {
                   </Badge>
                 </div>
 
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="mt-3 h-12 w-full justify-between rounded-xl px-3"
-                  onClick={openCatalogPicker}
-                >
-                  <span className="flex min-w-0 items-center gap-2.5">
-                    <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-primary/5 text-primary">
-                      <Search className="size-4" />
-                    </span>
-                    <span className="min-w-0 text-left">
-                      <span className="block truncate text-[10px] font-semibold">Buka Katalog</span>
-                      <span className="mt-0.5 block truncate text-[9px] text-muted-foreground">
-                        Pilih sewa, paket, dan pembelian tambahan dalam satu alur
+                {isSmartBookingFlow ? (
+                  <p className="mt-3 rounded-xl border border-primary/15 bg-primary/[0.035] px-3 py-2.5 text-[9px] leading-4 text-muted-foreground">
+                    Item, jumlah, dan tarif acuan mengikuti snapshot booking yang disetujui customer. Tarif harus masih aktif. Perubahan item hanya dapat diajukan melalui portal customer.
+                  </p>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="mt-3 h-12 w-full justify-between rounded-xl px-3"
+                    onClick={openCatalogPicker}
+                  >
+                    <span className="flex min-w-0 items-center gap-2.5">
+                      <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-primary/5 text-primary">
+                        <Search className="size-4" />
+                      </span>
+                      <span className="min-w-0 text-left">
+                        <span className="block truncate text-[10px] font-semibold">Buka Katalog</span>
+                        <span className="mt-0.5 block truncate text-[9px] text-muted-foreground">
+                          Pilih sewa, paket, dan pembelian tambahan dalam satu alur
+                        </span>
                       </span>
                     </span>
-                  </span>
-                  <ArrowRight className="size-4 shrink-0 text-muted-foreground" />
-                </Button>
+                    <ArrowRight className="size-4 shrink-0 text-muted-foreground" />
+                  </Button>
+                )}
 
                 {draftLines.length ? (
                   <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
@@ -2803,11 +3315,17 @@ export function RentalWalkIn() {
                           </div>
                           <p className="mt-0.5 truncate text-[9px] text-muted-foreground">{line.description} · {line.input.duration_periods} periode</p>
                           <div className="mt-1.5 flex items-center gap-1.5">
-                            <Button type="button" variant="outline" size="icon" className="size-7 rounded-lg" onClick={() => updateLineQuantity(line.key, -1)} disabled={Number(line.input.jumlah) <= 1}>−</Button>
-                            <span className="min-w-5 text-center text-[10px] font-bold">{line.input.jumlah}</span>
-                            <Button type="button" variant="outline" size="icon" className="size-7 rounded-lg" onClick={() => updateLineQuantity(line.key, 1)}>+</Button>
-                            {line.kind === "item" ? <Button type="button" variant="ghost" size="icon" className="ml-1 size-7 rounded-lg" aria-label={"Edit " + line.label} onClick={() => editLine(line)}><ChevronDown className="size-3.5 rotate-[-90deg]" /></Button> : null}
-                            <Button type="button" variant="ghost" size="icon" className="ml-auto size-7 rounded-lg text-destructive" aria-label={"Hapus " + line.label} onClick={() => removeLine(line.key)}><Trash2 className="size-3.5" /></Button>
+                            {isSmartBookingFlow ? (
+                              <Badge variant="outline" className="text-[8px]">Snapshot customer · {line.input.jumlah} unit</Badge>
+                            ) : (
+                              <>
+                                <Button type="button" variant="outline" size="icon" className="size-7 rounded-lg" onClick={() => updateLineQuantity(line.key, -1)} disabled={Number(line.input.jumlah) <= 1}>−</Button>
+                                <span className="min-w-5 text-center text-[10px] font-bold">{line.input.jumlah}</span>
+                                <Button type="button" variant="outline" size="icon" className="size-7 rounded-lg" onClick={() => updateLineQuantity(line.key, 1)}>+</Button>
+                                {line.kind === "item" ? <Button type="button" variant="ghost" size="icon" className="ml-1 size-7 rounded-lg" aria-label={"Edit " + line.label} onClick={() => editLine(line)}><ChevronDown className="size-3.5 rotate-[-90deg]" /></Button> : null}
+                                <Button type="button" variant="ghost" size="icon" className="ml-auto size-7 rounded-lg text-destructive" aria-label={"Hapus " + line.label} onClick={() => removeLine(line.key)}><Trash2 className="size-3.5" /></Button>
+                              </>
+                            )}
                           </div>
                         </div>
                         <div className="shrink-0 text-right">
@@ -3309,20 +3827,32 @@ export function RentalWalkIn() {
                 type="button"
                 variant="outline"
                 className="h-10 rounded-xl px-3 text-[9px]"
-                disabled={!canPrepareRental || createRentalMutation.isPending || activationMutation.isPending}
+                disabled={!canPrepareRental || createRentalMutation.isPending || activationMutation.isPending || (isSmartBookingFlow && rentalCommandState === "unknown" && directAfterCreateRef.current)}
                 onClick={handlePrepareRental}
               >
                 {createRentalMutation.isPending && !directAfterCreateRef.current ? <Loader2 className="animate-spin" /> : <ArrowRight />}
-                {createRentalMutation.isPending && !directAfterCreateRef.current ? "Menyiapkan…" : isReservationFlow ? "Buat Penyewaan" : "Siapkan Rental"}
+                {createRentalMutation.isPending && !directAfterCreateRef.current
+                  ? "Menyiapkan…"
+                  : isSmartBookingFlow
+                    ? rentalCommandState === "unknown" ? "Ulangi proses sebelumnya" : "Proses booking"
+                    : isReservationFlow
+                      ? "Buat Penyewaan"
+                      : "Siapkan Rental"}
               </Button>
               <Button
                 type="button"
                 className="h-10 rounded-xl px-3 text-[9px]"
-                disabled={!canPrepareRental || createRentalMutation.isPending || activationMutation.isPending}
+                disabled={!canPrepareRental || createRentalMutation.isPending || activationMutation.isPending || (isSmartBookingFlow && draftLines.length === 0) || (isSmartBookingFlow && rentalCommandState === "unknown" && !directAfterCreateRef.current)}
                 onClick={handleDirectRental}
               >
                 {(createRentalMutation.isPending && directAfterCreateRef.current) || activationMutation.isPending ? <Loader2 className="animate-spin" /> : <PackageCheck className="size-3.5" />}
-                {(createRentalMutation.isPending && directAfterCreateRef.current) || activationMutation.isPending ? "Menyiapkan…" : isReservationFlow ? "Buat & Aktifkan Rental" : "Langsung Sewa"}
+                {(createRentalMutation.isPending && directAfterCreateRef.current) || activationMutation.isPending
+                  ? "Menyiapkan…"
+                  : isSmartBookingFlow
+                    ? "Proses & aktifkan rental"
+                    : isReservationFlow
+                      ? "Buat & Aktifkan Rental"
+                      : "Langsung Sewa"}
               </Button>
             </div>
           ) : isActive ? (

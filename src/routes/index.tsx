@@ -60,6 +60,9 @@ const ReservationList = lazyNamed(() => import("@/pages/reservasi/list"), "Reser
 const ReservationShow = lazyNamed(() => import("@/pages/reservasi/show"), "ReservationShow");
 const ReservationCreate = lazyNamed(() => import("@/pages/reservasi/create"), "ReservationCreate");
 
+const AkashaSmartBookingList = lazyNamed(() => import("@/pages/akasha-smart-booking"), "AkashaSmartBookingList");
+const AkashaSmartBookingShow = lazyNamed(() => import("@/pages/akasha-smart-booking"), "AkashaSmartBookingShow");
+
 const FinanceHome = lazyNamed(() => import("@/pages/keuangan/home"), "FinanceHome");
 const FinanceRetailAnalysis = lazyNamed(() => import("@/pages/keuangan/retail-analysis"), "FinanceRetailAnalysis");
 const FinanceAccountList = lazyNamed(() => import("@/pages/keuangan/accounts"), "FinanceAccountList");
@@ -299,6 +302,11 @@ export function AppRoutes() {
           <Route index element={<ReservationList />} />
           <Route path="create" element={<ReservationCreate />} />
           <Route path=":id" element={<ReservationShow />} />
+        </Route>
+
+        <Route path={paths.akashaSmartBooking}>
+          <Route index element={<AkashaSmartBookingList />} />
+          <Route path=":id" element={<AkashaSmartBookingShow />} />
         </Route>
 
         <Route path={paths.keuangan}>
