@@ -437,7 +437,7 @@ export function Dashboard() {
         type: "Reservasi" as const,
         title: `${item.nomor_reservasi} · ${item.penyewa_nama ?? "Penyewa"}`,
         meta: `Mulai ${formatTime(item.mulai_reservasi)}`,
-        href: `${paths.reservasi}/${item.reservasi_id}`,
+        href: paths.reservasi,
       })),
     ];
 

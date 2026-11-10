@@ -56,8 +56,6 @@ const EventPromotionCatalog = lazyNamed(() => import("@/pages/event-promotions/c
 const RequestList = lazyNamed(() => import("@/pages/permintaan/list"), "RequestList");
 const RequestShow = lazyNamed(() => import("@/pages/permintaan/show"), "RequestShow");
 
-const ReservationList = lazyNamed(() => import("@/pages/reservasi/list"), "ReservationList");
-const ReservationShow = lazyNamed(() => import("@/pages/reservasi/show"), "ReservationShow");
 const ReservationCreate = lazyNamed(() => import("@/pages/reservasi/create"), "ReservationCreate");
 
 const AkashaSmartBookingList = lazyNamed(() => import("@/pages/akasha-smart-booking"), "AkashaSmartBookingList");
@@ -299,13 +297,14 @@ export function AppRoutes() {
         </Route>
 
         <Route path={paths.reservasi}>
-          <Route index element={<ReservationList />} />
+          <Route index element={<AkashaSmartBookingList />} />
           <Route path="create" element={<ReservationCreate />} />
-          <Route path=":id" element={<ReservationShow />} />
+          <Route path=":id" element={<AkashaSmartBookingShow />} />
         </Route>
 
-        <Route path={paths.akashaSmartBooking}>
-          <Route index element={<AkashaSmartBookingList />} />
+        {/* Legacy Smart Booking URLs remain valid; Reservasi is the canonical workspace. */}
+        <Route path="/akasha-smart-booking">
+          <Route index element={<Navigate to={paths.reservasi} replace />} />
           <Route path=":id" element={<AkashaSmartBookingShow />} />
         </Route>
 

@@ -120,7 +120,7 @@ export function RequestShow() {
           <CardHeader><CardTitle className="text-base">Reservasi</CardTitle></CardHeader>
           <CardContent>
             {request.reservasi_id ? (
-              <Link className="font-medium hover:underline" to={paths.reservasi + "/" + request.reservasi_id}>
+              <Link className="font-medium hover:underline" to={paths.reservasi}>
                 {request.nomor_reservasi}
               </Link>
             ) : (

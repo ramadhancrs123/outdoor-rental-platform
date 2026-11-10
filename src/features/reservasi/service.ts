@@ -747,7 +747,7 @@ export async function createReservationFromRequest(
   lines: ReservationPricingLine[],
   options: ReservationCommandOptions = {},
 ): Promise<ReservationCommandResult> {
-  const { data, error } = await supabase.rpc("command_create_reservation_from_request", {
+  const { data, error } = await supabase.rpc("admin_create_akasha_smart_booking_from_request", {
     p_usaha_id: usahaId,
     p_permintaan_sewa_id: permintaanSewaId,
     p_lines: lines,

@@ -1,6 +1,7 @@
 import { createClientId } from "@/lib/client-id"
 import { supabase } from "@/app/providers/supabase/client"
 import type {
+  AkashaSmartBookingCalendar,
   AkashaSmartBookingDetail,
   AkashaSmartBookingListResult,
   AkashaSmartBookingStatus,
@@ -31,7 +32,26 @@ export async function getAkashaSmartBookingSummary(
   return rpc(
     "admin_get_akasha_smart_booking_summary",
     { p_usaha_id: usahaId },
-    "Ringkasan booking online gagal dimuat.",
+    "Ringkasan Reservasi gagal dimuat.",
+  )
+}
+
+
+export async function getAkashaSmartBookingCalendar(input: {
+  usahaId: string
+  dateFrom: string
+  dateUntil: string
+  selectedDate?: string | null
+}): Promise<AkashaSmartBookingCalendar> {
+  return rpc(
+    "admin_get_akasha_smart_booking_calendar",
+    {
+      p_date_from: input.dateFrom,
+      p_date_until: input.dateUntil,
+      p_selected_date: input.selectedDate ?? null,
+      p_usaha_id: input.usahaId,
+    },
+    "Kalender Reservasi gagal dimuat.",
   )
 }
 
@@ -55,7 +75,7 @@ export async function listAkashaSmartBookings(input: {
       p_limit: input.limit ?? 50,
       p_offset: input.offset ?? 0,
     },
-    "Daftar AKASHA SMART BOOKING gagal dimuat.",
+    "Daftar Reservasi gagal dimuat.",
   )
 }
 
@@ -65,13 +85,13 @@ export async function getAkashaSmartBooking(
   return rpc(
     "admin_get_akasha_smart_booking",
     { p_smart_booking_id: smartBookingId },
-    "Detail booking tidak dapat dimuat.",
+    "Detail Reservasi tidak dapat dimuat.",
   )
 }
 
 export async function setAkashaSmartBookingStatus(input: {
   smartBookingId: string
-  targetStatus: Exclude<AkashaSmartBookingStatus, "received" | "change_requested" | "cancellation_pending" | "fulfilled">
+  targetStatus: "ready_for_checkout"
   expectedRevision: number
   note?: string | null
 }) {
@@ -87,7 +107,7 @@ export async function setAkashaSmartBookingStatus(input: {
       p_expected_revision: input.expectedRevision,
       p_note: input.note ?? null,
     },
-    "Status booking gagal diperbarui.",
+    "Konfirmasi reservasi gagal disimpan.",
   )
 }
 

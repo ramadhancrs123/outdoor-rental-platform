@@ -135,6 +135,9 @@ export type ReservationPricingLine = {
 
 export type ReservationCommandResult = {
   reservasi_id: string;
+  smart_booking_id?: string;
+  reference_code?: string;
+  workflow_status?: "acknowledged" | "received" | "reviewing" | "ready_for_checkout";
   permintaan_sewa_id?: string;
   nomor_reservasi: string;
   status: string;

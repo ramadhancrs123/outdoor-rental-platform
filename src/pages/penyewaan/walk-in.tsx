@@ -1228,7 +1228,7 @@ export function RentalWalkIn() {
         if (hasBonusLineWithoutReason || saleCartLines.some(({ item }) =>
           Object.prototype.hasOwnProperty.call(saleBonusReasons, item.key),
         )) {
-          throw new Error("Item bonus tidak dapat ditambahkan saat konversi Smart Booking. Ajukan perubahan kepada customer terlebih dahulu.");
+          throw new Error("Item bonus tidak dapat ditambahkan saat proses Reservasi. Ajukan perubahan kepada customer terlebih dahulu.");
         }
 
         setRentalCommandState("processing");
@@ -1250,7 +1250,7 @@ export function RentalWalkIn() {
           accountId: saleCartLines.length > 0 ? paymentAccountId : null,
           paymentMethod,
           paymentRentalAmount: 0,
-          note: "Transaksi dari AKASHA SMART BOOKING " + booking.reference_code,
+          note: "Transaksi dari Reservasi Akasha " + booking.reference_code,
           discountRequest: draftLines.length ? discountRequest : { mode: "none" },
           idempotencyKey: rentalCommandKey,
           requestId: createClientId(),
@@ -1336,7 +1336,7 @@ export function RentalWalkIn() {
         const booking = smartBookingPrefill.data;
         directAfterCreateRef.current = false;
         setRentalCommandState("idle");
-        if (!booking) throw new Error("Referensi Smart Booking tidak tersedia setelah checkout.");
+        if (!booking) throw new Error("Referensi Reservasi tidak tersedia setelah checkout.");
 
         setSaleCart({});
         setSaleBonusReasons({});
@@ -1349,7 +1349,7 @@ export function RentalWalkIn() {
           queryClient.invalidateQueries({ queryKey: ["keuangan"] }),
           queryClient.invalidateQueries({ queryKey: ["akasha-smart-booking"] }),
         ]);
-        navigate(paths.akashaSmartBooking + "/" + booking.smart_booking_id);
+        navigate(paths.reservasi + "/" + booking.smart_booking_id);
         return;
       }
 
@@ -1392,7 +1392,7 @@ export function RentalWalkIn() {
         }
         directAfterCreateRef.current = false;
         setRentalCommandState(isBusinessConflict(error) ? "conflict" : "error");
-        setOperationalFeedback(commandMessage(error, "Konversi Smart Booking gagal. Periksa jadwal, tariff, akun pembayaran, dan stok terkini."));
+        setOperationalFeedback(commandMessage(error, "Proses transaksi Reservasi gagal. Periksa jadwal, tarif, akun pembayaran, dan stok terkini."));
         setRentalCommandKey(createClientId());
         await Promise.all([
           queryClient.invalidateQueries({ queryKey: ["akasha-smart-booking", "detail", context.data?.usahaId, smartBookingIdFromQuery] }),
@@ -2775,19 +2775,19 @@ export function RentalWalkIn() {
     <div className="mx-auto w-full max-w-7xl space-y-3 pb-28 lg:space-y-4 lg:pb-24">
       <header className="rounded-2xl border bg-card px-3 py-3 shadow-[0_3px_14px_rgba(23,61,51,.05)] sm:px-4">
         <div className="flex items-center gap-2.5">
-          <Button asChild variant="ghost" size="icon" className="size-8 shrink-0 rounded-xl" aria-label={isSmartBookingFlow ? "Kembali ke detail booking" : isReservationFlow ? "Kembali ke reservasi" : "Kembali ke penyewaan"}>
+          <Button asChild variant="ghost" size="icon" className="size-8 shrink-0 rounded-xl" aria-label={isSmartBookingFlow ? "Kembali ke detail Reservasi" : isReservationFlow ? "Kembali ke reservasi" : "Kembali ke penyewaan"}>
             <Link to={isSmartBookingFlow && smartBookingIdFromQuery
-              ? paths.akashaSmartBooking + "/" + smartBookingIdFromQuery
+              ? paths.reservasi + "/" + smartBookingIdFromQuery
               : isReservationFlow && reservationIdFromQuery
-                ? paths.reservasi + "/" + reservationIdFromQuery
+                ? paths.reservasi
                 : paths.penyewaan}>
               <ArrowLeft className="size-4" />
             </Link>
           </Button>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="truncate text-[17px] font-bold tracking-tight">{prepared ? (workspace?.rental.nomor_penyewaan ?? "Rental") : isSmartBookingFlow ? "Proses Booking Online" : isReservationFlow ? "Lanjutkan Penyewaan" : "Rental Baru"}</h1>
-              <Badge variant="secondary" className="rounded-full px-2 py-0.5 text-[9px]">{prepared ? "Operasional" : isSmartBookingFlow ? "Smart Booking" : isReservationFlow ? "Dari Reservasi" : "Penyewaan Langsung"}</Badge>
+              <h1 className="truncate text-[17px] font-bold tracking-tight">{prepared ? (workspace?.rental.nomor_penyewaan ?? "Rental") : isSmartBookingFlow ? "Proses Reservasi" : isReservationFlow ? "Lanjutkan Penyewaan" : "Rental Baru"}</h1>
+              <Badge variant="secondary" className="rounded-full px-2 py-0.5 text-[9px]">{prepared ? "Operasional" : isSmartBookingFlow ? "Reservasi" : isReservationFlow ? "Dari Reservasi" : "Penyewaan Langsung"}</Badge>
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-muted-foreground">
               <span className="font-semibold text-foreground">{prepared
@@ -2846,8 +2846,8 @@ export function RentalWalkIn() {
               <ShoppingBag className="size-4 text-primary" />
               <AlertTitle className="text-[12px]">
                 {smartBookingPrefillState === "loading" || smartBookingPrefill.isPending
-                  ? "Menyiapkan snapshot booking…"
-                  : "Snapshot customer · " + (smartBookingPrefill.data?.reference_code ?? "Booking online")}
+                  ? "Menyiapkan snapshot Reservasi…"
+                  : "Snapshot Reservasi · " + (smartBookingPrefill.data?.reference_code ?? "Reservasi")}
               </AlertTitle>
               <AlertDescription className="text-[10px] leading-5">
                 {smartBookingPrefillState === "error"
@@ -3156,7 +3156,7 @@ export function RentalWalkIn() {
                       <ShoppingBag className="size-4" />
                     </span>
                     <div className="min-w-0">
-                      <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">{isSmartBookingFlow ? "Smart Booking" : "Katalog"}</p>
+                      <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">{isSmartBookingFlow ? "Reservasi" : "Katalog"}</p>
                       <h2 className="text-[14px] font-bold">{isSmartBookingFlow ? "Item permintaan customer" : "Sewa apa?"}</h2>
                     </div>
                   </div>

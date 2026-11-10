@@ -5,7 +5,6 @@ export const paths = {
   investorConfig: "/keuangan/investor",
   permintaan: "/permintaan",
   reservasi: "/reservasi",
-  akashaSmartBooking: "/akasha-smart-booking",
   reservasiCreate: "/reservasi/create",
   penyewaan: "/penyewaan",
   penyewaanWalkIn: "/penyewaan/walk-in",

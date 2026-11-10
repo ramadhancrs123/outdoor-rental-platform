@@ -1,7 +1,7 @@
-# ARD-002 — AKASHA SMART BOOKING (Observational Booking)
+# ARD-002 — AKASHA RESERVASI (Unified Smart Booking)
 
-> **Status:** Implemented backend foundation — customer/admin UI and final checkout orchestration remain separate phases.  
-> **Scope:** Website booking, booking-scoped customer access, read-only availability projection, customer change requests, admin workflow.  
+> **Status:** Unified Reservasi Center, Smart Booking aggregate, customer portal, and calendar implementation are in source. Production readiness remains subject to migration application, real transactional QA, and Vercel Preview/production verification.
+> **Scope:** One Reservasi feature across website and admin intake, booking-scoped customer access, calendar/read-only availability, customer changes, and operational handoff.
 > **Related decisions:** `ADR-004 — Reservasi Tidak Mengunci Unit`, `ADR-009 — Website Self-Service Booking (Draft Reservasi)`.  
 > **Business boundary:** Rental Outdoor / Akasha Outdoor only. No cross-tenant sharing.
 
@@ -9,9 +9,11 @@
 
 ## 1. Purpose
 
-AKASHA SMART BOOKING records customer intent from the public website and provides a booking-scoped way for customer and admin to follow that request until the customer arrives.
+AKASHA RESERVASI adalah satu fitur dan satu workspace untuk seluruh reservasi Akasha Outdoor, baik yang masuk dari website maupun yang dicatat admin dari Permintaan Sewa. "Smart Booking" adalah nama teknis aggregate dan workflow yang menjalankan fitur Reservasi, bukan modul atau jenis reservasi kedua.
 
-It is not a capacity reservation, physical-unit allocation, rental transaction, sale transaction, payment, or stock movement.
+Data admin menggunakan satu aggregate kanonis `app_private.akasha_smart_booking`. Untuk reservasi rental yang terhubung ke proses lama, `public.reservasi` dipertahankan sebagai record kompatibilitas yang ditautkan melalui `reservasi_id`; record itu bukan reservasi kedua dan tidak boleh dibuat sebagai entri kalender atau antrean terpisah. Booking pembelian saja tidak memerlukan record `public.reservasi`.
+
+Reservasi mencatat kesepakatan dan jadwal customer. Pencatatan, peninjauan, atau tampilan kalender tidak dengan sendirinya menjadi penguncian kapasitas, alokasi unit fisik, transaksi rental/penjualan, pembayaran, atau pergerakan stok.
 
 ```
 Booking record
@@ -28,8 +30,9 @@ Rental / sale transaction
 ### ADR-009 — Website draft reservation
 
 ADR-009 remains the baseline for the legacy website reservation record:
-- Rental website submission creates a linked request and `reservasi` with `status = draft`.
-- `stock_lock_status = not_locked`.
+- Website rental submission creates a linked request, a compatibility row in `public.reservasi` with `status = draft`, and exactly one `app_private.akasha_smart_booking` aggregate.
+- Admin creation from Permintaan Sewa calls `public.admin_create_akasha_smart_booking_from_request`, which creates the compatibility row and Smart Booking aggregate in one transaction.
+- `stock_lock_status = not_locked`; the compatibility row is never exposed as a second admin reservation.
 - The customer is not told that a rental is confirmed.
 - Admin cancellation is a state transition, not hard deletion.
 - Existing `qr_reservasi` remains an operational admin QR; it is not repurposed as the customer portal session secret.
@@ -50,11 +53,11 @@ This is a scoped business refinement for online bookings. It does not silently r
 ADR-009's prohibition on customer accounts remains respected. This feature does not create a Supabase Auth customer identity or permanent customer account.
 
 The portal uses a booking-scoped access exchange:
-- customer supplies the booking reference and memorable access code;
-- server exchanges them for a short-lived session scoped to that booking;
+- customer enters the access code shown on the booking receipt, or opens a private link;
+- server exchanges the code/link for a short-lived session scoped to that booking;
 - session cannot access other bookings or tenant data.
 
-This is not customer account registration; it is a temporary access mechanism for one booking.
+The private link carries its token in the URL fragment; the server exchanges it for the same scoped session. This is not customer account registration; it is a temporary access mechanism for one booking.
 
 ## 3. Booking lifecycle
 
@@ -84,7 +87,7 @@ Meanings:
 - `cancellation_pending`: customer cancellation request awaits admin review.
 - `ready_for_checkout`: the booking is a reference for the upcoming visit, not a stock guarantee.
 - `cancelled` / `expired`: the booking workflow is closed.
-- `fulfilled`: a later operational checkout converted the request into actual transactions. The final checkout command is not part of this backend foundation.
+- `fulfilled`: the admin's atomic operational checkout converted the request into actual rental and/or sale transactions. The booking is marked fulfilled only after the existing trusted transaction command succeeds.
 
 The linked legacy `reservasi.status` remains `draft` while this observational workflow is active. Admin acknowledgement must not map to legacy `confirmed`.
 
@@ -170,7 +173,8 @@ A request is recorded in `akasha_smart_booking_change_request` and creates activ
 Current backend resolution support:
 - schedule changes update Smart Booking dates and linked legacy request/reservation date fields;
 - cancellation calls the existing trusted reservation cancellation command for the linked legacy draft;
-- item/variant/quantity approvals remain pending for a dedicated item-editor command and must not be applied by generic status mutation.
+- item/variant/quantity and same-category alternative approvals use the dedicated item-editor command, which re-resolves catalog prices/promotions and rebuilds only the Smart Booking line snapshots;
+- generic status mutation cannot apply item changes.
 
 Mutations use an expected revision to prevent stale updates from overwriting newer booking state.
 
@@ -199,7 +203,7 @@ The Edge Function:
 - reads Supabase secret credentials only from the Edge Function environment;
 - requires a second server-only ingress header in addition to the public Supabase JWT;
 - validates that ingress credential through a service-role-only RPC against a secret held in Supabase Vault;
-- routes `create`, `login`, `portal`, `availability`, `change`, and `logout`;
+- routes booking creation, access-code login, private-link login, portal reads, availability reads, customer changes, and logout;
 - returns no-store responses.
 
 The matching `AKASHA_SMART_BOOKING_INGRESS_SECRET` is configured as a sensitive Vercel environment variable for production, preview, and development, and separately stored in Supabase Vault. It is not a `NEXT_PUBLIC_*` variable and is never sent to browser JavaScript. The Edge Function rejects direct calls that have only the public Supabase anon/publishable key.
@@ -223,7 +227,7 @@ The Next.js application does not receive a service-role/secret key. After login,
 13. The legacy `command_create_website_booking` RPC is not directly executable by `anon` or `authenticated`; public website traffic enters through the authenticated Edge Function ingress.
 14. Legacy confirmation/cancellation commands cannot accidentally lock or independently cancel a reservation linked to a Smart Booking. Permission-checked Smart Booking commands use a reservation-scoped transaction-local context when invoking the legacy cancellation command. Unlinked legacy reservations keep their existing confirm/lock/cancel behavior.
 
-## 10. Explicit non-goals of this backend phase
+## 10. Historical non-goals of the backend-foundation phase (2026-11-09)
 
 Not implemented by this backend foundation:
 - customer-facing portal UI pages;
@@ -257,11 +261,11 @@ Validated:
 - a database-backed ingress check accepts the provisioned secret and rejects malformed or incorrect values;
 - a direct Edge Function request with the public JWT but without the server-only ingress header returns HTTP 401; with the correct ingress header it passes authentication and reaches action dispatch.
 
-Production test transactions were rolled back; they did not leave demo bookings in live business data. The Next.js customer pages and booking form are not yet enabled or deployed.
+At the backend-foundation checkpoint on 2026-11-09, production test transactions were rolled back and left no demo bookings in live business data. At that checkpoint the Next.js customer pages and booking form had not yet been enabled or deployed; subsequent implementation status is reconciled in Section 13.
 
-## 12. Required next phase
+## 12. Historical next-phase checklist (backend baseline, 2026-11-09; reconciled in Section 13)
 
-Before calling the feature operationally complete:
+The following were the remaining tasks at the 2026-11-09 backend-foundation checkpoint (current implementation status is reconciled in Section 13):
 1. implement the customer portal page and QR link handling;
 2. integrate the booking form with the new booking API;
 3. build the admin Smart Booking workspace;
@@ -286,3 +290,160 @@ Before calling the feature operationally complete:
 - `20261109002456_akasha_smart_booking_protect_legacy_reservation_flow`
 - `20261109002859_akasha_smart_booking_edge_ingress_auth`
 - `20261109003132_akasha_smart_booking_legacy_capacity_projection`
+
+
+---
+
+## 13. Customer-facing flow and implementation reconciliation (2026-11-10)
+
+This section is the current product and implementation contract. It supersedes the earlier phase notes in Sections 10–12 where those notes say that the portal UI, item amendment, walk-in handoff, operational conversion, or customer receipt remain unimplemented.
+
+### 13.1 Public customer journey
+
+The public customer journey has one product-entry surface:
+
+    Public CTA / Katalog
+           ↓
+    /katalog — AKASHA SMART BOOKING
+           ↓
+    Select a product
+           ↓
+    Product dialog: rental variant / purchase option + quantity + price
+           ↓
+    Explicit "Konfirmasi pilihan barang"
+           ↓
+    Temporary cart
+           ↓
+    Final booking review dialog
+      - editable lines and quantities
+      - pickup / return dates when rental exists
+      - customer name and WhatsApp
+      - optional note
+           ↓
+    POST /api/akasha-smart-booking/bookings
+           ↓
+    /booking/sukses
+      - booking reference
+      - customer access code
+      - private portal link
+      - QR code to the private portal
+      - downloadable PNG and PDF booking receipt
+           ↓
+    Customer portal
+
+UX rules:
+- /katalog is the single public product selection and booking-entry page.
+- Legacy /booking and /booking/checkout URLs redirect to /katalog; they do not render another product form.
+- Product choice is not added to the cart until the customer confirms the selection dialog.
+- The selection dialog shows the target option, active catalog price, applicable promotion display, and quantity before confirmation.
+- The final review is a dialog on the catalog page, not a second booking route. Customers can change quantities or remove lines before submission.
+- Rental dates are required only when at least one rental line exists. Purchase-only booking does not ask for rental dates.
+- For rental lines, the final review computes a date-based estimate by multiplying quantity × active unit price × tariff periods. Purchase lines are counted once.
+- Date-only estimates assume pickup and return happen at the same local clock time. Periods use the same ceiling rule as Admin Walk-in and have a minimum of one period. The estimate is indicative, not an invoice.
+- The customer-facing daily-period marketing label is "2 hari 1 malam"; the stored tariff duration and price contract are unchanged.
+- The customer enters a name and WhatsApp number. Note is optional.
+- The successful request navigates directly to /booking/sukses; it does not return the customer to /booking.
+- The receipt is a booking/access proof, not a paid invoice or proof of a completed rental/sale transaction.
+- The PNG/PDF receipt is generated client-side from the successful response and includes the reference, selected lines, customer contact, available dates, date-derived stay duration and estimated amount, access code, private portal link, and QR.
+
+Booking constraints exposed in the UI must continue to match the server contract: 1–10 distinct lines and 1–20 units per line. Browser prices are a display snapshot only; the server resolves trusted catalog prices and promotions again.
+
+### 13.2 Customer identity and loyalty linkage
+
+The current rental request path calls public.command_create_website_booking. That existing command:
+- normalizes the submitted phone number to digits;
+- searches public.penyewa within the resolved usaha_id by nomor_telepon_normalized;
+- reuses the found penyewa_id;
+- creates a renter only when no renter with that normalized phone exists;
+- links the request, draft reservation, and Smart Booking aggregate to that renter.
+
+Therefore, an existing renter with the same name and normalized WhatsApp number is reused; a second renter row is not created for that rental booking. The lookup key is the normalized phone number, not a strict two-field (name, phone) equality check. The submitted name remains a booking/customer snapshot. A different name entered with an already-registered phone will still resolve to the existing renter record; operators should correct the renter master data through the existing renter workflow rather than expecting booking submission to silently rename that record.
+
+Important boundary:
+- Purchase-only Smart Booking does not call the legacy rental request command and currently has no penyewa_id link. The customer name/phone are stored on the booking aggregate for portal access and follow-up, but a purchase-only booking does not create or attach a renter record. Do not present purchase-only booking as contributing to rental loyalty history until a separate, explicitly approved customer-linkage contract exists.
+- For rental booking, the final confirmation UI tells customers to use the WhatsApp number already registered with Akasha so the existing renter history can be reused.
+- The UI must not create renter records directly and must not perform client-side name/phone matching. Tenant-scoped matching remains server-authoritative.
+
+### 13.3 Customer portal contract
+
+The customer portal is booking-scoped and does not register a permanent customer account. It must keep the following information actionable and readable:
+- booking reference, current workflow status, last revision, requested pickup/return dates, date-derived stay duration, and current estimated cost;
+- requested rental/purchase lines, quantity, promotions, rental tariff-period count, and the breakdown behind the estimate;
+- a proposed duration and cost preview when the customer edits the schedule or proposes a new item set;
+- current availability signal, exact-variant and cross-variant readiness, potential returns, and check timestamp, without exposing physical unit identifiers;
+- customer actions for same-category alternatives, item/variant/quantity changes, schedule changes, and cancellation where the line/status supports that action;
+- pending and resolved request history plus a customer-visible activity timeline;
+- after conversion, real transaction tracking for checkout, rental and/or sale numbers, transaction status, actual handover/return timestamps, rental item preparation/assignment progress, tolerance deadline, sale lines and payment state.
+
+The portal refreshes booking progress periodically while visible and preserves the latest verified state during brief network failures. A date-based estimate assumes matching pickup/return clock times because the public form accepts dates only; pending schedule changes update only the preview until an administrator approves them. The customer must be told that Admin Walk-in recalculates tariff periods from actual handover timestamps. The portal must not imply that projected stock is guaranteed or that a pending customer change has already been applied.
+
+### 13.4 Admin operational handoff
+
+Admin mengelola satu Reservasi Center pada route kanonis `/reservasi`. Tampilan default adalah kalender bulanan dengan agenda tanggal terpilih; tampilan Daftar dan tindak lanjut berada pada workspace yang sama. Tidak ada menu atau daftar admin terpisah bernama Booking Online.
+
+Satu Reservasi Center menyediakan detail customer, jadwal, snapshot barang dan harga, proyeksi ketersediaan, review perubahan customer, transisi status, rotasi akses portal, komunikasi customer, dan handoff ke Walk-in. Sumber website serta reservasi yang dibuat admin dari Permintaan Sewa diproyeksikan ke aggregate yang sama.
+
+Operational conversion is allowed only when:
+- workflow status is ready_for_checkout;
+- there are no pending customer change requests;
+- the checkout request matches the currently approved booking line snapshot;
+- renter identity and approved rental dates match when rental lines exist;
+- a valid operational receiving account is supplied for sale lines;
+- all trusted operational tariff, promotion, stock, payment, and transaction validations succeed.
+
+Detail Reservasi membedakan snapshot harga dasar dari estimasi berdasarkan rentang tanggal. Detail menyelesaikan basis durasi tarif asli, menghitung jumlah periode dan estimasi subtotal. Estimasi date-only menggunakan aturan ceiling yang sama dengan asumsi jam pengambilan dan pengembalian setara.
+
+Kalender memakai `business_timezone` dari Usaha. Setiap tanggal menunjukkan jumlah reservasi yang beririsan dengan tanggal tersebut serta indikator pengambilan, pengembalian, dan periode rental berjalan. Pemilihan tanggal menampilkan agenda customer, status, ringkasan item, jumlah permintaan perubahan yang pending, WhatsApp, dan akses ke detail. Rentang yang melintasi bulan tetap terlihat; status cancelled, expired, dan fulfilled tidak dihitung sebagai jadwal aktif.
+
+The conversion command is atomic and idempotent. Admin Walk-in calculates tariff periods again from the actual pickup and return timestamps, validates stock/pricing/payment through the existing rental/retail commands, links the resulting transaction identities, and only then marks the Smart Booking as fulfilled. The operational calculation is authoritative if it differs from the date-only estimate. This does not introduce a separate inventory lock or physical-unit allocation model.
+
+### 13.5 Required acceptance scenarios
+
+| Scenario | Expected behavior | Boundary / evidence |
+| --- | --- | --- |
+| Mixed rental + purchase | One public cart and one Smart Booking request preserve separate rental and sale line kinds. | Booking aggregate snapshots remain separate from operational detail rows. |
+| Existing renter, same WhatsApp | Rental request reuses the tenant-scoped renter ID; no duplicate renter row is created. | Legacy command lookup by normalized phone number. |
+| New WhatsApp for rental | The legacy request command creates one renter and links the request/reservation/booking. | Database transaction and tenant scope. |
+| Purchase-only | Request is accepted without rental dates; no renter linkage is currently created. | Do not count it as rental loyalty activity. |
+| Product choice | Selection dialog requires explicit confirmation before adding variants/options and quantities to the temporary cart. | Browser test on mobile and desktop. |
+| Final review edits | Customer can update quantity/remove lines and edit contact/date data before submission. | Submitted API payload reflects final review state. |
+| Duplicate/uncertain submit | Repeated request with the same idempotency key and payload does not create a second booking. Different payload with the same key is rejected. | Existing API/DB idempotency contract. |
+| Customer changes | Portal request remains pending until admin review; item approval re-resolves catalog truth and changes only the booking snapshot. | Expected-revision and dedicated apply command. |
+| Walk-in conversion | Admin opens Walk-in from a ready booking; operational command revalidates current tariff/promo/stock and creates rental and/or sale transaction(s). | Atomic conversion migration and service tests. |
+| Post-conversion tracking | Portal shows actual rental/sale transaction identifiers and sanitized operational progress. | Customer tracking projection migration. |
+| Booking receipt | Success page shows available access credentials and QR, and can export PNG/PDF on the customer device. | Browser export test; no secret in query string. |
+
+### 13.6 Verification and production boundary
+
+The implementation is present in the local main checkout and is expected to be validated with:
+- web TypeScript and lint checks;
+- web Smart Booking contract tests;
+- admin Smart Booking service and portal-link tests;
+- production build;
+- Playwright checks for catalog selection confirmation, cart editing, final review, success receipt export, customer portal, and mobile viewport overflow;
+- live integration checks for actual renter reuse, customer portal authentication, admin review, and a controlled operational conversion.
+
+A successful local build or browser mock does not prove that a real customer booking was written to production, that the private credential environment is configured on every deployment target, or that a real rental/sale conversion succeeded. Those require an authorized live test and must be reported separately. No inventory lock is created at customer submission.
+
+
+## 14. Unified Reservasi Center dan kalender (2026-11-10)
+
+Keputusan ini mengunci model produk tunggal:
+- Nama fitur dan navigasi admin adalah **Reservasi**. "Smart Booking" hanya istilah teknis untuk aggregate, workflow, dan kanal API.
+- Route kanonis admin adalah `/reservasi`. Menu terpisah "Booking Online" dihapus. Route lama `/akasha-smart-booking` dipertahankan sebagai compatibility alias.
+- Halaman daftar/detail Reservasi lama tidak lagi menjadi workspace tersendiri. Daftar, detail, kalender, customer, perubahan, proyeksi ketersediaan, akses portal, dan handoff transaksi berada pada satu Reservasi Center.
+- Website dan admin-created request memakai satu aggregate `app_private.akasha_smart_booking`. Admin-created request menggunakan `public.admin_create_akasha_smart_booking_from_request` untuk membuat linked `public.reservasi` compatibility record dan Smart Booking aggregate dalam satu transaksi.
+- Calendar read model `public.admin_get_akasha_smart_booking_calendar` bersifat read-only, tenant-scoped, dan memakai membership guard eksplisit termasuk `revoked_at IS NULL`. Read model hanya membaca Smart Booking aggregate sehingga linked `public.reservasi` tidak dihitung dua kali.
+- Kalender bulanan adalah tampilan awal; tanggal yang memiliki jadwal menampilkan jumlah reservasi dan sinyal pengambilan, pengembalian, serta rentang rental. Agenda tanggal terpilih membuka customer, status, ringkasan item, WhatsApp, dan detail Reservasi.
+- Rentang bulan dibaca menurut `business_timezone`, termasuk jadwal lintas bulan. Pembelian-only tanpa tanggal rental tetap tersedia pada Daftar, bukan dipaksakan ke kalender rental.
+- Pemeriksaan ketersediaan dan pengeditan kesepakatan berjalan dari detail Reservasi. Operasi fisik unit, readiness, transaksi, pembayaran, dan stock movement tetap dieksekusi melalui command-domain Inventaris/Walk-in/Keuangan yang sudah ada.
+
+Tidak ada tabel reservasi baru, tidak ada pemindahan canonical data, dan tidak ada penguncian stok yang muncul hanya karena kalender dibuka.
+
+
+### 14.1 One-click confirmation for daily operations
+
+- Admin hanya memiliki satu tindakan konfirmasi pada alur normal. Tombol **Konfirmasi** langsung mengubah reservasi ke `ready_for_checkout` / **Siap diproses**; tidak ada langkah admin terpisah untuk mulai tinjau, sedang ditinjau, atau sudah ditinjau.
+- Status perantara lama tetap dapat dibaca untuk menjaga kompatibilitas data, tetapi tidak lagi tersedia sebagai tindakan yang dapat dipilih admin.
+- Konfirmasi tidak dapat dilakukan selama masih ada permintaan perubahan pelanggan yang belum diselesaikan, saat reservasi menunggu informasi pelanggan, atau saat ada permintaan pembatalan.
+- Ketersediaan dan stok fisik tetap diverifikasi pada saat transaksi dibuat; konfirmasi bukan alokasi unit atau jaminan stok.

@@ -37,16 +37,6 @@ function text(value: unknown, maxLength: number): string {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : ""
 }
 
-function getKeySet(raw: string | undefined): string[] {
-  if (!raw) return []
-  try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>
-    return Object.values(parsed).filter((value): value is string => typeof value === "string" && value.length > 0)
-  } catch {
-    return []
-  }
-}
-
 function getDefaultKey(raw: string | undefined): string {
   if (!raw) return ""
   try {
@@ -119,18 +109,6 @@ function createAdminClient() {
       headers: { "X-Application-Name": "akasha-smart-booking-edge" },
     },
   })
-}
-
-function isAllowedApiKey(request: Request): boolean {
-  const apiKey = request.headers.get("apikey") ?? ""
-  if (!apiKey) return false
-
-  const accepted = new Set([
-    ...getKeySet(Deno.env.get("SUPABASE_PUBLISHABLE_KEYS")),
-    Deno.env.get("SUPABASE_ANON_KEY") ?? "",
-  ].filter(Boolean))
-
-  return accepted.has(apiKey)
 }
 
 Deno.serve(async (request: Request) => {

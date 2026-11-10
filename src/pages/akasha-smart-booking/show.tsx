@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import QRCode from "qrcode";
 import {
-  AlertCircle, ArrowLeft, ArrowRight, Check, CheckCircle2, Clipboard,
+  AlertCircle, ArrowLeft, Check, CheckCircle2, Clipboard,
   Clock3, Copy, ExternalLink, FileClock, KeyRound, Loader2, MessageCircle,
   Package, RefreshCw, ShieldAlert, ShieldCheck, ShoppingBag, UserRound,
   Warehouse, X,
@@ -16,7 +16,6 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { createClientId } from "@/lib/client-id";
@@ -36,6 +35,12 @@ import type {
   AkashaSmartBookingStatus,
 } from "@/features/akasha-smart-booking/types";
 import { createAkashaPortalLink } from "@/features/akasha-smart-booking/portal-link";
+import {
+  calculateSmartBookingLineEstimate,
+  calculateSmartBookingTariffPeriods,
+  formatSmartBookingStayLabel,
+  type SmartBookingTariffPeriod,
+} from "@/features/akasha-smart-booking/estimate";
 
 type ProposedTarget = {
   kind: "rental" | "sale";
@@ -62,52 +67,16 @@ type RotatedAccess = {
 };
 
 const STATUS_LABELS: Record<AkashaSmartBookingStatus, string> = {
-  received: "Baru diterima",
-  reviewing: "Sedang ditinjau",
-  acknowledged: "Sudah ditinjau",
-  customer_action_required: "Menunggu customer",
+  received: "Menunggu konfirmasi",
+  reviewing: "Menunggu konfirmasi",
+  acknowledged: "Menunggu konfirmasi",
+  customer_action_required: "Menunggu pelanggan",
   change_requested: "Perubahan diminta",
   cancellation_pending: "Pembatalan diminta",
-  ready_for_checkout: "Siap checkout",
+  ready_for_checkout: "Siap diproses",
   cancelled: "Dibatalkan",
   expired: "Kedaluwarsa",
-  fulfilled: "Dikonversi",
-};
-
-const STATUS_ACTIONS: Partial<Record<AkashaSmartBookingStatus, Array<{
-  status: Exclude<AkashaSmartBookingStatus, "received" | "change_requested" | "cancellation_pending" | "fulfilled">;
-  label: string;
-  description: string;
-}>>> = {
-  received: [{ status: "reviewing", label: "Mulai tinjau", description: "Tandai permintaan masuk sebagai sedang ditinjau." }],
-  reviewing: [
-    { status: "acknowledged", label: "Tandai ditinjau", description: "Pengelola telah memeriksa permintaan." },
-    { status: "customer_action_required", label: "Minta tanggapan customer", description: "Customer perlu memberi informasi tambahan." },
-    { status: "cancelled", label: "Batalkan booking", description: "Tutup permintaan booking tanpa membuat transaksi." },
-  ],
-  acknowledged: [
-    { status: "reviewing", label: "Tinjau kembali", description: "Kembalikan booking ke tahap pemeriksaan." },
-    { status: "customer_action_required", label: "Minta tanggapan customer", description: "Customer perlu memberi informasi tambahan." },
-    { status: "ready_for_checkout", label: "Siap untuk checkout", description: "Tandai siap ditindaklanjuti di lokasi; stok belum dialokasikan." },
-    { status: "cancelled", label: "Batalkan booking", description: "Tutup permintaan booking tanpa membuat transaksi." },
-  ],
-  customer_action_required: [
-    { status: "reviewing", label: "Lanjutkan tinjauan", description: "Pengelola melanjutkan peninjauan." },
-    { status: "acknowledged", label: "Tandai ditinjau", description: "Tanggapan customer telah diperiksa." },
-    { status: "ready_for_checkout", label: "Siap untuk checkout", description: "Tandai siap ditindaklanjuti di lokasi; stok belum dialokasikan." },
-    { status: "cancelled", label: "Batalkan booking", description: "Tutup permintaan booking tanpa membuat transaksi." },
-  ],
-  change_requested: [
-    { status: "reviewing", label: "Tinjau perubahan", description: "Kembalikan ke tahap pemeriksaan setelah semua permintaan ditangani." },
-    { status: "acknowledged", label: "Tandai ditinjau", description: "Perubahan telah ditinjau tanpa mengubah item." },
-    { status: "customer_action_required", label: "Minta tanggapan customer", description: "Customer perlu memberi informasi tambahan." },
-    { status: "cancelled", label: "Batalkan booking", description: "Tutup permintaan booking tanpa membuat transaksi." },
-  ],
-  ready_for_checkout: [
-    { status: "reviewing", label: "Tinjau kembali", description: "Kembalikan ke pemeriksaan." },
-    { status: "cancelled", label: "Batalkan booking", description: "Tutup permintaan booking." },
-    { status: "expired", label: "Tandai kedaluwarsa", description: "Tutup permintaan yang sudah tidak berlaku." },
-  ],
+  fulfilled: "Selesai",
 };
 
 function formatDate(value: string | null, timezone = "Asia/Jakarta") {
@@ -163,7 +132,7 @@ function changeTypeLabel(type: string) {
 
 function changeStatusLabel(status: string) {
   const labels: Record<string, string> = {
-    pending: "Menunggu tinjauan",
+    pending: "Menunggu pemeriksaan",
     applied: "Sudah diterapkan",
     approved: "Disetujui",
     rejected: "Ditolak",
@@ -198,7 +167,7 @@ function availabilityLabel(status: string) {
     potential_returns_may_help: "Bergantung pada pengembalian",
     other_variants_available: "Varian lain terlihat tersedia",
     all_components_ready_now: "Komponen terlihat siap",
-    one_or_more_components_need_review: "Sebagian komponen perlu ditinjau",
+    one_or_more_components_need_review: "Sebagian barang perlu diperiksa",
     one_or_more_components_short: "Ada komponen belum mencukupi",
     shortage: "Jumlah belum mencukupi",
     catalog_unavailable: "Item tidak lagi tersedia di katalog",
@@ -270,6 +239,32 @@ export function AkashaSmartBookingShow() {
     queryFn: () => getAkashaSmartBooking(id),
     staleTime: 10_000,
     refetchInterval: 30_000,
+  });
+
+  const rentalTariffIds = useMemo(() => Array.from(new Set(
+    (booking.data?.lines ?? [])
+      .filter((line) => line.kind === "rental")
+      .map((line) => line.tarif_sewa_id)
+      .filter((tariffId): tariffId is string => Boolean(tariffId)),
+  )), [booking.data?.lines]);
+
+  const bookingTariffs = useQuery({
+    queryKey: ["akasha-smart-booking", "tariffs", booking.data?.usaha_id, rentalTariffIds],
+    enabled: Boolean(booking.data?.usaha_id && rentalTariffIds.length > 0),
+    queryFn: async () => {
+      if (!booking.data?.usaha_id || rentalTariffIds.length === 0) return new Map<string, SmartBookingTariffPeriod>();
+      const { data, error } = await supabase
+        .from("tarif_sewa")
+        .select("tarif_sewa_id,durasi_unit,durasi_nilai")
+        .eq("usaha_id", booking.data.usaha_id)
+        .in("tarif_sewa_id", rentalTariffIds);
+      if (error) throw error;
+      return new Map((data ?? []).map((tariff) => [tariff.tarif_sewa_id, {
+        durasi_unit: tariff.durasi_unit,
+        durasi_nilai: Number(tariff.durasi_nilai),
+      }]));
+    },
+    staleTime: 60_000,
   });
 
   const conversion = useQuery({
@@ -352,21 +347,21 @@ export function AkashaSmartBookingShow() {
   };
 
   const statusMutation = useMutation({
-    mutationFn: async (targetStatus: Exclude<AkashaSmartBookingStatus, "received" | "change_requested" | "cancellation_pending" | "fulfilled">) => {
-      if (!booking.data || !canReview) throw new Error("Akses untuk mengubah status tidak diberikan.");
+    mutationFn: async (targetStatus: "ready_for_checkout") => {
+      if (!booking.data || !canReview) throw new Error("Akses untuk mengonfirmasi reservasi tidak diberikan.");
       return setAkashaSmartBookingStatus({
         smartBookingId: booking.data.smart_booking_id,
         targetStatus,
         expectedRevision: booking.data.revision,
-        note: resolutionNote.trim() || null,
+        note: null,
       });
     },
-    onSuccess: async (result) => {
+    onSuccess: async () => {
       setActionError(null);
-      setActionMessage("Status booking berhasil diperbarui menjadi " + STATUS_LABELS[result.workflow_status] + ".");
+      setActionMessage("Reservasi dikonfirmasi dan siap diproses.");
       await refreshAll();
     },
-    onError: (error: unknown) => setActionError(error instanceof Error ? error.message : "Status booking gagal diperbarui."),
+    onError: (error: unknown) => setActionError(error instanceof Error ? error.message : "Konfirmasi reservasi gagal disimpan."),
   });
 
   const changeMutation = useMutation({
@@ -411,7 +406,7 @@ export function AkashaSmartBookingShow() {
     onSuccess: async (result) => {
       setActionError(null);
       setActionMessage(result.request_status === "applied"
-        ? "Perubahan berhasil diterapkan ke snapshot Smart Booking."
+        ? "Data reservasi berhasil diperbarui."
         : result.request_status === "approved"
           ? "Permintaan berhasil disetujui."
           : "Permintaan perubahan ditolak.");
@@ -424,7 +419,7 @@ export function AkashaSmartBookingShow() {
 
   const accessMutation = useMutation({
     mutationFn: async () => {
-      if (!booking.data || !canRotateAccess) throw new Error("Akses rotasi customer tidak diberikan.");
+      if (!booking.data || !canRotateAccess) throw new Error("Akses pelanggan belum tersedia untuk akun ini.");
       if (!rotateIdempotencyRef.current) {
         rotateIdempotencyRef.current = "smart-booking-access-" + createClientId();
       }
@@ -440,23 +435,46 @@ export function AkashaSmartBookingShow() {
         expiresAt: result.expires_at,
       });
       setActionError(null);
-      setActionMessage("Kode akses dan tautan pribadi customer telah diperbarui. Bagikan secara pribadi.");
+      setActionMessage("Kode akses dan tautan pribadi pelanggan telah diperbarui. Bagikan secara langsung kepada pelanggan.");
       rotateIdempotencyRef.current = null;
     },
     onError: (error: unknown) => {
       rotateIdempotencyRef.current = null;
-      setActionError(error instanceof Error ? error.message : "Akses customer gagal diperbarui.");
+      setActionError(error instanceof Error ? error.message : "Akses pelanggan gagal diperbarui.");
     },
   });
 
   const detail = booking.data;
   const pendingChanges = detail?.change_requests.filter((change) => change.status === "pending") ?? [];
   const proposedCatalog = targetCatalog.data ?? new Map<string, CatalogTarget>();
-  const transitions = detail && pendingChanges.length === 0
-    ? STATUS_ACTIONS[detail.workflow_status] ?? []
-    : [];
   const closed = detail ? ["cancelled", "expired", "fulfilled"].includes(detail.workflow_status) : false;
+  const canConfirm = detail
+    ? !closed
+      && pendingChanges.length === 0
+      && ["received", "reviewing", "acknowledged", "change_requested"].includes(detail.workflow_status)
+    : false;
   const businessTimezone = detail?.business_timezone ?? "Asia/Jakarta";
+  const bookingTariffMap = bookingTariffs.data ?? new Map<string, SmartBookingTariffPeriod>();
+  const estimatedLines = (detail?.lines ?? []).map((line) => {
+    const tariff = line.tarif_sewa_id ? bookingTariffMap.get(line.tarif_sewa_id) ?? null : null;
+    const periods = line.kind === "rental"
+      ? calculateSmartBookingTariffPeriods(detail?.requested_pickup_date ?? null, detail?.requested_return_date ?? null, tariff)
+      : 1;
+    const estimatedPeriods = periods ?? 1;
+    return {
+      line,
+      periods,
+      estimatedPeriods,
+      estimatedSubtotal: calculateSmartBookingLineEstimate(line.quantity, line.unit_price, estimatedPeriods),
+      normalSubtotal: calculateSmartBookingLineEstimate(line.quantity, line.normal_price, estimatedPeriods),
+    };
+  });
+  const estimatedBookingTotal = estimatedLines.reduce((sum, entry) => sum + entry.estimatedSubtotal, 0);
+  const unresolvedEstimateLineCount = estimatedLines.filter((entry) => entry.line.kind === "rental" && entry.periods === null).length;
+  const requestedStayLabel = formatSmartBookingStayLabel(
+    detail?.requested_pickup_date ?? null,
+    detail?.requested_return_date ?? null,
+  );
   const bookingSummary = useMemo(() => {
     if (!detail) return "";
     const lines = detail.lines.map((line) => {
@@ -465,20 +483,21 @@ export function AkashaSmartBookingShow() {
       return kind + " · " + name + " × " + line.quantity;
     });
     return [
-      "Booking Akasha Outdoor " + detail.reference_code,
-      "Customer: " + detail.customer_name,
-      "Telepon: " + detail.customer_phone,
+      "Reservasi Akasha Outdoor " + detail.reference_code,
+      "Pelanggan: " + detail.customer_name,
+      "WhatsApp: " + detail.customer_phone,
       "Pengambilan: " + formatDate(detail.requested_pickup_date, businessTimezone),
       "Pengembalian: " + formatDate(detail.requested_return_date, businessTimezone),
+      "Durasi estimasi: " + (requestedStayLabel ?? "Belum ditentukan"),
       ...lines,
-      "Estimasi dasar: " + formatCurrency(detail.quote_total, detail.currency_code),
-      "Catatan: stok belum dialokasikan; harga dan ketersediaan diverifikasi kembali saat transaksi.",
+      "Estimasi biaya berdasarkan tanggal: " + formatCurrency(estimatedBookingTotal, detail.currency_code),
+      "Catatan: estimasi tanggal mengasumsikan jam ambil dan kembali setara. Admin menghitung ulang berdasarkan waktu serah-terima aktual; stok belum dialokasikan.",
     ].join("\\n");
-  }, [detail, businessTimezone]);
+  }, [detail, businessTimezone, requestedStayLabel, estimatedBookingTotal]);
 
   useEffect(() => {
     if (!id || typeof window === "undefined") return;
-    const url = window.location.origin + paths.akashaSmartBooking + "/" + id;
+    const url = window.location.origin + paths.reservasi + "/" + id;
     setAdminUrl(url);
     let active = true;
     void QRCode.toDataURL(url, {
@@ -504,13 +523,9 @@ export function AkashaSmartBookingShow() {
     }
   }
 
-  async function handleStatusChange(
-    targetStatus: Exclude<AkashaSmartBookingStatus, "received" | "change_requested" | "cancellation_pending" | "fulfilled">,
-  ) {
-    if (targetStatus === "cancelled" || targetStatus === "expired") {
-      if (!window.confirm("Tutup booking ini dengan status " + STATUS_LABELS[targetStatus] + "?")) return;
-    }
-    statusMutation.mutate(targetStatus);
+  async function handleStatusChange() {
+    if (!window.confirm("Konfirmasi reservasi ini dan tandai siap diproses?")) return;
+    statusMutation.mutate("ready_for_checkout");
   }
 
   async function handleRotateAccess() {
@@ -535,21 +550,21 @@ export function AkashaSmartBookingShow() {
   if (booking.error || !detail) {
     return (
       <div className="space-y-3">
-        <Button variant="ghost" size="sm" onClick={() => navigate(paths.akashaSmartBooking)}><ArrowLeft className="size-4" /> Kembali ke antrian</Button>
-        <Alert variant="destructive"><AlertCircle className="size-4" /><AlertTitle>Detail booking belum dapat dimuat</AlertTitle><AlertDescription>{booking.error?.message ?? "Booking tidak ditemukan atau Anda tidak memiliki akses."}</AlertDescription></Alert>
+        <Button variant="ghost" size="sm" onClick={() => navigate(paths.reservasi)}><ArrowLeft className="size-4" /> Kembali ke Reservasi</Button>
+        <Alert variant="destructive"><AlertCircle className="size-4" /><AlertTitle>Detail Reservasi belum dapat dimuat</AlertTitle><AlertDescription>{booking.error?.message ?? "Reservasi tidak ditemukan atau akun Anda tidak memiliki akses."}</AlertDescription></Alert>
       </div>
     );
   }
 
   const waPhone = detail.customer_phone_normalized.replace(/[^0-9]/g, "");
-  const waText = "Halo " + detail.customer_name + ", kami dari Akasha Outdoor ingin menindaklanjuti booking " + detail.reference_code + ".";
+  const waText = "Halo " + detail.customer_name + ", kami dari Akasha Outdoor ingin menindaklanjuti reservasi " + detail.reference_code + ".";
   const waLink = waPhone ? "https://wa.me/" + waPhone + "?text=" + encodeURIComponent(waText) : null;
 
   return (
     <main className="mx-auto w-full max-w-7xl space-y-4 pb-8 sm:space-y-5" data-testid="akasha-smart-booking-detail">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Button variant="ghost" size="sm" className="h-8 px-2 text-xs" asChild>
-          <Link to={paths.akashaSmartBooking}><ArrowLeft className="size-3.5" /> Kembali ke antrian</Link>
+          <Link to={paths.reservasi}><ArrowLeft className="size-3.5" /> Kembali ke Reservasi</Link>
         </Button>
         <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => { void booking.refetch(); void availability.refetch(); }} disabled={booking.isFetching || availability.isFetching}>
           <RefreshCw className={"size-3.5 " + (booking.isFetching || availability.isFetching ? "animate-spin" : "")} /> Perbarui data
@@ -559,7 +574,7 @@ export function AkashaSmartBookingShow() {
       <header className="rounded-2xl border border-border/70 bg-card p-4 sm:p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-primary/80">Detail booking online</p>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-primary/80">Detail Reservasi</p>
             <div className="mt-1 flex flex-wrap items-center gap-2">
               <h1 className="text-xl font-bold tracking-tight sm:text-2xl">{detail.reference_code}</h1>
               <Badge variant={statusVariant(detail.workflow_status)}>{STATUS_LABELS[detail.workflow_status]}</Badge>
@@ -572,7 +587,7 @@ export function AkashaSmartBookingShow() {
           <div className="flex flex-wrap gap-2">
             {waLink ? (
               <Button variant="outline" size="sm" className="h-9 text-xs" asChild>
-                <a href={waLink} target="_blank" rel="noreferrer"><MessageCircle className="size-3.5" /> WhatsApp customer</a>
+                <a href={waLink} target="_blank" rel="noreferrer"><MessageCircle className="size-3.5" /> WhatsApp</a>
               </Button>
             ) : null}
             <Button variant="outline" size="sm" className="h-9 text-xs" onClick={() => void copyValue("summary", bookingSummary)}>
@@ -583,7 +598,7 @@ export function AkashaSmartBookingShow() {
         {detail.workflow_status === "ready_for_checkout" ? (
           <Alert className="mt-4 border-amber-500/25 bg-amber-500/[0.04]">
             <ShieldAlert className="size-4 text-amber-600" />
-            <AlertTitle className="text-sm">Siap checkout bukan berarti stok terkunci</AlertTitle>
+            <AlertTitle className="text-sm">Barang diperiksa kembali saat transaksi disiapkan</AlertTitle>
             <AlertDescription className="text-xs">Stok akan diperiksa dan dialokasikan hanya melalui alur transaksi operasional yang sudah ada.</AlertDescription>
           </Alert>
         ) : null}
@@ -599,23 +614,25 @@ export function AkashaSmartBookingShow() {
         <Alert className="border-amber-500/25 bg-amber-500/[0.04]">
           <ShieldAlert className="size-4 text-amber-600" />
           <AlertTitle className="text-sm">Mode lihat saja</AlertTitle>
-          <AlertDescription className="text-xs">Akun ini tidak memiliki permission <code>reservation.amend</code>. Tindakan perubahan dan status dinonaktifkan.</AlertDescription>
+          <AlertDescription className="text-xs">Akun ini hanya dapat melihat reservasi. Tindakan perubahan dan status tidak tersedia.</AlertDescription>
         </Alert>
       ) : null}
       {permissions.isError ? (
-        <Alert variant="destructive"><AlertTitle>Permission belum dapat diverifikasi</AlertTitle><AlertDescription>{permissions.error.message}. Tindakan admin dinonaktifkan.</AlertDescription></Alert>
+        <Alert variant="destructive"><AlertTitle>Hak akses belum dapat diperiksa</AlertTitle><AlertDescription>{permissions.error.message}. Tindakan admin dinonaktifkan.</AlertDescription></Alert>
       ) : null}
 
       <section className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_330px]">
         <div className="space-y-3">
           <Card className="border-border/70 shadow-none">
-            <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm"><UserRound className="size-4 text-primary" /> Customer & periode</CardTitle></CardHeader>
+            <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm"><UserRound className="size-4 text-primary" /> Pelanggan & periode</CardTitle></CardHeader>
             <CardContent className="grid gap-3 p-4 pt-1 sm:grid-cols-2">
-              <Metric label="Nama customer" value={detail.customer_name} />
+              <Metric label="Nama pelanggan" value={detail.customer_name} />
               <Metric label="Nomor WhatsApp" value={detail.customer_phone} />
               <Metric label="Pengambilan" value={formatDate(detail.requested_pickup_date, businessTimezone)} />
               <Metric label="Pengembalian" value={formatDate(detail.requested_return_date, businessTimezone)} />
-              <Metric label="Estimasi dasar booking" value={formatCurrency(detail.quote_total, detail.currency_code)} detail="Bukan tagihan final / invoice" />
+              <Metric label="Durasi estimasi" value={requestedStayLabel ?? (detail.lines.some((line) => line.kind === "rental") ? "Belum ditentukan" : "—")} />
+              <Metric label="Estimasi biaya berdasarkan tanggal" value={bookingTariffs.isLoading && rentalTariffIds.length > 0 ? "Menghitung..." : formatCurrency(estimatedBookingTotal, detail.currency_code)} detail="Proyeksi, bukan tagihan final" />
+              <Metric label="Nilai awal" value={formatCurrency(detail.quote_total, detail.currency_code)} detail="Belum menyesuaikan lama sewa" />
               <Metric label="Status proses" value={STATUS_LABELS[detail.workflow_status]} detail={"Zona waktu " + businessTimezone} />
             </CardContent>
           </Card>
@@ -623,29 +640,39 @@ export function AkashaSmartBookingShow() {
           <Card className="border-border/70 shadow-none">
             <CardHeader className="pb-2">
               <CardTitle className="flex items-center justify-between gap-2 text-sm">
-                <span className="flex items-center gap-2"><Package className="size-4 text-primary" /> Rincian item booking</span>
+                <span className="flex items-center gap-2"><Package className="size-4 text-primary" /> Barang dalam reservasi</span>
                 <Badge variant="secondary">{detail.lines.length} item</Badge>
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-0 p-4 pt-1">
-              {detail.lines.map((line) => (
+              {estimatedLines.map(({ line, periods, estimatedPeriods, estimatedSubtotal, normalSubtotal }) => (
                 <div key={line.line_id} className="flex items-start justify-between gap-3 border-b border-border/60 py-3 last:border-0">
                   <div className="min-w-0">
                     <p className="text-sm font-semibold">{line.name}{line.variant ? " · " + line.variant : ""}</p>
                     <p className="mt-0.5 text-[11px] text-muted-foreground">
-                      {line.kind === "rental" ? "Rental · tarif dasar per siklus" : "Pembelian"} · {line.quantity} unit
-                      {line.inventory_mode_snapshot ? " · " + line.inventory_mode_snapshot : ""}
+                      {line.kind === "rental"
+                        ? "Rental · " + (requestedStayLabel ?? "tanggal belum valid") + " · " + (periods === null ? "periode belum terhitung" : estimatedPeriods + " periode tarif")
+                        : "Pembelian · sekali beli"} · {line.quantity} unit
+
                     </p>
-                    {line.discount_percent > 0 ? <p className="mt-1 text-[10px] text-emerald-700 dark:text-emerald-300">{"Promo " + line.discount_percent + "% · hemat " + formatCurrency(line.discount_amount, line.currency_code)}</p> : null}
+                    {line.kind === "rental" ? <p className="mt-1 text-[10px] text-muted-foreground">{line.quantity} unit × {periods === null ? "—" : estimatedPeriods} periode × {formatCurrency(line.unit_price, line.currency_code)}</p> : null}
+                    {line.discount_percent > 0 ? <p className="mt-1 text-[10px] text-emerald-700 dark:text-emerald-300">{"Promo " + line.discount_percent + "% · estimasi hemat " + formatCurrency(Math.max(0, normalSubtotal - estimatedSubtotal), line.currency_code)}</p> : null}
                   </div>
                   <div className="shrink-0 text-right">
-                    {line.discount_percent > 0 ? <p className="text-[10px] text-muted-foreground line-through">{formatCurrency(line.normal_price * line.quantity, line.currency_code)}</p> : null}
-                    <p className="text-sm font-semibold">{formatCurrency(line.subtotal, line.currency_code)}</p>
+                    {line.discount_percent > 0 ? <p className="text-[10px] text-muted-foreground line-through">{formatCurrency(normalSubtotal, line.currency_code)}</p> : null}
+                    <p className="text-sm font-semibold">{formatCurrency(estimatedSubtotal, line.currency_code)}</p>
                   </div>
                 </div>
               ))}
+              {bookingTariffs.isError || unresolvedEstimateLineCount > 0 ? (
+                <Alert className="mt-3 border-amber-500/25 bg-amber-500/[0.04]">
+                  <ShieldAlert className="size-4 text-amber-600" />
+                  <AlertTitle className="text-xs">Sebagian periode belum dapat dihitung</AlertTitle>
+                  <AlertDescription className="text-[10px]">Estimasi untuk item terkait masih memakai satu periode dasar. Periksa tarif dan waktu serah-terima sebelum transaksi.</AlertDescription>
+                </Alert>
+              ) : null}
               <p className="pt-3 text-[10px] leading-5 text-muted-foreground">
-                Harga rental yang tampil adalah snapshot tarif dasar per siklus. Total akhir mengikuti durasi dan validasi saat transaksi di lokasi.
+                Estimasi ini menghitung periode dari rentang tanggal dengan asumsi jam ambil dan kembali setara, mengikuti aturan lama sewa. Saat transaksi, gunakan jam serah-terima aktual; total dan tarif akan dihitung kembali.
               </p>
             </CardContent>
           </Card>
@@ -653,8 +680,8 @@ export function AkashaSmartBookingShow() {
           <Card className="border-border/70 shadow-none">
             <CardHeader className="pb-2">
               <CardTitle className="flex items-center justify-between gap-2 text-sm">
-                <span className="flex items-center gap-2"><Warehouse className="size-4 text-primary" /> Proyeksi ketersediaan saat ini</span>
-                <Badge variant="outline">Bukan reservasi stok</Badge>
+                <span className="flex items-center gap-2"><Warehouse className="size-4 text-primary" /> Ketersediaan barang saat ini</span>
+                <Badge variant="outline">Belum menahan barang</Badge>
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3 p-4 pt-1">
@@ -708,7 +735,7 @@ export function AkashaSmartBookingShow() {
                     ))}
                   </div>
                   <p className="text-[10px] leading-5 text-muted-foreground">
-                    Potensi pengembalian dipisahkan dari stok siap. Unit yang belum dikembalikan atau belum lolos pemeriksaan tidak dianggap ready. Tidak ada unit fisik yang ditampilkan pada portal customer.
+                    Barang yang masih disewa atau belum lolos pemeriksaan belum dihitung siap digunakan. Nomor unit fisik tidak ditampilkan kepada pelanggan.
                   </p>
                 </>
               ) : <p className="text-xs text-muted-foreground">Proyeksi belum tersedia.</p>}
@@ -723,12 +750,12 @@ export function AkashaSmartBookingShow() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="grid gap-2 p-4 pt-1 sm:grid-cols-2">
-                {conversion.data.checkout_number ? <Metric label="Nomor checkout" value={conversion.data.checkout_number} /> : null}
+                {conversion.data.checkout_number ? <Metric label="Nomor transaksi" value={conversion.data.checkout_number} /> : null}
                 {conversion.data.rental_number ? <Metric label="Nomor penyewaan" value={conversion.data.rental_number} /> : null}
                 {conversion.data.sale_number ? <Metric label="Nomor penjualan" value={conversion.data.sale_number} /> : null}
-                <Metric label="Dikonversi" value={formatDateTime(conversion.data.converted_at, businessTimezone)} />
+                <Metric label="Tanggal transaksi" value={formatDateTime(conversion.data.converted_at, businessTimezone)} />
                 <p className="sm:col-span-2 text-[10px] leading-5 text-muted-foreground">
-                  Stok diperiksa ulang oleh perintah transaksi operasional. Booking tidak membuat penguncian kapasitas terpisah.
+                  Barang diperiksa kembali saat transaksi disiapkan. Reservasi tidak mengurangi stok.
                 </p>
               </CardContent>
             </Card>
@@ -741,18 +768,18 @@ export function AkashaSmartBookingShow() {
 
           <Card className="border-border/70 shadow-none">
             <CardHeader className="pb-2">
-              <CardTitle className="flex items-center gap-2 text-sm"><FileClock className="size-4 text-primary" /> Permintaan perubahan customer</CardTitle>
+              <CardTitle className="flex items-center gap-2 text-sm"><FileClock className="size-4 text-primary" /> Permintaan perubahan pelanggan</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3 p-4 pt-1">
               {pendingChanges.length === 0 ? (
-                <p className="rounded-lg border border-dashed border-border p-4 text-center text-xs text-muted-foreground">Tidak ada permintaan yang menunggu ditinjau.</p>
+                <p className="rounded-lg border border-dashed border-border p-4 text-center text-xs text-muted-foreground">Tidak ada perubahan yang menunggu pemeriksaan.</p>
               ) : pendingChanges.map((change) => {
                 const items = getProposalItems(change.payload);
                 return (
                   <article key={change.id} className="rounded-xl border border-border/70 p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <p className="text-xs font-semibold">{changeTypeLabel(change.type)}</p>
-                      <Badge variant="default">Menunggu tinjauan</Badge>
+                      <Badge variant="default">Perlu diperiksa</Badge>
                     </div>
                     {change.reason ? <p className="mt-2 text-xs leading-5 text-muted-foreground">{change.reason}</p> : null}
                     {change.type === "schedule_change" ? (
@@ -804,23 +831,23 @@ export function AkashaSmartBookingShow() {
                   </article>
                 );
               })}
-              {targetCatalog.error ? <p className="text-[10px] text-amber-700">Nama item usulan tidak dapat dibaca dari katalog publik. Backend tetap memvalidasi kembali target sebelum penerapan.</p> : null}
+              {targetCatalog.error ? <p className="text-[10px] text-amber-700">Nama item usulan tidak dapat dibaca dari katalog publik. Barang akan diperiksa kembali sebelum perubahan diterapkan.</p> : null}
               <div className="grid gap-2">
                 <label className="space-y-1 text-[11px] font-medium">
                   Catatan internal resolusi
                   <Textarea value={resolutionNote} onChange={(event) => setResolutionNote(event.target.value)} maxLength={500} rows={2} placeholder="Catatan untuk audit internal (opsional)" className="text-xs" />
                 </label>
                 <label className="space-y-1 text-[11px] font-medium">
-                  Pesan yang terlihat customer
+                  Pesan untuk pelanggan
                   <Textarea value={publicResolutionNote} onChange={(event) => setPublicResolutionNote(event.target.value)} maxLength={500} rows={2} placeholder="Contoh: Perubahan disetujui, kami menyiapkan alternatif tersebut." className="text-xs" />
                 </label>
               </div>
-              {canReview ? null : <p className="text-[10px] text-muted-foreground">Resolusi membutuhkan permission reservation.amend.</p>}
+              {canReview ? null : <p className="text-[10px] text-muted-foreground">Tindakan ini membutuhkan hak akses untuk mengubah reservasi.</p>}
             </CardContent>
           </Card>
 
           <Card className="border-border/70 shadow-none">
-            <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm"><Clock3 className="size-4 text-primary" /> Timeline customer</CardTitle></CardHeader>
+            <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm"><Clock3 className="size-4 text-primary" /> Riwayat pelanggan</CardTitle></CardHeader>
             <CardContent className="space-y-0 p-4 pt-1">
               {detail.timeline.length === 0 ? <p className="text-xs text-muted-foreground">Belum ada aktivitas.</p> : detail.timeline.map((event, index) => (
                 <div key={index} className="relative border-l border-border pb-4 pl-4 last:border-0 last:pb-0">
@@ -835,45 +862,49 @@ export function AkashaSmartBookingShow() {
 
         <aside className="space-y-3">
           <Card className="border-border/70 shadow-none">
-            <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm"><ShieldCheck className="size-4 text-primary" /> Kontrol status</CardTitle></CardHeader>
+            <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm"><ShieldCheck className="size-4 text-primary" /> Konfirmasi reservasi</CardTitle></CardHeader>
             <CardContent className="space-y-2 p-4 pt-1">
-              {pendingChanges.length > 0 ? (
-                <p className="text-xs leading-5 text-muted-foreground">Selesaikan atau tolak permintaan customer yang masih pending terlebih dahulu. Status booking akan mengikuti hasil resolusi permintaan.</p>
-              ) : transitions.length === 0 || closed ? (
-                <p className="text-xs text-muted-foreground">Tidak ada transisi status lanjutan yang tersedia.</p>
-              ) : transitions.map((action) => (
-                <div key={action.status} className="space-y-1">
+              {detail.workflow_status === "ready_for_checkout" ? (
+                <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/[0.04] p-3">
+                  <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-300">Reservasi sudah dikonfirmasi</p>
+                  <p className="mt-1 text-[10px] leading-4 text-muted-foreground">Siap diproses saat pelanggan datang. Barang tetap diperiksa sebelum transaksi.</p>
+                </div>
+              ) : canConfirm ? (
+                <div className="space-y-2">
                   <Button
                     type="button"
-                    variant={action.status === "cancelled" ? "destructive" : action.status === "ready_for_checkout" ? "default" : "outline"}
-                    className="h-9 w-full justify-start text-xs"
+                    className="h-9 w-full justify-center text-xs"
                     disabled={!canReview || statusMutation.isPending}
-                    onClick={() => void handleStatusChange(action.status)}
+                    onClick={() => void handleStatusChange()}
                   >
-                    {statusMutation.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <ArrowRight className="size-3.5" />}
-                    {action.label}
+                    {statusMutation.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <CheckCircle2 className="size-3.5" />}
+                    Konfirmasi
                   </Button>
-                  <p className="px-1 text-[10px] leading-4 text-muted-foreground">{action.description}</p>
+                  <p className="text-[10px] leading-4 text-muted-foreground">Setelah dikonfirmasi, reservasi siap diproses. Ketersediaan barang diperiksa saat transaksi.</p>
                 </div>
-              ))}
-              <Separator className="my-2" />
-              <label className="space-y-1 text-[11px] font-medium">
-                Catatan perubahan status
-                <Textarea rows={3} maxLength={500} value={resolutionNote} onChange={(event) => setResolutionNote(event.target.value)} placeholder="Catatan yang relevan untuk customer..." className="text-xs" />
-              </label>
-              <p className="text-[10px] leading-4 text-muted-foreground">Status "Siap checkout" tidak mengunci stok. Status selesai hanya dapat ditetapkan setelah transaksi nyata terhubung.</p>
+              ) : pendingChanges.length > 0 ? (
+                <p className="text-xs leading-5 text-muted-foreground">Selesaikan perubahan yang diminta pelanggan sebelum konfirmasi.</p>
+              ) : detail.workflow_status === "customer_action_required" ? (
+                <p className="text-xs leading-5 text-muted-foreground">Menunggu informasi tambahan dari pelanggan.</p>
+              ) : detail.workflow_status === "cancellation_pending" ? (
+                <p className="text-xs leading-5 text-muted-foreground">Pelanggan meminta pembatalan. Reservasi belum dapat dikonfirmasi.</p>
+              ) : closed ? (
+                <p className="text-xs leading-5 text-muted-foreground">Reservasi sudah ditutup.</p>
+              ) : (
+                <p className="text-xs leading-5 text-muted-foreground">Reservasi belum dapat dikonfirmasi dari status saat ini.</p>
+              )}
             </CardContent>
           </Card>
 
           <Card className="border-border/70 shadow-none">
-            <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm"><KeyRound className="size-4 text-primary" /> Akses customer</CardTitle></CardHeader>
+            <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm"><KeyRound className="size-4 text-primary" /> Akses pelanggan</CardTitle></CardHeader>
             <CardContent className="space-y-2 p-4 pt-1">
-              <p className="text-[10px] leading-5 text-muted-foreground">Terbitkan ulang kode akses dan tautan pribadi saat customer kehilangan akses. Kredensial baru akan mencabut kredensial sebelumnya.</p>
+              <p className="text-[10px] leading-5 text-muted-foreground">Buat kode akses dan tautan pribadi baru saat pelanggan kehilangan akses. Kode sebelumnya akan dinonaktifkan.</p>
               <Button className="h-9 w-full text-xs" variant="outline" disabled={!canRotateAccess || accessMutation.isPending} onClick={() => void handleRotateAccess()}>
                 {accessMutation.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
                 Rotasi kode & tautan
               </Button>
-              {permissions.isSuccess && !canRotateAccess ? <p className="text-[10px] text-muted-foreground">Membutuhkan permission access_control.manage.</p> : null}
+              {permissions.isSuccess && !canRotateAccess ? <p className="text-[10px] text-muted-foreground">Akun ini tidak memiliki hak untuk mengubah akses pelanggan.</p> : null}
               {rotatedAccess ? (
                 <div className="space-y-2 rounded-xl border border-primary/25 bg-primary/[0.04] p-3">
                   <div>
@@ -887,7 +918,7 @@ export function AkashaSmartBookingShow() {
                   </div>
                   {rotatedAccess.portalLinkUrl ? (
                     <div>
-                      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Tautan pribadi customer</p>
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Tautan pribadi pelanggan</p>
                       <p className="mt-1 break-all text-[11px] text-primary">{rotatedAccess.portalLinkUrl}</p>
                       <Button type="button" variant="outline" size="sm" className="mt-2 h-8 w-full text-xs" onClick={() => void copyValue("link", rotatedAccess.portalLinkUrl as string)}>
                         {copied === "link" ? <Check className="size-3.5" /> : <Copy className="size-3.5" />} Salin tautan pribadi
@@ -905,24 +936,24 @@ export function AkashaSmartBookingShow() {
             <CardContent className="space-y-2 p-4 pt-1">
               {qrUrl ? (
                 <div className="flex justify-center rounded-xl border border-border bg-white p-3">
-                  <img src={qrUrl} alt={"QR admin untuk booking " + detail.reference_code} className="size-44 object-contain" />
+                  <img src={qrUrl} alt={"QR admin untuk reservasi " + detail.reference_code} className="size-44 object-contain" />
                 </div>
               ) : <div className="grid h-44 place-items-center rounded-xl border border-dashed text-xs text-muted-foreground">QR sedang disiapkan…</div>}
-              <p className="text-[10px] leading-5 text-muted-foreground">QR hanya membuka detail admin yang dilindungi autentikasi, tenant, dan permission. QR bukan bukti otorisasi.</p>
+              <p className="text-[10px] leading-5 text-muted-foreground">QR hanya membuka detail admin yang dilindungi autentikasi, tenant, dan hak akses. QR hanya membuka halaman detail admin setelah petugas masuk.</p>
               <Button type="button" variant="outline" size="sm" className="h-8 w-full text-xs" disabled={!adminUrl} onClick={() => void copyValue("admin-url", adminUrl)}>
-                {copied === "admin-url" ? <Check className="size-3.5" /> : <Copy className="size-3.5" />} Salin deep link admin
+                {copied === "admin-url" ? <Check className="size-3.5" /> : <Copy className="size-3.5" />} Salin tautan detail admin
               </Button>
             </CardContent>
           </Card>
 
           <Card className="border-border/70 shadow-none">
-            <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm"><ShoppingBag className="size-4 text-primary" /> Handoff transaksi</CardTitle></CardHeader>
+            <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm"><ShoppingBag className="size-4 text-primary" /> Lanjutkan transaksi</CardTitle></CardHeader>
             <CardContent className="space-y-2 p-4 pt-1">
               {conversion.data ? (
-                <p className="text-[10px] leading-5 text-muted-foreground">Booking telah dikonversi ke transaksi operasional. Lanjutkan penetapan unit dan serah-terima melalui workspace penyewaan bila masih diperlukan.</p>
+                <p className="text-[10px] leading-5 text-muted-foreground">Reservasi ini sudah menjadi transaksi. Lanjutkan penetapan unit dan serah-terima melalui halaman Penyewaan bila diperlukan.</p>
               ) : (
                 <>
-                  <p className="text-[10px] leading-5 text-muted-foreground">Walk-in akan dibuka dengan customer dan snapshot item booking. Admin menentukan jam aktual serta akun pembayaran; backend menghitung ulang tarif, promo, dan ketersediaan saat transaksi dibuat.</p>
+                  <p className="text-[10px] leading-5 text-muted-foreground">Halaman Penyewaan akan dibuka dengan data pelanggan dan barang dari reservasi. Petugas mengisi waktu serah-terima; tarif, promo, dan ketersediaan diperiksa kembali saat transaksi dibuat.</p>
                   <Button
                     type="button"
                     variant="outline"

@@ -69,7 +69,7 @@ export function ReservationCreate() {
   const [flowMode, setFlowMode] = useState<FlowMode>("wizard");
   const [prices] = useState<Record<string, string>>(locationState.prices ?? {});
   const [reconciliationError, setReconciliationError] = useState<string | null>(null);
-  const [createdReservation, setCreatedReservation] = useState<{ reservasi_id: string; nomor_reservasi: string } | null>(null);
+  const [createdReservation, setCreatedReservation] = useState<{ reservasi_id: string; smart_booking_id: string; reference_code?: string; nomor_reservasi: string } | null>(null);
   const createCommandContext = useRef<{ idempotencyKey: string; requestId: string } | null>(null);
 
   const context = useQuery({
@@ -124,7 +124,15 @@ export function ReservationCreate() {
     },
     onSuccess: async (result) => {
       createCommandContext.current = null;
-      setCreatedReservation({ reservasi_id: result.reservasi_id, nomor_reservasi: result.nomor_reservasi });
+      if (!result.smart_booking_id) {
+        throw new Error("Reservasi berhasil dibuat, tetapi data pusat Reservasi belum terbentuk. Muat ulang status sebelum melanjutkan.");
+      }
+      setCreatedReservation({
+        reservasi_id: result.reservasi_id,
+        smart_booking_id: result.smart_booking_id,
+        reference_code: result.reference_code,
+        nomor_reservasi: result.nomor_reservasi,
+      });
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["permintaan", "detail", context.data?.usahaId, requestId] }),
         queryClient.invalidateQueries({ queryKey: ["permintaan", "list"] }),
@@ -253,15 +261,18 @@ export function ReservationCreate() {
             </div>
             <p className="mt-8 text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700 dark:text-emerald-300">Reservasi berhasil dicatat</p>
             <h1 className="mt-2 text-2xl font-bold tracking-tight">Reservasi Berhasil Dibuat</h1>
-            <p className="mt-2 text-sm text-muted-foreground">Nomor Reservasi</p>
-            <p className="mt-1 text-2xl font-bold tracking-tight text-primary">{createdReservation?.nomor_reservasi ?? "Reservasi baru"}</p>
+            <p className="mt-2 text-sm text-muted-foreground">Referensi Reservasi</p>
+            <p className="mt-1 text-2xl font-bold tracking-tight text-primary">{createdReservation?.reference_code ?? createdReservation?.nomor_reservasi ?? "Reservasi baru"}</p>
+            {createdReservation?.reference_code ? (
+              <p className="mt-1 text-[11px] text-muted-foreground">Nomor operasional: {createdReservation.nomor_reservasi}</p>
+            ) : null}
             <p className="mt-2 max-w-sm text-sm leading-6 text-muted-foreground">
-              Reservasi telah dicatat dan menunggu konfirmasi. Buka detail untuk melihat status commitment dan kapasitas.
+              Reservasi telah dicatat dan masuk ke pusat Reservasi. Anda dapat melanjutkan pemeriksaan jadwal, perubahan customer, dan proses transaksi dari halaman detail.
             </p>
             <div className="mt-8 grid w-full gap-3 sm:max-w-sm">
               <Button
                 className="h-12 rounded-xl"
-                onClick={() => createdReservation ? navigate(paths.reservasi + "/" + createdReservation.reservasi_id) : navigate(paths.reservasi)}
+                onClick={() => createdReservation ? navigate(paths.reservasi + "/" + createdReservation.smart_booking_id) : navigate(paths.reservasi)}
               >
                 Lihat Detail Reservasi <ArrowRight className="size-4" />
               </Button>

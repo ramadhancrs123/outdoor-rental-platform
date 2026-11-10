@@ -5,7 +5,6 @@ export const resources: ResourceProps[] = [
   { name: "dashboard", list: paths.dashboard, meta: { label: "Dashboard" } },
   { name: "permintaan", list: paths.permintaan, meta: { label: "Permintaan" } },
   { name: "reservasi", list: paths.reservasi, meta: { label: "Reservasi" } },
-  { name: "akasha-smart-booking", list: paths.akashaSmartBooking, meta: { label: "Booking Online" } },
   { name: "penyewaan", list: paths.penyewaan, meta: { label: "Penyewaan" } },
   { name: "pengembalian", list: paths.pengembalian, meta: { label: "Pengembalian" } },
   { name: "inventaris", list: paths.inventaris, create: paths.inventarisCreate, meta: { label: "Inventaris" } },

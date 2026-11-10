@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import {
   AlertCircle, ArrowRight, CalendarClock, CalendarDays,
-  Filter, Inbox, RefreshCw, Search, ShieldAlert, Users,
+  Filter, Inbox, RefreshCw, Search, ShieldAlert,
 } from "lucide-react";
 import { useCurrentUsaha } from "@/app/current-usaha-context";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -14,23 +14,25 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { paths } from "@/routes/paths";
 import {
+  getAkashaSmartBookingCalendar,
   getAkashaSmartBookingSummary,
   listAkashaSmartBookings,
 } from "@/features/akasha-smart-booking/service";
 import type {
   AkashaSmartBookingStatus,
 } from "@/features/akasha-smart-booking/types";
+import { formatSmartBookingStayLabel } from "@/features/akasha-smart-booking/estimate";
+import { ReservationCalendar } from "./reservation-calendar";
+import { getReservationCalendarRange } from "./reservation-calendar-utils";
 
 const PAGE_SIZE = 25;
 const STATUS_FILTERS: Array<{ value: "all" | AkashaSmartBookingStatus; label: string }> = [
   { value: "all", label: "Semua status" },
-  { value: "received", label: "Baru diterima" },
-  { value: "reviewing", label: "Sedang ditinjau" },
-  { value: "acknowledged", label: "Sudah ditinjau" },
-  { value: "customer_action_required", label: "Menunggu customer" },
+  { value: "received", label: "Menunggu konfirmasi" },
+  { value: "customer_action_required", label: "Menunggu pelanggan" },
   { value: "change_requested", label: "Perubahan diminta" },
   { value: "cancellation_pending", label: "Pembatalan diminta" },
-  { value: "ready_for_checkout", label: "Siap checkout" },
+  { value: "ready_for_checkout", label: "Siap diproses" },
   { value: "cancelled", label: "Dibatalkan" },
   { value: "expired", label: "Kedaluwarsa" },
   { value: "fulfilled", label: "Selesai" },
@@ -38,16 +40,16 @@ const STATUS_FILTERS: Array<{ value: "all" | AkashaSmartBookingStatus; label: st
 
 function statusLabel(status: AkashaSmartBookingStatus) {
   const labels: Record<AkashaSmartBookingStatus, string> = {
-    received: "Baru",
-    reviewing: "Ditinjau",
-    acknowledged: "Ditinjau",
-    customer_action_required: "Menunggu customer",
+    received: "Menunggu konfirmasi",
+    reviewing: "Menunggu konfirmasi",
+    acknowledged: "Menunggu konfirmasi",
+    customer_action_required: "Menunggu pelanggan",
     change_requested: "Perubahan diminta",
     cancellation_pending: "Pembatalan diminta",
-    ready_for_checkout: "Siap checkout",
+    ready_for_checkout: "Siap diproses",
     cancelled: "Dibatalkan",
     expired: "Kedaluwarsa",
-    fulfilled: "Dikonversi",
+    fulfilled: "Selesai",
   };
   return labels[status];
 }
@@ -92,14 +94,14 @@ function SummaryCard({
 }) {
   return (
     <Card className="border-border/70 shadow-none">
-      <CardContent className="flex items-center gap-3 p-3.5">
-        <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
-          <Icon className="size-4" aria-hidden="true" />
+      <CardContent className="flex items-center gap-2 px-2.5 py-2 sm:px-3">
+        <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary">
+          <Icon className="size-3.5" aria-hidden="true" />
         </span>
         <div className="min-w-0">
-          <p className="text-[11px] font-medium text-muted-foreground">{label}</p>
-          <p className="mt-0.5 text-xl font-bold tracking-tight">{value}</p>
-          {detail ? <p className="truncate text-[10px] text-muted-foreground">{detail}</p> : null}
+          <p className="truncate text-[10px] font-medium text-muted-foreground">{label}</p>
+          <p className="text-lg font-bold leading-5 tracking-tight">{value}</p>
+          {detail ? <p className="hidden truncate text-[9px] text-muted-foreground sm:block">{detail}</p> : null}
         </div>
       </CardContent>
     </Card>
@@ -108,6 +110,9 @@ function SummaryCard({
 
 export function AkashaSmartBookingList() {
   const { status: tenantStatus, current, error: tenantError } = useCurrentUsaha();
+  const [activeView, setActiveView] = useState<"calendar" | "list">("calendar");
+  const [calendarMonth, setCalendarMonth] = useState("");
+  const [selectedDate, setSelectedDate] = useState("");
   const [filter, setFilter] = useState<"all" | AkashaSmartBookingStatus>("all");
   const [search, setSearch] = useState("");
   const [appliedSearch, setAppliedSearch] = useState("");
@@ -136,7 +141,7 @@ export function AkashaSmartBookingList() {
       "akasha-smart-booking", "list", current?.usahaId, filter,
       appliedSearch, pickupFrom, pickupUntil, page,
     ],
-    enabled: tenantStatus === "ready" && Boolean(current?.usahaId),
+    enabled: tenantStatus === "ready" && Boolean(current?.usahaId) && activeView === "list",
     queryFn: () => listAkashaSmartBookings({
       usahaId: current!.usahaId,
       status: filter,
@@ -150,15 +155,48 @@ export function AkashaSmartBookingList() {
     refetchInterval: 60_000,
   });
 
-  const totalPages = Math.max(1, Math.ceil((bookings.data?.total ?? 0) / PAGE_SIZE));
   const data = summary.data;
+  useEffect(() => {
+    if (data?.today_business_date && !selectedDate) {
+      setSelectedDate(data.today_business_date);
+      setCalendarMonth(data.today_business_date.slice(0, 7));
+    }
+  }, [data?.today_business_date, selectedDate]);
+
+  const browserToday = new Date();
+  const browserDate = [
+    browserToday.getFullYear(),
+    String(browserToday.getMonth() + 1).padStart(2, "0"),
+    String(browserToday.getDate()).padStart(2, "0"),
+  ].join("-");
+  const effectiveMonth = calendarMonth || data?.today_business_date.slice(0, 7) || browserDate.slice(0, 7);
+  const calendarRange = useMemo(
+    () => getReservationCalendarRange(effectiveMonth),
+    [effectiveMonth],
+  );
+  const calendar = useQuery({
+    queryKey: [
+      "akasha-smart-booking", "calendar", current?.usahaId,
+      calendarRange.from, calendarRange.until, selectedDate,
+    ],
+    enabled: tenantStatus === "ready" && Boolean(current?.usahaId && selectedDate) && activeView === "calendar",
+    queryFn: () => getAkashaSmartBookingCalendar({
+      usahaId: current!.usahaId,
+      dateFrom: calendarRange.from,
+      dateUntil: calendarRange.until,
+      selectedDate,
+    }),
+    staleTime: 10_000,
+    refetchInterval: 60_000,
+  });
+  const totalPages = Math.max(1, Math.ceil((bookings.data?.total ?? 0) / PAGE_SIZE));
   const cards = data ? [
-    { label: "Booking baru", value: data.received, icon: Inbox },
+    { label: "Reservasi baru", value: data.received, icon: Inbox },
     {
-      label: "Perlu tindak lanjut",
+      label: "Perlu ditindaklanjuti",
       value: data.customer_action_required + data.change_requested + data.cancellation_pending,
       icon: ShieldAlert,
-      detail: data.pending_change_requests + " permintaan perubahan pending",
+      detail: data.pending_change_requests + " perubahan dari pelanggan",
     },
     { label: "Pengambilan hari ini", value: data.pickup_today, icon: CalendarClock, detail: data.today_business_date },
     { label: "Pengambilan besok", value: data.pickup_tomorrow, icon: CalendarDays, detail: data.business_timezone },
@@ -179,7 +217,7 @@ export function AkashaSmartBookingList() {
   if (tenantStatus === "error" || !current) {
     return (
       <Alert variant="destructive">
-        <AlertTitle>Booking online belum dapat dibuka</AlertTitle>
+        <AlertTitle>Reservasi belum dapat dibuka</AlertTitle>
         <AlertDescription>{tenantError?.message ?? "Usaha aktif belum tersedia."}</AlertDescription>
       </Alert>
     );
@@ -193,47 +231,90 @@ export function AkashaSmartBookingList() {
             <CalendarClock className="size-5" aria-hidden="true" />
           </span>
           <div className="min-w-0">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-primary/80">Kanal website</p>
-            <h1 className="text-xl font-bold tracking-tight sm:text-2xl">Booking Online</h1>
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              Tinjau permintaan customer, pantau proyeksi stok, dan tindak lanjuti perubahan.
+            <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-primary/80">Operasional</p>
+            <h1 className="text-lg font-bold tracking-tight sm:text-xl">Reservasi</h1>
+            <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">
+              Jadwal ambil, kembali, dan konfirmasi reservasi.
             </p>
           </div>
         </div>
         <Button
           type="button" variant="outline" size="sm"
           className="h-9 self-start rounded-lg text-xs sm:self-auto"
-          onClick={() => { void summary.refetch(); void bookings.refetch(); }}
-          disabled={summary.isFetching || bookings.isFetching}
+          onClick={() => { void summary.refetch(); void bookings.refetch(); void calendar.refetch(); }}
+          disabled={summary.isFetching || bookings.isFetching || calendar.isFetching}
         >
-          <RefreshCw className={"size-3.5 " + (summary.isFetching || bookings.isFetching ? "animate-spin" : "")} />
+          <RefreshCw className={"size-3.5 " + (summary.isFetching || bookings.isFetching || calendar.isFetching ? "animate-spin" : "")} />
           Perbarui
         </Button>
       </header>
 
-      <Alert className="border-amber-500/25 bg-amber-500/[0.04]">
-        <ShieldAlert className="size-4 text-amber-600" />
-        <AlertTitle className="text-sm">Booking bukan penguncian stok</AlertTitle>
-        <AlertDescription className="text-xs leading-5">
-          Angka ketersediaan pada detail merupakan proyeksi saat diperiksa. Barang belum dialokasikan dan harus diverifikasi kembali melalui alur penyewaan/penjualan operasional.
-        </AlertDescription>
+      <Alert className="border-amber-500/25 bg-amber-500/[0.04] py-2">
+        <ShieldAlert className="size-3.5 text-amber-600" />
+        <AlertTitle className="text-xs">Barang diperiksa kembali saat transaksi disiapkan.</AlertTitle>
       </Alert>
 
       {summary.error ? (
         <Alert variant="destructive">
           <AlertCircle className="size-4" />
           <AlertTitle>Ringkasan belum dapat dimuat</AlertTitle>
-          <AlertDescription>{summary.error.message}</AlertDescription>
+          <AlertDescription>Ringkasan reservasi tidak dapat dimuat. Coba perbarui halaman.</AlertDescription>
         </Alert>
       ) : null}
 
-      <section className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-4" aria-label="Ringkasan booking">
+      <section className="grid grid-cols-2 gap-1.5 sm:grid-cols-4 sm:gap-2" aria-label="Ringkasan reservasi">
         {cards.length > 0
           ? cards.map((item) => <SummaryCard key={item.label} {...item} />)
           : Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="h-[78px] rounded-xl" />)}
       </section>
 
-      <section className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_300px]">
+      <div className="flex items-center gap-1 rounded-xl border border-border/70 bg-muted/30 p-1" role="tablist" aria-label="Tampilan reservasi">
+        <Button
+          type="button"
+          size="sm"
+          variant={activeView === "calendar" ? "default" : "ghost"}
+          role="tab"
+          aria-selected={activeView === "calendar"}
+          className="h-8 flex-1 text-xs sm:flex-none"
+          onClick={() => setActiveView("calendar")}
+        >
+          <CalendarDays className="size-3.5" /> Kalender
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant={activeView === "list" ? "default" : "ghost"}
+          role="tab"
+          aria-selected={activeView === "list"}
+          className="h-8 flex-1 text-xs sm:flex-none"
+          onClick={() => setActiveView("list")}
+        >
+          <Inbox className="size-3.5" /> Daftar & tindak lanjut
+        </Button>
+      </div>
+
+      {activeView === "calendar" ? (
+        <ReservationCalendar
+          month={effectiveMonth}
+          selectedDate={selectedDate || data?.today_business_date || browserDate}
+          data={calendar.data}
+          isLoading={calendar.isLoading}
+          error={calendar.error}
+          todayBusinessDate={data?.today_business_date ?? ""}
+          onMonthChange={(nextMonth) => {
+            setCalendarMonth(nextMonth);
+            setSelectedDate(nextMonth + "-01");
+          }}
+          onDateSelect={(date) => {
+            setCalendarMonth(date.slice(0, 7));
+            setSelectedDate(date);
+          }}
+          onRetry={() => void calendar.refetch()}
+          onShowList={() => setActiveView("list")}
+        />
+      ) : (
+      <>
+        <section className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_300px]">
         <Card className="border-border/70 shadow-none">
           <CardContent className="space-y-3 p-3.5 sm:p-4">
             <div className="flex flex-wrap items-center gap-2">
@@ -242,16 +323,16 @@ export function AkashaSmartBookingList() {
                 <Input
                   value={search}
                   onChange={(event) => { setSearch(event.target.value); setPage(0); }}
-                  placeholder="Cari referensi, nama, WA, atau barang"
+                  placeholder="Cari nama, nomor WA, atau barang"
                   className="h-9 rounded-lg pl-9 text-xs"
-                  aria-label="Cari booking"
+                  aria-label="Cari reservasi"
                 />
               </div>
               <select
                 value={filter}
                 onChange={(event) => { setFilter(event.target.value as typeof filter); setPage(0); }}
                 className="h-9 min-w-[155px] rounded-lg border border-input bg-background px-3 text-xs"
-                aria-label="Filter status booking"
+                aria-label="Filter status reservasi"
               >
                 {STATUS_FILTERS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
@@ -272,31 +353,19 @@ export function AkashaSmartBookingList() {
           </CardContent>
         </Card>
 
-        <Card className="border-border/70 shadow-none">
-          <CardContent className="flex h-full items-center gap-3 p-3.5">
-            <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-muted text-muted-foreground">
-              <Users className="size-4" />
-            </span>
-            <div className="min-w-0">
-              <p className="text-[11px] text-muted-foreground">Seluruh booking</p>
-              <p className="text-xl font-bold">{data?.total ?? "—"}</p>
-              <p className="text-[10px] text-muted-foreground">Termasuk booking yang sudah ditutup</p>
-            </div>
-          </CardContent>
-        </Card>
       </section>
 
       {bookings.error ? (
         <Alert variant="destructive">
-          <AlertTitle>Daftar booking belum dapat dimuat</AlertTitle>
-          <AlertDescription>{bookings.error.message}</AlertDescription>
+          <AlertTitle>Daftar reservasi belum dapat dimuat</AlertTitle>
+          <AlertDescription>Daftar reservasi tidak dapat dimuat. Periksa koneksi lalu coba kembali.</AlertDescription>
         </Alert>
       ) : null}
 
-      <section className="overflow-hidden rounded-xl border border-border/70 bg-card shadow-sm">
+      <section className="overflow-hidden rounded-xl border border-border/70 bg-card shadow-sm" data-testid="reservation-list-panel">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/70 bg-muted/20 px-3 py-2.5 sm:px-4">
           <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold">Antrian booking</span>
+            <span className="text-xs font-semibold">Daftar Reservasi</span>
             <Badge variant="secondary" className="h-5 rounded-full px-2 text-[10px]">{bookings.data?.total ?? 0}</Badge>
           </div>
           <span className="text-[10px] text-muted-foreground">
@@ -305,14 +374,14 @@ export function AkashaSmartBookingList() {
         </div>
 
         {bookings.isLoading ? (
-          <div className="space-y-2 p-3">
+          <div className="space-y-2 p-3" data-testid="reservation-list-loading">
             {Array.from({ length: 5 }).map((_, index) => <Skeleton key={index} className="h-16 rounded-lg" />)}
           </div>
         ) : !bookings.data?.items.length ? (
           <div className="flex min-h-52 flex-col items-center justify-center px-4 py-10 text-center">
             <span className="grid size-11 place-items-center rounded-full bg-muted text-muted-foreground"><Inbox className="size-5" /></span>
-            <h2 className="mt-3 text-sm font-semibold">Belum ada booking pada filter ini</h2>
-            <p className="mt-1 max-w-md text-xs leading-5 text-muted-foreground">Permintaan baru dari website akan muncul di antrian ini setelah customer mengirim formulir booking.</p>
+            <h2 className="mt-3 text-sm font-semibold">Belum ada reservasi pada filter ini</h2>
+            <p className="mt-1 max-w-md text-xs leading-5 text-muted-foreground">Reservasi baru muncul setelah pelanggan mengirim permintaan atau admin mencatatnya dari halaman Permintaan.</p>
           </div>
         ) : (
           <>
@@ -320,7 +389,8 @@ export function AkashaSmartBookingList() {
               {bookings.data.items.map((item) => (
                 <Link
                   key={item.smart_booking_id}
-                  to={paths.akashaSmartBooking + "/" + item.smart_booking_id}
+                  to={paths.reservasi + "/" + item.smart_booking_id}
+                  data-testid="reservation-list-item"
                   className="group flex flex-col gap-2 px-3 py-3 transition-colors hover:bg-muted/25 sm:flex-row sm:items-center sm:justify-between sm:px-4"
                 >
                   <div className="min-w-0 flex-1">
@@ -346,9 +416,12 @@ export function AkashaSmartBookingList() {
                   <div className="flex items-center justify-between gap-3 sm:justify-end">
                     <div className="text-left sm:text-right">
                       <p className="text-xs font-semibold">{dateOnly(item.requested_pickup_date, data?.business_timezone)}</p>
-                      <p className="mt-0.5 text-[10px] text-muted-foreground">{item.requested_return_date ? "Kembali " + dateOnly(item.requested_return_date, data?.business_timezone) : dateTime(item.created_at)}</p>
+                      <p className="mt-0.5 text-[10px] text-muted-foreground">{item.requested_return_date ? "Kembali " + dateOnly(item.requested_return_date, data?.business_timezone) : dateTime(item.created_at)}{item.requested_pickup_date && item.requested_return_date ? " · " + (formatSmartBookingStayLabel(item.requested_pickup_date, item.requested_return_date) ?? "Durasi belum valid") : ""}</p>
                     </div>
-                    <span className="min-w-[112px] text-right text-xs font-semibold">{currency(item.quote_total, item.currency_code)}</span>
+                    <div className="min-w-[112px] text-right">
+                      <p className="text-xs font-semibold">{currency(item.quote_total, item.currency_code)}</p>
+                      <p className="mt-0.5 text-[9px] text-muted-foreground">Nilai awal</p>
+                    </div>
                     <ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
                   </div>
                 </Link>
@@ -366,6 +439,8 @@ export function AkashaSmartBookingList() {
           </>
         )}
       </section>
+      </>
+      )}
     </main>
   );
 }

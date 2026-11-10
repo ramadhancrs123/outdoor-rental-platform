@@ -97,12 +97,16 @@ Hasil audit menunjukkan belum ada permission matrix granular di database maupun 
 
 ### 2.7 Reservasi dan Walk-in
 
-- Reservasi adalah catatan/komitmen awal dan snapshot kesepakatan; reservasi **bukan** record penyewaan dan tidak boleh otomatis membuat rental.
-- Rental operasional tetap dibuat melalui halaman Walk-in.
-- Harga/promo yang telah disepakati dan disimpan saat reservasi berhasil dibuat dikunci pada snapshot reservasi. Konversi tidak menghitung ulang promo terkini.
-- Walk-in memvalidasi identitas penyewa, tanggal, status reservasi, dan stock lock sebelum membuat rental.
-- Jika kesepakatan berubah saat pelanggan hadir, perubahan harga/item harus dilakukan secara eksplisit melalui proses amendment yang diaudit di Walk-in; jangan mengubah snapshot lama atau menghitung ulang promo diam-diam.
-- Kebijakan loyalitas dan diskon checkout berlaku pada pembuatan rental Walk-in, bukan pada reservasi publik.
+- Reservasi adalah satu fitur/workspace untuk seluruh kanal, baik permintaan website maupun reservasi yang dicatat admin. Smart Booking adalah aggregate dan workflow teknis yang sama, bukan fitur lain atau jenis reservasi terpisah.
+- `app_private.akasha_smart_booking` adalah aggregate kanonis untuk antrean, kalender, customer, perubahan, status, dan tracking reservasi.
+- `public.reservasi` tetap dipakai sebagai record kompatibilitas untuk command rental yang telah ada dan ditautkan one-to-one melalui `reservasi_id`. Record tersebut tidak menjadi entri kalender/daftar kedua dan tidak memiliki menu admin sendiri.
+- Pembuatan dari website dan dari Permintaan Sewa admin wajib menghasilkan satu Smart Booking aggregate. Jalur admin menggunakan trusted RPC atomik `admin_create_akasha_smart_booking_from_request`.
+- Reservasi adalah catatan kesepakatan dan jadwal; reservasi **bukan** record penyewaan dan tidak otomatis membuat rental.
+- Rental operasional tetap dibuat melalui Walk-in. Kalender/agenda reservasi adalah read-only dan tidak mengalokasikan kapasitas atau unit.
+- Harga/promo yang telah disepakati dan disimpan saat reservasi berhasil dibuat dikunci pada snapshot reservasi. Konversi tidak menghitung ulang promo terkini saat membaca snapshot; validasi operasional tetap dilakukan oleh trusted checkout command.
+- Walk-in memvalidasi identitas penyewa, tanggal, status reservasi, serta ketersediaan stok sebelum membuat rental.
+- Jika kesepakatan berubah, perubahan harga/item/jadwal harus dilakukan secara eksplisit melalui workflow amendment yang diaudit di Reservasi Center; jangan mengubah snapshot lama atau menghitung ulang promo diam-diam.
+- Kebijakan loyalitas dan diskon checkout berlaku pada pembuatan rental Walk-in, bukan pada permintaan publik.
 
 ---
 
@@ -193,9 +197,9 @@ Signature berikut dibaca dari katalog function database Supabase aktual. Tidak d
 | Domain | RPC/private command aktual | Signature ringkas | Security dan consumer |
 |---|---|---|---|
 | Rental Walk-in | `app_private.command_create_direct_rental` / `public.command_create_direct_rental` | `(uuid, uuid, timestamptz, timestamptz, jsonb, text, text, uuid)` | Private `SECURITY DEFINER`, `search_path=''`; public wrapper `SECURITY INVOKER`; authenticated. Dipakai `src/features/penyewaan/service.ts` dan `src/pages/penyewaan/walk-in.tsx`. |
-| Reservasi dibuat | `command_create_reservation_from_request` | `(uuid, uuid, jsonb, text, uuid)` | Private trusted command + public invoker wrapper; authenticated. Dipanggil dari `src/features/reservasi/service.ts` dan halaman create reservasi. |
-| Reservasi dikonfirmasi | `command_confirm_reservation` | `(uuid, uuid, text, uuid)` | Trusted command; mengubah status reservasi dan mengunci kapasitas, bukan membuat penyewaan. Dipanggil halaman detail reservasi. |
-| Rental dari reservasi | `command_create_rental_from_reservation` | `(uuid, uuid, timestamptz, timestamptz, text, uuid)` | Trusted command + public invoker wrapper; hanya consumer frontend yang ditemukan adalah Walk-in melalui query `reservasi_id`. Menyalin snapshot detail reservasi ke rental draft. |
+| Reservasi dari Permintaan Sewa admin | `admin_create_akasha_smart_booking_from_request` | `(uuid, uuid, jsonb, text, uuid)` | Public definer wrapper + private trusted orchestrator. Memanggil command snapshot harga yang sudah ada, lalu membuat satu Smart Booking aggregate secara atomik. Dipanggil dari `src/features/reservasi/service.ts`. |
+| Konfirmasi reservasi legacy | `command_confirm_reservation` | `(uuid, uuid, text, uuid)` | Trusted compatibility command untuk data `public.reservasi` yang tidak terhubung ke Smart Booking. Tidak menjadi command atau halaman kedua di Reservasi Center. |
+| Rental dari reservasi legacy | `command_create_rental_from_reservation` | `(uuid, uuid, timestamptz, timestamptz, text, uuid)` | Compatibility path untuk data reservasi lama. Reservasi Center menggunakan Smart Booking atomic conversion agar sumber rental/penjualan ditautkan pada satu aggregate. |
 | Penjualan POS | `command_create_sale` (public overload 1) | `(uuid, text, text, text, jsonb, uuid, text, text, uuid)` | Public wrapper invoker memanggil private sale command. Dipakai `src/features/penjualan/service.ts`. |
 | Penjualan POS dengan source | `command_create_sale` (public overload 2) | `(uuid, text, text, text, text, jsonb, uuid, text, text, uuid)` | Public wrapper invoker; source dinyatakan eksplisit. Dipakai oleh service penjualan sesuai mode. |
 | Penjualan terhubung penyewa | `command_create_sale_with_renter` | `(uuid, uuid, text, text, text, jsonb, uuid, text, text, uuid)` | Public wrapper saat ini `SECURITY DEFINER`; private counterpart juga trusted. Perlu review konsistensi wrapper/grant dan auth guard saat perubahan. |

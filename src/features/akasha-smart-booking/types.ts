@@ -196,3 +196,50 @@ export type AkashaSmartBookingSummary = {
   business_timezone: string
   inventory_is_reserved: false
 }
+
+
+export type AkashaSmartBookingCalendarDay = {
+  date: string
+  booking_count: number
+  pickup_count: number
+  return_count: number
+  in_period_count: number
+}
+
+export type AkashaSmartBookingCalendarAgendaItem = {
+  smart_booking_id: string
+  reference_code: string
+  reservation_id: string | null
+  reservation_number: string | null
+  customer_name: string
+  customer_phone: string
+  workflow_status: AkashaSmartBookingStatus
+  requested_pickup_date: string
+  requested_return_date: string | null
+  quote_total: number
+  currency_code: string
+  created_at: string
+  line_summary: Array<{
+    kind: "rental" | "sale"
+    name: string
+    variant: string | null
+    quantity: number
+  }>
+  pending_change_count: number
+  is_pickup: boolean
+  is_return: boolean
+  is_in_period: boolean
+}
+
+export type AkashaSmartBookingCalendar = {
+  business_timezone: string
+  date_from: string
+  date_until: string
+  scheduled_count: number
+  pickup_count: number
+  return_count: number
+  unscheduled_count: number
+  agenda_total: number
+  days: AkashaSmartBookingCalendarDay[]
+  agenda: AkashaSmartBookingCalendarAgendaItem[]
+}
