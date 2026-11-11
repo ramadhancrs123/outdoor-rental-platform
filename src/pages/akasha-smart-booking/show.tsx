@@ -16,6 +16,10 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { createClientId } from "@/lib/client-id";
@@ -27,7 +31,7 @@ import {
   getAkashaSmartBookingConversion,
   resolveAkashaSmartBookingChange,
   rotateAkashaSmartBookingAccess,
-  setAkashaSmartBookingStatus,
+  confirmAkashaSmartBooking,
 } from "@/features/akasha-smart-booking/service";
 import type {
   AkashaSmartBookingAvailability,
@@ -200,9 +204,9 @@ function targetName(target: ProposedTarget, map: Map<string, CatalogTarget>) {
 
 function Metric({ label, value, detail }: { label: string; value: string; detail?: string }) {
   return (
-    <div className="rounded-xl border border-border/70 bg-muted/20 p-3">
+    <div className="rounded-lg border border-border/70 bg-muted/20 p-2.5">
       <p className="text-[10px] font-medium text-muted-foreground">{label}</p>
-      <p className="mt-1 text-sm font-semibold">{value}</p>
+      <p className="mt-1 break-words text-sm font-semibold">{value}</p>
       {detail ? <p className="mt-0.5 text-[10px] text-muted-foreground">{detail}</p> : null}
     </div>
   );
@@ -215,6 +219,9 @@ export function AkashaSmartBookingShow() {
   const { status: tenantStatus, current, error: tenantError } = useCurrentUsaha();
   const [resolutionNote, setResolutionNote] = useState("");
   const [publicResolutionNote, setPublicResolutionNote] = useState("");
+  const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
+  const [dpChoice, setDpChoice] = useState<"none" | "received" | "">("");
+  const [dpInput, setDpInput] = useState("");
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [qrUrl, setQrUrl] = useState<string | null>(null);
@@ -346,22 +353,26 @@ export function AkashaSmartBookingShow() {
     ]);
   };
 
-  const statusMutation = useMutation({
-    mutationFn: async (targetStatus: "ready_for_checkout") => {
-      if (!booking.data || !canReview) throw new Error("Akses untuk mengonfirmasi reservasi tidak diberikan.");
-      return setAkashaSmartBookingStatus({
+  const confirmationMutation = useMutation({
+    mutationFn: async (dpAmount: number) => {
+      if (!booking.data || !canReview) throw new Error("Akses untuk mengonfirmasi booking tidak diberikan.");
+      return confirmAkashaSmartBooking({
         smartBookingId: booking.data.smart_booking_id,
-        targetStatus,
         expectedRevision: booking.data.revision,
-        note: null,
+        dpAmount,
       });
     },
-    onSuccess: async () => {
+    onSuccess: async (result) => {
       setActionError(null);
-      setActionMessage("Reservasi dikonfirmasi dan siap diproses.");
+      setActionMessage(result.dp_amount > 0
+        ? "Booking dikonfirmasi. DP " + formatCurrency(result.dp_amount, booking.data?.currency_code) + " (" + result.dp_percent.toLocaleString("id-ID", { maximumFractionDigits: 1 }) + "%) berhasil dicatat."
+        : "Booking dikonfirmasi tanpa DP.");
+      setConfirmDialogOpen(false);
+      setDpChoice("");
+      setDpInput("");
       await refreshAll();
     },
-    onError: (error: unknown) => setActionError(error instanceof Error ? error.message : "Konfirmasi reservasi gagal disimpan."),
+    onError: (error: unknown) => setActionError(error instanceof Error ? error.message : "Konfirmasi booking gagal disimpan."),
   });
 
   const changeMutation = useMutation({
@@ -454,6 +465,23 @@ export function AkashaSmartBookingShow() {
       && ["received", "reviewing", "acknowledged", "change_requested"].includes(detail.workflow_status)
     : false;
   const businessTimezone = detail?.business_timezone ?? "Asia/Jakarta";
+  const recordedDp = detail?.dp_amount ?? null;
+  const recordedDpPercent = recordedDp !== null && (detail?.quote_total ?? 0) > 0
+    ? (recordedDp / (detail?.quote_total ?? 1)) * 100
+    : null;
+  const dpInputAmount = dpInput.trim() === "" ? null : Number(dpInput);
+  const dpInputValid = dpChoice === "none"
+    || (dpChoice === "received"
+      && dpInputAmount !== null
+      && Number.isInteger(dpInputAmount)
+      && dpInputAmount > 0
+      && dpInputAmount <= (detail?.quote_total ?? 0));
+  const dpInputPercent = dpChoice === "received" && dpInputAmount !== null && (detail?.quote_total ?? 0) > 0
+    ? (dpInputAmount / (detail?.quote_total ?? 1)) * 100
+    : null;
+  const bookingDpPercentLabel = recordedDpPercent === null
+    ? null
+    : recordedDpPercent.toLocaleString("id-ID", { maximumFractionDigits: 1 }) + "%";
   const bookingTariffMap = bookingTariffs.data ?? new Map<string, SmartBookingTariffPeriod>();
   const estimatedLines = (detail?.lines ?? []).map((line) => {
     const tariff = line.tarif_sewa_id ? bookingTariffMap.get(line.tarif_sewa_id) ?? null : null;
@@ -490,7 +518,7 @@ export function AkashaSmartBookingShow() {
       "Pengembalian: " + formatDate(detail.requested_return_date, businessTimezone),
       "Durasi estimasi: " + (requestedStayLabel ?? "Belum ditentukan"),
       ...lines,
-      "Estimasi biaya berdasarkan tanggal: " + formatCurrency(estimatedBookingTotal, detail.currency_code),
+      "Perkiraan total sewa + beli: " + formatCurrency(estimatedBookingTotal, detail.currency_code),
       "Catatan: estimasi tanggal mengasumsikan jam ambil dan kembali setara. Admin menghitung ulang berdasarkan waktu serah-terima aktual; stok belum dialokasikan.",
     ].join("\\n");
   }, [detail, businessTimezone, requestedStayLabel, estimatedBookingTotal]);
@@ -523,9 +551,23 @@ export function AkashaSmartBookingShow() {
     }
   }
 
-  async function handleStatusChange() {
-    if (!window.confirm("Konfirmasi reservasi ini dan tandai siap diproses?")) return;
-    statusMutation.mutate("ready_for_checkout");
+  function handleStatusChange() {
+    confirmationMutation.reset();
+    setActionError(null);
+    setDpChoice("");
+    setDpInput("");
+    setConfirmDialogOpen(true);
+  }
+
+  function handleConfirmBooking() {
+    if (!detail || !dpChoice) return;
+    const amount = dpChoice === "none" ? 0 : Number(dpInput);
+    if (!Number.isInteger(amount) || amount < 0 || amount > detail.quote_total || (dpChoice === "received" && amount <= 0)) {
+      setActionError("Nominal DP harus berupa angka rupiah bulat, lebih dari Rp0, dan tidak melebihi total booking.");
+      return;
+    }
+    setActionError(null);
+    confirmationMutation.mutate(amount);
   }
 
   async function handleRotateAccess() {
@@ -578,9 +620,8 @@ export function AkashaSmartBookingShow() {
             <div className="mt-1 flex flex-wrap items-center gap-2">
               <h1 className="text-xl font-bold tracking-tight sm:text-2xl">{detail.reference_code}</h1>
               <Badge variant={statusVariant(detail.workflow_status)}>{STATUS_LABELS[detail.workflow_status]}</Badge>
-              <Badge variant="outline">Revisi #{detail.revision}</Badge>
             </div>
-            <p className="mt-1 text-xs text-muted-foreground">
+            <p className="mt-1 text-[10px] text-muted-foreground sm:text-xs">
               Dibuat {formatDateTime(detail.created_at, businessTimezone)} · diperbarui {formatDateTime(detail.updated_at, businessTimezone)}
             </p>
           </div>
@@ -593,6 +634,18 @@ export function AkashaSmartBookingShow() {
             <Button variant="outline" size="sm" className="h-9 text-xs" onClick={() => void copyValue("summary", bookingSummary)}>
               {copied === "summary" ? <Check className="size-3.5" /> : <Clipboard className="size-3.5" />} Salin ringkasan
             </Button>
+            {canConfirm && canReview ? (
+              <Button
+                type="button"
+                size="sm"
+                className="h-9 text-xs"
+                disabled={confirmationMutation.isPending}
+                onClick={handleStatusChange}
+              >
+                <CheckCircle2 className="size-3.5" />
+                Konfirmasi & siapkan checkout
+              </Button>
+            ) : null}
           </div>
         </div>
         {detail.workflow_status === "ready_for_checkout" ? (
@@ -621,37 +674,49 @@ export function AkashaSmartBookingShow() {
         <Alert variant="destructive"><AlertTitle>Hak akses belum dapat diperiksa</AlertTitle><AlertDescription>{permissions.error.message}. Tindakan admin dinonaktifkan.</AlertDescription></Alert>
       ) : null}
 
-      <section className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_330px]">
-        <div className="space-y-3">
-          <Card className="border-border/70 shadow-none">
+      <Tabs defaultValue="detail" className="w-full" data-testid="booking-detail-tabs">
+        <TabsList className="grid h-10 w-full grid-cols-3 rounded-xl p-1">
+          <TabsTrigger value="detail" className="gap-1.5 text-xs">
+            <UserRound className="size-3.5" /> Detail
+          </TabsTrigger>
+          <TabsTrigger value="requests" className="gap-1.5 text-xs">
+            <FileClock className="size-3.5" /> Permintaan
+            {pendingChanges.length > 0 ? <span className="ml-0.5 rounded-full bg-primary px-1.5 py-0.5 text-[9px] text-primary-foreground">{pendingChanges.length}</span> : null}
+          </TabsTrigger>
+          <TabsTrigger value="access" className="gap-1.5 text-xs">
+            <KeyRound className="size-3.5" /> Akses
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="detail" className="mt-3 space-y-3">
+          <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_260px]">
+            <div className="order-2 min-w-0 space-y-3 xl:order-1">
+<Card className="border-border/70 shadow-none">
             <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm"><UserRound className="size-4 text-primary" /> Pelanggan & periode</CardTitle></CardHeader>
-            <CardContent className="grid gap-3 p-4 pt-1 sm:grid-cols-2">
+            <CardContent className="grid grid-cols-2 gap-2.5 p-3 pt-1 sm:gap-3 sm:p-4 sm:pt-1">
               <Metric label="Nama pelanggan" value={detail.customer_name} />
               <Metric label="Nomor WhatsApp" value={detail.customer_phone} />
               <Metric label="Pengambilan" value={formatDate(detail.requested_pickup_date, businessTimezone)} />
               <Metric label="Pengembalian" value={formatDate(detail.requested_return_date, businessTimezone)} />
-              <Metric label="Durasi estimasi" value={requestedStayLabel ?? (detail.lines.some((line) => line.kind === "rental") ? "Belum ditentukan" : "—")} />
-              <Metric label="Estimasi biaya berdasarkan tanggal" value={bookingTariffs.isLoading && rentalTariffIds.length > 0 ? "Menghitung..." : formatCurrency(estimatedBookingTotal, detail.currency_code)} detail="Proyeksi, bukan tagihan final" />
-              <Metric label="Nilai awal" value={formatCurrency(detail.quote_total, detail.currency_code)} detail="Belum menyesuaikan lama sewa" />
-              <Metric label="Status proses" value={STATUS_LABELS[detail.workflow_status]} detail={"Zona waktu " + businessTimezone} />
+              <Metric label="Durasi" value={requestedStayLabel ?? (detail.lines.some((line) => line.kind === "rental") ? "Belum ditentukan" : "—")} />
+              <Metric label="Perkiraan total sewa + beli" value={bookingTariffs.isLoading && rentalTariffIds.length > 0 ? "Menghitung..." : formatCurrency(estimatedBookingTotal, detail.currency_code)} detail="Perkiraan, belum tagihan akhir" />
             </CardContent>
           </Card>
-
-          <Card className="border-border/70 shadow-none">
+<Card className="border-border/70 shadow-none">
             <CardHeader className="pb-2">
               <CardTitle className="flex items-center justify-between gap-2 text-sm">
                 <span className="flex items-center gap-2"><Package className="size-4 text-primary" /> Barang dalam reservasi</span>
                 <Badge variant="secondary">{detail.lines.length} item</Badge>
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-0 p-4 pt-1">
+            <CardContent className="space-y-0 p-3 pt-1">
               {estimatedLines.map(({ line, periods, estimatedPeriods, estimatedSubtotal, normalSubtotal }) => (
                 <div key={line.line_id} className="flex items-start justify-between gap-3 border-b border-border/60 py-3 last:border-0">
                   <div className="min-w-0">
                     <p className="text-sm font-semibold">{line.name}{line.variant ? " · " + line.variant : ""}</p>
                     <p className="mt-0.5 text-[11px] text-muted-foreground">
                       {line.kind === "rental"
-                        ? "Rental · " + (requestedStayLabel ?? "tanggal belum valid") + " · " + (periods === null ? "periode belum terhitung" : estimatedPeriods + " periode tarif")
+                        ? "Rental · " + (requestedStayLabel ?? "tanggal belum valid") + " · " + (periods === null ? "durasi belum dapat dihitung" : estimatedPeriods + " periode")
                         : "Pembelian · sekali beli"} · {line.quantity} unit
 
                     </p>
@@ -676,15 +741,14 @@ export function AkashaSmartBookingShow() {
               </p>
             </CardContent>
           </Card>
-
-          <Card className="border-border/70 shadow-none">
+<Card className="border-border/70 shadow-none">
             <CardHeader className="pb-2">
               <CardTitle className="flex items-center justify-between gap-2 text-sm">
                 <span className="flex items-center gap-2"><Warehouse className="size-4 text-primary" /> Ketersediaan barang saat ini</span>
-                <Badge variant="outline">Belum menahan barang</Badge>
+                <Badge variant="outline">Ketersediaan dicek saat checkout</Badge>
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-3 p-4 pt-1">
+            <CardContent className="space-y-3 p-3 pt-1">
               {availability.isLoading ? <Skeleton className="h-20 rounded-lg" /> : availability.error ? (
                 <Alert variant="destructive"><AlertDescription>{availability.error.message}</AlertDescription></Alert>
               ) : availability.data ? (
@@ -696,8 +760,8 @@ export function AkashaSmartBookingShow() {
                   {Date.now() - new Date(availability.data.checked_at).getTime() > 180_000 ? (
                     <Alert className="border-amber-500/25 bg-amber-500/[0.04]">
                       <ShieldAlert className="size-4 text-amber-600" />
-                      <AlertTitle className="text-xs">Proyeksi perlu diperbarui</AlertTitle>
-                      <AlertDescription className="text-[10px]">Informasi ketersediaan terakhir lebih dari tiga menit. Refresh sebelum mengambil keputusan atau membuka transaksi.</AlertDescription>
+                      <AlertTitle className="text-xs">Informasi stok perlu diperbarui</AlertTitle>
+                      <AlertDescription className="text-[10px]">Info stok terakhir lebih dari tiga menit. Perbarui sebelum menyiapkan transaksi.</AlertDescription>
                     </Alert>
                   ) : null}
                   <div className="space-y-2.5">
@@ -708,7 +772,7 @@ export function AkashaSmartBookingShow() {
                           <Badge variant={availabilityVariant(line.status)}>{availabilityLabel(line.status)}</Badge>
                         </div>
                         <p className="mt-0.5 text-[10px] text-muted-foreground">
-                          {line.kind === "rental" ? "Rental" : "Pembelian"} · Diminta {line.requested_quantity} · {line.inventory_mode ?? "Mode stok tidak diketahui"}
+                          {line.kind === "rental" ? "Rental" : "Pembelian"} · Diminta {line.requested_quantity}
                         </p>
                         {line.components.map((component, index) => {
                           const projection = component.availability ?? component;
@@ -722,9 +786,9 @@ export function AkashaSmartBookingShow() {
                             <div key={component.component_name ?? index} className="mt-2 border-t border-border/60 pt-2">
                               <p className="text-[11px] font-medium">{component.component_name ?? projection.product_name ?? line.item_name}</p>
                               <div className="mt-1 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                                <Metric label="Ready sekarang" value={ready == null ? "—" : String(ready)} />
+                                <Metric label="Siap saat ini" value={ready == null ? "—" : String(ready)} />
                                 {current !== null ? <Metric label="Tersedia saat ini" value={String(current)} /> : <Metric label="Status varian" value={availabilityLabel(projection.status ?? line.status)} /> }
-                                <Metric label="Potensi kembali" value={potential == null ? "0" : String(potential)} detail="Belum ready" />
+                                <Metric label="Perkiraan kembali" value={potential == null ? "0" : String(potential)} detail="Belum siap" />
                                 <Metric label="Total unit" value={total == null ? "—" : String(total)} />
                               </div>
                               {component.requested_variant ? <p className="mt-1 text-[10px] text-muted-foreground">Varian: {component.requested_variant}</p> : null}
@@ -735,42 +799,82 @@ export function AkashaSmartBookingShow() {
                     ))}
                   </div>
                   <p className="text-[10px] leading-5 text-muted-foreground">
-                    Barang yang masih disewa atau belum lolos pemeriksaan belum dihitung siap digunakan. Nomor unit fisik tidak ditampilkan kepada pelanggan.
+                    Barang yang masih disewa atau belum lolos pemeriksaan belum dihitung siap digunakan.
                   </p>
                 </>
-              ) : <p className="text-xs text-muted-foreground">Proyeksi belum tersedia.</p>}
+              ) : <p className="text-xs text-muted-foreground">Informasi stok belum tersedia.</p>}
             </CardContent>
           </Card>
+            </div>
+            <aside className="order-1 space-y-3 xl:order-2">
+              <Card className="border-border/70 shadow-none">
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex items-center justify-between gap-2 text-sm">
+                    <span className="flex items-center gap-2"><ShieldCheck className="size-4 text-primary" /> Uang muka (DP)</span>
+                    {recordedDp === null ? (
+                      <Badge variant="outline">Belum dicatat</Badge>
+                    ) : recordedDp > 0 ? (
+                      <Badge variant="secondary">Sudah diterima</Badge>
+                    ) : (
+                      <Badge variant="outline">Tanpa DP</Badge>
+                    )}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3 p-3 pt-1">
+                  <div>
+                    <p className="text-[10px] text-muted-foreground">DP tercatat</p>
+                    <p className="mt-0.5 text-lg font-bold tracking-tight">
+                      {recordedDp === null ? "—" : formatCurrency(recordedDp, detail.currency_code)}
+                    </p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between gap-2 text-[10px]">
+                      <span className="text-muted-foreground">Dari total booking</span>
+                      <span className="font-semibold">{bookingDpPercentLabel ?? "Belum dihitung"}</span>
+                    </div>
+                    <div
+                      className="h-2 overflow-hidden rounded-full bg-muted"
+                      role="progressbar"
+                      aria-label="Persentase DP dari total booking"
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={Math.min(100, Math.max(0, recordedDpPercent ?? 0))}
+                    >
+                      <div
+                        className="h-full rounded-full bg-primary transition-all"
+                        style={{ width: Math.min(100, Math.max(0, recordedDpPercent ?? 0)) + "%" }}
+                      />
+                    </div>
+                  </div>
+                  <div className="border-t border-border/60 pt-2">
+                    <div className="flex items-center justify-between gap-2 text-[10px]">
+                      <span className="text-muted-foreground">Total booking</span>
+                      <span className="font-semibold">{formatCurrency(detail.quote_total, detail.currency_code)}</span>
+                    </div>
+                    <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
+                      {recordedDp === null
+                        ? "DP belum dicatat pada booking ini."
+                        : recordedDp > 0
+                          ? "DP tercatat sebagai informasi dan belum diperhitungkan sebagai pembayaran transaksi."
+                          : "Customer tidak membayar DP saat booking dikonfirmasi."}
+                    </p>
+                  </div>
+                  <p className="text-[10px] leading-4 text-muted-foreground">
+                    Catatan DP hanya untuk informasi booking dan tidak masuk ke saldo kas atau laporan keuangan.
+                  </p>
+                </CardContent>
+              </Card>
+            </aside>
+          </div>
+        </TabsContent>
 
-          {conversion.data ? (
-            <Card className="border-emerald-500/25 shadow-none">
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-2 text-sm text-emerald-700 dark:text-emerald-300">
-                  <CheckCircle2 className="size-4" /> Transaksi operasional terhubung
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="grid gap-2 p-4 pt-1 sm:grid-cols-2">
-                {conversion.data.checkout_number ? <Metric label="Nomor transaksi" value={conversion.data.checkout_number} /> : null}
-                {conversion.data.rental_number ? <Metric label="Nomor penyewaan" value={conversion.data.rental_number} /> : null}
-                {conversion.data.sale_number ? <Metric label="Nomor penjualan" value={conversion.data.sale_number} /> : null}
-                <Metric label="Tanggal transaksi" value={formatDateTime(conversion.data.converted_at, businessTimezone)} />
-                <p className="sm:col-span-2 text-[10px] leading-5 text-muted-foreground">
-                  Barang diperiksa kembali saat transaksi disiapkan. Reservasi tidak mengurangi stok.
-                </p>
-              </CardContent>
-            </Card>
-          ) : conversion.isError ? (
-            <Alert variant="destructive">
-              <AlertTitle>Referensi transaksi belum dapat dimuat</AlertTitle>
-              <AlertDescription>{conversion.error.message}</AlertDescription>
-            </Alert>
-          ) : null}
-
-          <Card className="border-border/70 shadow-none">
+        <TabsContent value="requests" className="mt-3 space-y-3">
+          <div className="grid gap-3 xl:grid-cols-2">
+<Card className="border-border/70 shadow-none">
             <CardHeader className="pb-2">
               <CardTitle className="flex items-center gap-2 text-sm"><FileClock className="size-4 text-primary" /> Permintaan perubahan pelanggan</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-3 p-4 pt-1">
+            <CardContent className="space-y-3 p-3 pt-1">
               {pendingChanges.length === 0 ? (
                 <p className="rounded-lg border border-dashed border-border p-4 text-center text-xs text-muted-foreground">Tidak ada perubahan yang menunggu pemeriksaan.</p>
               ) : pendingChanges.map((change) => {
@@ -845,10 +949,9 @@ export function AkashaSmartBookingShow() {
               {canReview ? null : <p className="text-[10px] text-muted-foreground">Tindakan ini membutuhkan hak akses untuk mengubah reservasi.</p>}
             </CardContent>
           </Card>
-
-          <Card className="border-border/70 shadow-none">
+<Card className="border-border/70 shadow-none">
             <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm"><Clock3 className="size-4 text-primary" /> Riwayat pelanggan</CardTitle></CardHeader>
-            <CardContent className="space-y-0 p-4 pt-1">
+            <CardContent className="space-y-0 p-3 pt-1">
               {detail.timeline.length === 0 ? <p className="text-xs text-muted-foreground">Belum ada aktivitas.</p> : detail.timeline.map((event, index) => (
                 <div key={index} className="relative border-l border-border pb-4 pl-4 last:border-0 last:pb-0">
                   <span className="absolute -left-[5px] top-0.5 size-2 rounded-full bg-primary" />
@@ -858,51 +961,41 @@ export function AkashaSmartBookingShow() {
               ))}
             </CardContent>
           </Card>
-        </div>
+          </div>
+        </TabsContent>
 
-        <aside className="space-y-3">
-          <Card className="border-border/70 shadow-none">
-            <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm"><ShieldCheck className="size-4 text-primary" /> Konfirmasi reservasi</CardTitle></CardHeader>
-            <CardContent className="space-y-2 p-4 pt-1">
-              {detail.workflow_status === "ready_for_checkout" ? (
-                <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/[0.04] p-3">
-                  <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-300">Reservasi sudah dikonfirmasi</p>
-                  <p className="mt-1 text-[10px] leading-4 text-muted-foreground">Siap diproses saat pelanggan datang. Barang tetap diperiksa sebelum transaksi.</p>
-                </div>
-              ) : canConfirm ? (
-                <div className="space-y-2">
-                  <Button
-                    type="button"
-                    className="h-9 w-full justify-center text-xs"
-                    disabled={!canReview || statusMutation.isPending}
-                    onClick={() => void handleStatusChange()}
-                  >
-                    {statusMutation.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <CheckCircle2 className="size-3.5" />}
-                    Konfirmasi
-                  </Button>
-                  <p className="text-[10px] leading-4 text-muted-foreground">Setelah dikonfirmasi, reservasi siap diproses. Ketersediaan barang diperiksa saat transaksi.</p>
-                </div>
-              ) : pendingChanges.length > 0 ? (
-                <p className="text-xs leading-5 text-muted-foreground">Selesaikan perubahan yang diminta pelanggan sebelum konfirmasi.</p>
-              ) : detail.workflow_status === "customer_action_required" ? (
-                <p className="text-xs leading-5 text-muted-foreground">Menunggu informasi tambahan dari pelanggan.</p>
-              ) : detail.workflow_status === "cancellation_pending" ? (
-                <p className="text-xs leading-5 text-muted-foreground">Pelanggan meminta pembatalan. Reservasi belum dapat dikonfirmasi.</p>
-              ) : closed ? (
-                <p className="text-xs leading-5 text-muted-foreground">Reservasi sudah ditutup.</p>
-              ) : (
-                <p className="text-xs leading-5 text-muted-foreground">Reservasi belum dapat dikonfirmasi dari status saat ini.</p>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card className="border-border/70 shadow-none">
+        <TabsContent value="access" className="mt-3 space-y-3">
+          <div className="grid gap-3 xl:grid-cols-2">
+          {conversion.data ? (
+            <Card className="border-emerald-500/25 shadow-none">
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-sm text-emerald-700 dark:text-emerald-300">
+                  <CheckCircle2 className="size-4" /> Transaksi sudah dibuat
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-2 p-3 pt-1 sm:grid-cols-2">
+                {conversion.data.checkout_number ? <Metric label="Nomor transaksi" value={conversion.data.checkout_number} /> : null}
+                {conversion.data.rental_number ? <Metric label="Nomor penyewaan" value={conversion.data.rental_number} /> : null}
+                {conversion.data.sale_number ? <Metric label="Nomor penjualan" value={conversion.data.sale_number} /> : null}
+                <Metric label="Tanggal transaksi" value={formatDateTime(conversion.data.converted_at, businessTimezone)} />
+                <p className="sm:col-span-2 text-[10px] leading-5 text-muted-foreground">
+                  Barang diperiksa kembali saat transaksi disiapkan. Reservasi tidak mengurangi stok.
+                </p>
+              </CardContent>
+            </Card>
+          ) : conversion.isError ? (
+            <Alert variant="destructive">
+              <AlertTitle>Referensi transaksi belum dapat dimuat</AlertTitle>
+              <AlertDescription>{conversion.error.message}</AlertDescription>
+            </Alert>
+          ) : null}
+<Card className="border-border/70 shadow-none">
             <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm"><KeyRound className="size-4 text-primary" /> Akses pelanggan</CardTitle></CardHeader>
-            <CardContent className="space-y-2 p-4 pt-1">
+            <CardContent className="space-y-2 p-3 pt-1">
               <p className="text-[10px] leading-5 text-muted-foreground">Buat kode akses dan tautan pribadi baru saat pelanggan kehilangan akses. Kode sebelumnya akan dinonaktifkan.</p>
               <Button className="h-9 w-full text-xs" variant="outline" disabled={!canRotateAccess || accessMutation.isPending} onClick={() => void handleRotateAccess()}>
                 {accessMutation.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
-                Rotasi kode & tautan
+                Buat kode & tautan baru
               </Button>
               {permissions.isSuccess && !canRotateAccess ? <p className="text-[10px] text-muted-foreground">Akun ini tidak memiliki hak untuk mengubah akses pelanggan.</p> : null}
               {rotatedAccess ? (
@@ -930,25 +1023,23 @@ export function AkashaSmartBookingShow() {
               ) : null}
             </CardContent>
           </Card>
-
-          <Card className="border-border/70 shadow-none">
+<Card className="border-border/70 shadow-none">
             <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm"><Clipboard className="size-4 text-primary" /> QR admin</CardTitle></CardHeader>
-            <CardContent className="space-y-2 p-4 pt-1">
+            <CardContent className="space-y-2 p-3 pt-1">
               {qrUrl ? (
                 <div className="flex justify-center rounded-xl border border-border bg-white p-3">
                   <img src={qrUrl} alt={"QR admin untuk reservasi " + detail.reference_code} className="size-44 object-contain" />
                 </div>
               ) : <div className="grid h-44 place-items-center rounded-xl border border-dashed text-xs text-muted-foreground">QR sedang disiapkan…</div>}
-              <p className="text-[10px] leading-5 text-muted-foreground">QR hanya membuka detail admin yang dilindungi autentikasi, tenant, dan hak akses. QR hanya membuka halaman detail admin setelah petugas masuk.</p>
+              <p className="text-[10px] leading-5 text-muted-foreground">QR ini hanya dapat dibuka oleh admin setelah masuk ke akun.</p>
               <Button type="button" variant="outline" size="sm" className="h-8 w-full text-xs" disabled={!adminUrl} onClick={() => void copyValue("admin-url", adminUrl)}>
                 {copied === "admin-url" ? <Check className="size-3.5" /> : <Copy className="size-3.5" />} Salin tautan detail admin
               </Button>
             </CardContent>
           </Card>
-
-          <Card className="border-border/70 shadow-none">
+<Card className="border-border/70 shadow-none">
             <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm"><ShoppingBag className="size-4 text-primary" /> Lanjutkan transaksi</CardTitle></CardHeader>
-            <CardContent className="space-y-2 p-4 pt-1">
+            <CardContent className="space-y-2 p-3 pt-1">
               {conversion.data ? (
                 <p className="text-[10px] leading-5 text-muted-foreground">Reservasi ini sudah menjadi transaksi. Lanjutkan penetapan unit dan serah-terima melalui halaman Penyewaan bila diperlukan.</p>
               ) : (
@@ -963,7 +1054,7 @@ export function AkashaSmartBookingShow() {
                     asChild
                   >
                     <Link to={paths.penyewaan + "/walk-in?smart_booking_id=" + encodeURIComponent(detail.smart_booking_id)}>
-                      <ExternalLink className="size-3.5" /> Proses transaksi dari Walk-in
+                      <ExternalLink className="size-3.5" /> Siapkan transaksi
                     </Link>
                   </Button>
                 </>
@@ -971,8 +1062,116 @@ export function AkashaSmartBookingShow() {
               <p className="text-[10px] leading-4 text-muted-foreground">Tidak ada unit fisik atau kapasitas yang dikunci oleh website booking.</p>
             </CardContent>
           </Card>
-        </aside>
-      </section>
+          </div>
+        </TabsContent>
+      </Tabs>
+
+      <Dialog open={confirmDialogOpen} onOpenChange={setConfirmDialogOpen}>
+        <DialogContent className="w-[calc(100%-1rem)] max-w-md rounded-2xl p-4 sm:p-5">
+          <DialogHeader className="space-y-1.5 text-left">
+            <DialogTitle className="text-base">Konfirmasi booking</DialogTitle>
+            <DialogDescription className="text-xs leading-5">
+              Pilih apakah pelanggan sudah memberikan DP. Booking tetap dapat dikonfirmasi meski belum ada DP.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div className="rounded-lg bg-muted/40 p-3">
+              <div className="flex items-center justify-between gap-3 text-xs">
+                <span className="text-muted-foreground">Total booking</span>
+                <span className="font-semibold">{formatCurrency(detail.quote_total, detail.currency_code)}</span>
+              </div>
+            </div>
+            <RadioGroup
+              value={dpChoice}
+              onValueChange={(value) => setDpChoice(value as "none" | "received")}
+              className="gap-2"
+            >
+              <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-border p-3">
+                <RadioGroupItem value="none" className="mt-0.5" />
+                <span className="min-w-0">
+                  <span className="block text-xs font-semibold">Belum menerima DP</span>
+                  <span className="mt-0.5 block text-[10px] text-muted-foreground">Konfirmasi booking tanpa uang muka.</span>
+                </span>
+              </label>
+              <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-border p-3">
+                <RadioGroupItem value="received" className="mt-0.5" />
+                <span className="min-w-0">
+                  <span className="block text-xs font-semibold">Sudah menerima DP</span>
+                  <span className="mt-0.5 block text-[10px] text-muted-foreground">Catat nominal yang sudah diterima dari pelanggan.</span>
+                </span>
+              </label>
+            </RadioGroup>
+
+            {dpChoice === "received" ? (
+              <div className="space-y-2 rounded-xl border border-primary/20 bg-primary/[0.03] p-3">
+                <label htmlFor="booking-dp-amount" className="block text-xs font-semibold">Nominal DP (Rp)</label>
+                <Input
+                  id="booking-dp-amount"
+                  type="number"
+                  inputMode="numeric"
+                  min="1"
+                  step="1"
+                  max={detail.quote_total}
+                  value={dpInput}
+                  onChange={(event) => setDpInput(event.target.value)}
+                  placeholder="Contoh: 100000"
+                  className="h-10 rounded-lg text-sm"
+                />
+                {dpInputAmount !== null && dpInputPercent !== null && dpInputValid ? (
+                  <div className="flex items-center justify-between gap-2 text-[10px]">
+                    <span className="text-muted-foreground">Persentase dari total booking</span>
+                    <span className="font-semibold text-primary">
+                      {dpInputPercent.toLocaleString("id-ID", { maximumFractionDigits: 1 })}%
+                    </span>
+                  </div>
+                ) : (
+                  <p className="text-[10px] leading-4 text-muted-foreground">
+                    Isi nominal rupiah bulat, minimal Rp1 dan maksimal sebesar total booking.
+                  </p>
+                )}
+                {dpInputAmount !== null && dpInputAmount > detail.quote_total ? (
+                  <p className="text-[10px] text-destructive">Nominal DP tidak boleh melebihi total booking.</p>
+                ) : null}
+              </div>
+            ) : null}
+            <p className="text-[10px] leading-4 text-muted-foreground">
+              Pencatatan ini tidak membuat transaksi pembayaran, tidak menambah saldo kas, dan tidak mengunci barang.
+            </p>
+            {confirmationMutation.isError ? (
+              <Alert variant="destructive" className="py-2">
+                <AlertTitle className="text-xs">Konfirmasi belum berhasil</AlertTitle>
+                <AlertDescription className="text-[10px]">
+                  {confirmationMutation.error instanceof Error ? confirmationMutation.error.message : "Periksa kembali data booking lalu coba lagi."}
+                </AlertDescription>
+              </Alert>
+            ) : null}
+          </div>
+
+          <DialogFooter className="flex-row gap-2 sm:justify-end">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-9 flex-1 text-xs sm:flex-none"
+              onClick={() => setConfirmDialogOpen(false)}
+              disabled={confirmationMutation.isPending}
+            >
+              Batal
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              className="h-9 flex-1 text-xs sm:flex-none"
+              onClick={handleConfirmBooking}
+              disabled={!dpChoice || !dpInputValid || confirmationMutation.isPending}
+            >
+              {confirmationMutation.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <CheckCircle2 className="size-3.5" />}
+              Konfirmasi & siapkan checkout
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </main>
   );
 }

@@ -80,6 +80,7 @@ export type AkashaSmartBookingDetail = {
   requested_return_at: string | null
   business_timezone: string
   quote_total: number
+  dp_amount: number | null
   currency_code: string
   quote_expires_at: string | null
   revision: number

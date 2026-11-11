@@ -111,6 +111,28 @@ export async function setAkashaSmartBookingStatus(input: {
   )
 }
 
+export async function confirmAkashaSmartBooking(input: {
+  smartBookingId: string
+  expectedRevision: number
+  dpAmount: number
+}) {
+  return rpc<{
+    smart_booking_id: string
+    workflow_status: "ready_for_checkout"
+    revision: number
+    dp_amount: number
+    dp_percent: number
+  }>(
+    "admin_confirm_akasha_smart_booking",
+    {
+      p_smart_booking_id: input.smartBookingId,
+      p_expected_revision: input.expectedRevision,
+      p_dp_amount: input.dpAmount,
+    },
+    "Konfirmasi booking dan pencatatan DP gagal disimpan.",
+  )
+}
+
 export async function resolveAkashaSmartBookingChange(input: {
   changeRequestId: string
   decision: "approved" | "rejected"
