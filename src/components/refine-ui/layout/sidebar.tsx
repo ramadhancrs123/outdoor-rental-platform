@@ -62,7 +62,7 @@ const sections: MenuSection[] = [
     id: "operational",
     label: "Operasional",
     items: [
-      { label: "Reservasi", path: paths.reservasi, icon: CalendarCheck },
+      { label: "Smart Booking", path: paths.reservasi, icon: CalendarCheck },
       { label: "Penyewaan", path: paths.penyewaan, icon: TentTree },
       { label: "Penjualan", path: paths.penjualan, icon: ShoppingBag },
       { label: "Perawatan", path: paths.perawatan, icon: Wrench },
