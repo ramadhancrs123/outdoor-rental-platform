@@ -26,6 +26,20 @@ async function rpc<T>(
   return data as T
 }
 
+export async function archiveAkashaSmartBookings(input: {
+  usahaId: string
+  smartBookingIds: string[]
+}): Promise<{ archived_count: number; smart_booking_ids: string[] }> {
+  return rpc(
+    "admin_archive_akasha_smart_bookings",
+    {
+      p_usaha_id: input.usahaId,
+      p_smart_booking_ids: input.smartBookingIds,
+    },
+    "Reservasi gagal dihapus dari panel.",
+  )
+}
+
 export async function getAkashaSmartBookingSummary(
   usahaId: string,
 ): Promise<AkashaSmartBookingSummary> {
@@ -91,7 +105,7 @@ export async function getAkashaSmartBooking(
 
 export async function setAkashaSmartBookingStatus(input: {
   smartBookingId: string
-  targetStatus: "ready_for_checkout"
+  targetStatus: "ready_for_checkout" | "cancelled"
   expectedRevision: number
   note?: string | null
 }) {
@@ -107,7 +121,7 @@ export async function setAkashaSmartBookingStatus(input: {
       p_expected_revision: input.expectedRevision,
       p_note: input.note ?? null,
     },
-    "Konfirmasi reservasi gagal disimpan.",
+    "Perubahan status reservasi gagal disimpan.",
   )
 }
 

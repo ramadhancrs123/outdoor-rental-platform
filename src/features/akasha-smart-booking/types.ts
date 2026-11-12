@@ -10,6 +10,18 @@ export type AkashaSmartBookingStatus =
   | "expired"
   | "fulfilled"
 
+export const AKASHA_SMART_BOOKING_ARCHIVABLE_STATUSES = [
+  "received",
+  "reviewing",
+  "acknowledged",
+  "ready_for_checkout",
+  "fulfilled",
+] as const satisfies readonly AkashaSmartBookingStatus[]
+
+export function isAkashaSmartBookingArchivableStatus(status: AkashaSmartBookingStatus) {
+  return AKASHA_SMART_BOOKING_ARCHIVABLE_STATUSES.includes(status as (typeof AKASHA_SMART_BOOKING_ARCHIVABLE_STATUSES)[number])
+}
+
 export type AkashaSmartBookingLine = {
   line_id: string
   kind: "rental" | "sale"
@@ -27,6 +39,8 @@ export type AkashaSmartBookingLine = {
   subtotal: number
   currency_code: string
   tarif_sewa_id?: string | null
+  durasi_unit_snapshot?: string | null
+  durasi_nilai_snapshot?: number | string | null
   promosi_katalog_id?: string | null
   promosi_paket_id?: string | null
 }
@@ -41,6 +55,8 @@ export type AkashaSmartBookingListItem = {
   workflow_status: AkashaSmartBookingStatus
   requested_pickup_date: string | null
   requested_return_date: string | null
+  requested_pickup_at?: string | null
+  requested_return_at?: string | null
   quote_total: number
   currency_code: string
   revision: number
@@ -51,6 +67,10 @@ export type AkashaSmartBookingListItem = {
     name: string
     variant: string | null
     quantity: number
+    unit_price?: number
+    tarif_sewa_id?: string | null
+    durasi_unit_snapshot?: string | null
+    durasi_nilai_snapshot?: number | string | null
   }>
   pending_change_count: number
 }
@@ -189,6 +209,7 @@ export type AkashaSmartBookingSummary = {
   change_requested: number
   cancellation_pending: number
   ready_for_checkout: number
+  fulfilled?: number
   closed: number
   pending_change_requests: number
   pickup_today: number
@@ -217,6 +238,8 @@ export type AkashaSmartBookingCalendarAgendaItem = {
   workflow_status: AkashaSmartBookingStatus
   requested_pickup_date: string
   requested_return_date: string | null
+  requested_pickup_at?: string | null
+  requested_return_at?: string | null
   quote_total: number
   currency_code: string
   created_at: string
@@ -225,6 +248,10 @@ export type AkashaSmartBookingCalendarAgendaItem = {
     name: string
     variant: string | null
     quantity: number
+    unit_price?: number
+    tarif_sewa_id?: string | null
+    durasi_unit_snapshot?: string | null
+    durasi_nilai_snapshot?: number | string | null
   }>
   pending_change_count: number
   is_pickup: boolean

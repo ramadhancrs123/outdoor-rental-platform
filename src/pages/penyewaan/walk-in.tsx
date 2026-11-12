@@ -1215,12 +1215,6 @@ export function RentalWalkIn() {
           if (!canMoveFromPeriod) {
             throw new Error("Jam aktual pengambilan dan pengembalian harus diisi terlebih dahulu.");
           }
-          if (
-            startAt.slice(0, 10) !== booking.requested_pickup_date ||
-            endAt.slice(0, 10) !== booking.requested_return_date
-          ) {
-            throw new Error("Tanggal transaksi harus mengikuti jadwal booking yang telah disetujui.");
-          }
         }
         if (saleCartLines.length > 0 && !paymentAccountId) {
           throw new Error("Pilih akun operasional penerima pembayaran sebelum checkout.");
@@ -2786,14 +2780,14 @@ export function RentalWalkIn() {
           </Button>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="truncate text-[17px] font-bold tracking-tight">{prepared ? (workspace?.rental.nomor_penyewaan ?? "Rental") : isSmartBookingFlow ? "Proses Reservasi" : isReservationFlow ? "Lanjutkan Penyewaan" : "Rental Baru"}</h1>
-              <Badge variant="secondary" className="rounded-full px-2 py-0.5 text-[9px]">{prepared ? "Operasional" : isSmartBookingFlow ? "Reservasi" : isReservationFlow ? "Dari Reservasi" : "Penyewaan Langsung"}</Badge>
+              <h1 className="truncate text-[17px] font-bold tracking-tight">{prepared ? (workspace?.rental.nomor_penyewaan ?? "Rental") : isSmartBookingFlow ? "Siapkan Transaksi" : isReservationFlow ? "Lanjutkan Penyewaan" : "Rental Baru"}</h1>
+              <Badge variant="secondary" className="rounded-full px-2 py-0.5 text-[9px]">{prepared ? "Operasional" : isSmartBookingFlow ? "Dari Booking" : isReservationFlow ? "Dari Reservasi" : "Penyewaan Langsung"}</Badge>
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-muted-foreground">
               <span className="font-semibold text-foreground">{prepared
                 ? workspace?.renter.nama_lengkap
                 : isSmartBookingFlow
-                  ? smartBookingPrefill.data?.customer_name ?? "Memuat customer booking…"
+                  ? selectedRenter?.nama_lengkap ?? (selectedRenterQuery.isPending && smartBookingPrefill.data?.renter_id ? "Memuat penyewa terdaftar…" : smartBookingPrefill.data?.customer_name ?? "Memuat customer booking…")
                   : isReservationFlow
                     ? reservationPrefill.data?.penyewa_nama ?? "Memuat penyewa reservasi…"
                     : selectedRenter?.nama_lengkap ?? "Pilih penyewa"}</span>
@@ -2801,7 +2795,7 @@ export function RentalWalkIn() {
               <span>{prepared
                 ? workspace?.renter.nomor_telepon ?? "—"
                 : isSmartBookingFlow
-                  ? smartBookingPrefill.data?.customer_phone ?? "—"
+                  ? selectedRenter?.nomor_telepon ?? smartBookingPrefill.data?.customer_phone ?? "—"
                   : selectedRenter?.nomor_telepon ?? "—"}</span>
             </div>
           </div>
@@ -2852,7 +2846,7 @@ export function RentalWalkIn() {
               <AlertDescription className="text-[10px] leading-5">
                 {smartBookingPrefillState === "error"
                   ? smartBookingPrefillError
-                  : "Daftar item dan jumlah mengikuti permintaan customer yang telah disetujui. Walk-in hanya menentukan waktu aktual dan pembayaran; harga, promo, serta stok akan dihitung ulang oleh server saat transaksi."}
+                  : "Item dan jumlah mengikuti permintaan customer yang telah disetujui. Penyewa dan katalog terisi otomatis; admin menentukan periode rental aktual serta pembayaran. Harga, promo, dan ketersediaan divalidasi ulang oleh server."}
               </AlertDescription>
               {smartBookingPrefillState === "error" ? (
                 <Button
@@ -2907,11 +2901,29 @@ export function RentalWalkIn() {
                       ) : smartBookingPrefill.data ? (
                         <div className="mt-2 flex items-center gap-3">
                           <span className="grid size-9 place-items-center rounded-xl bg-background text-primary"><Users className="size-4" /></span>
-                          <div className="min-w-0">
-                            <p className="truncate text-[12px] font-bold">{smartBookingPrefill.data.customer_name}</p>
-                            <p className="mt-0.5 truncate text-[10px] text-muted-foreground">{smartBookingPrefill.data.customer_phone}</p>
+                          <div className="min-w-0 flex-1">
+                            {selectedRenterQuery.isPending && smartBookingPrefill.data.renter_id ? (
+                              <Skeleton className="h-4 w-32" />
+                            ) : (
+                              <p className="truncate text-[12px] font-bold">
+                                {selectedRenter?.nama_lengkap ?? smartBookingPrefill.data.customer_name}
+                              </p>
+                            )}
+                            <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
+                              {selectedRenter?.nomor_telepon ?? smartBookingPrefill.data.customer_phone}
+                            </p>
+                            {selectedRenter && selectedRenter.nama_lengkap.trim().toLocaleLowerCase("id-ID") !== smartBookingPrefill.data.customer_name.trim().toLocaleLowerCase("id-ID") ? (
+                              <p className="mt-1 truncate text-[9px] text-muted-foreground">
+                                Nama pada formulir: {smartBookingPrefill.data.customer_name} · cocok melalui nomor WhatsApp
+                              </p>
+                            ) : null}
+                            {!selectedRenter && !selectedRenterQuery.isPending ? (
+                              <p className="mt-1 text-[9px] text-amber-700">Data penyewa terdaftar tidak ditemukan; nama mengikuti formulir booking.</p>
+                            ) : null}
                           </div>
-                          <Badge variant="outline" className="ml-auto shrink-0 text-[9px]">Terkait booking</Badge>
+                          <Badge variant="outline" className="ml-auto shrink-0 text-[9px]">
+                            {selectedRenter ? "Penyewa terdaftar" : "Data booking"}
+                          </Badge>
                         </div>
                       ) : null}
                     </div>
@@ -3002,16 +3014,12 @@ export function RentalWalkIn() {
                         <Input
                           type="datetime-local"
                           value={startAt}
-                          min={isSmartBookingFlow && smartBookingPrefill.data?.requested_pickup_date
-                            ? smartBookingPrefill.data.requested_pickup_date + "T00:00"
-                            : isReservationFlow && reservationPrefill.data
-                              ? reservationPrefill.data.mulai_reservasi + "T00:00"
-                              : undefined}
-                          max={isSmartBookingFlow && smartBookingPrefill.data?.requested_pickup_date
-                            ? smartBookingPrefill.data.requested_pickup_date + "T23:59"
-                            : isReservationFlow && reservationPrefill.data
-                              ? reservationPrefill.data.mulai_reservasi + "T23:59"
-                              : undefined}
+                          min={isReservationFlow && reservationPrefill.data
+                            ? reservationPrefill.data.mulai_reservasi + "T00:00"
+                            : undefined}
+                          max={isReservationFlow && reservationPrefill.data
+                            ? reservationPrefill.data.mulai_reservasi + "T23:59"
+                            : undefined}
                           onChange={(event) => setStartAt(event.target.value)}
                           className="h-10 rounded-xl text-xs"
                         />
@@ -3021,16 +3029,12 @@ export function RentalWalkIn() {
                         <Input
                           type="datetime-local"
                           value={endAt}
-                          min={isSmartBookingFlow && smartBookingPrefill.data?.requested_return_date
-                            ? smartBookingPrefill.data.requested_return_date + "T00:00"
-                            : isReservationFlow && reservationPrefill.data
-                              ? reservationPrefill.data.selesai_reservasi + "T00:00"
-                              : undefined}
-                          max={isSmartBookingFlow && smartBookingPrefill.data?.requested_return_date
-                            ? smartBookingPrefill.data.requested_return_date + "T23:59"
-                            : isReservationFlow && reservationPrefill.data
-                              ? reservationPrefill.data.selesai_reservasi + "T23:59"
-                              : undefined}
+                          min={isReservationFlow && reservationPrefill.data
+                            ? reservationPrefill.data.selesai_reservasi + "T00:00"
+                            : undefined}
+                          max={isReservationFlow && reservationPrefill.data
+                            ? reservationPrefill.data.selesai_reservasi + "T23:59"
+                            : undefined}
                           onChange={(event) => setEndAt(event.target.value)}
                           className="h-10 rounded-xl text-xs"
                         />
@@ -3038,19 +3042,12 @@ export function RentalWalkIn() {
                     </div>
                     {isSmartBookingFlow ? (
                       <p className="mt-2 text-[9px] leading-4 text-muted-foreground">
-                        Booking website hanya menetapkan tanggal. Pilih jam aktual pengambilan dan pengembalian sesuai serah-terima di lokasi. Tanggal tetap mengikuti booking; durasi dan tarif dihitung ulang oleh mesin rental.
+                        Tanggal pada booking adalah catatan permintaan customer, bukan batas periode rental operasional. Admin bebas menentukan tanggal dan jam mulai maupun kembali; durasi, tarif, serta ketersediaan dihitung ulang berdasarkan periode aktual.
                       </p>
                     ) : isReservationFlow ? (
                       <p className="mt-2 text-[9px] leading-4 text-muted-foreground">
                         Isi jam mulai saat penyewa benar-benar datang dan jam kembali sesuai kesepakatan. Tanggal mengikuti reservasi dan waktu dikonversi memakai timezone Usaha.
                       </p>
-                    ) : null}
-                    {isSmartBookingFlow && smartBookingPrefill.data && startAt && endAt &&
-                      (startAt.slice(0, 10) !== smartBookingPrefill.data.requested_pickup_date ||
-                        endAt.slice(0, 10) !== smartBookingPrefill.data.requested_return_date) ? (
-                      <Alert variant="destructive" className="mt-2 rounded-lg">
-                        <AlertDescription>Tanggal transaksi harus mengikuti tanggal booking yang sudah disetujui. Ubah jam tanpa menggeser tanggalnya.</AlertDescription>
-                      </Alert>
                     ) : null}
                     {isReservationFlow && reservationPrefill.data && startAt && endAt &&
                       (startAt.slice(0, 10) !== reservationPrefill.data.mulai_reservasi || endAt.slice(0, 10) !== reservationPrefill.data.selesai_reservasi) ? (
@@ -3156,8 +3153,8 @@ export function RentalWalkIn() {
                       <ShoppingBag className="size-4" />
                     </span>
                     <div className="min-w-0">
-                      <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">{isSmartBookingFlow ? "Reservasi" : "Katalog"}</p>
-                      <h2 className="text-[14px] font-bold">{isSmartBookingFlow ? "Item permintaan customer" : "Sewa apa?"}</h2>
+                      <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Katalog</p>
+                      <h2 className="text-[14px] font-bold">{isSmartBookingFlow ? "Katalog terisi otomatis" : "Sewa apa?"}</h2>
                     </div>
                   </div>
                   <Badge variant="secondary" className="rounded-full text-[9px]">
@@ -3167,7 +3164,7 @@ export function RentalWalkIn() {
 
                 {isSmartBookingFlow ? (
                   <p className="mt-3 rounded-xl border border-primary/15 bg-primary/[0.035] px-3 py-2.5 text-[9px] leading-4 text-muted-foreground">
-                    Item, jumlah, dan tarif acuan mengikuti snapshot booking yang disetujui customer. Tarif harus masih aktif. Perubahan item hanya dapat diajukan melalui portal customer.
+                    Barang, varian, paket, dan pembelian otomatis diambil dari booking yang disetujui. Admin mengatur periode aktual; harga, promo, serta stok divalidasi ulang saat checkout. Item yang disetujui tetap mengikuti snapshot booking.
                   </p>
                 ) : (
                   <Button
@@ -3193,7 +3190,7 @@ export function RentalWalkIn() {
 
                 {draftLines.length ? (
                   <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
-                    {draftLines.slice(0, 4).map((line) => (
+                    {draftLines.map((line) => (
                       <div key={line.key} className="flex items-center justify-between gap-2 rounded-lg border bg-muted/15 px-2.5 py-2">
                         <div className="min-w-0">
                           <p className="truncate text-[9px] font-semibold">{line.label}</p>
@@ -3202,10 +3199,9 @@ export function RentalWalkIn() {
                         <span className="shrink-0 text-[9px] font-bold">{formatRentalMoney(line.input.subtotal, "IDR")}</span>
                       </div>
                     ))}
-                    {draftLines.length > 4 ? <p className="px-1 text-[8px] text-muted-foreground">+ {draftLines.length - 4} item lain di keranjang.</p> : null}
                   </div>
                 ) : (
-                  <p className="mt-2 text-[9px] text-muted-foreground">Belum ada barang. Pilih barang atau paket melalui katalog.</p>
+                  <p className="mt-2 text-[9px] text-muted-foreground">{isSmartBookingFlow ? "Booking ini tidak berisi item rental. Periksa bagian pembelian tambahan bila tersedia." : "Belum ada barang. Pilih barang atau paket melalui katalog."}</p>
                 )}
                 {saleCartLines.length ? (
                   <div className="mt-3 rounded-xl border bg-emerald-500/[0.04] px-3 py-2">
