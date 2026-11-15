@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, test, vi } from "vitest";
@@ -11,6 +11,7 @@ const serviceMock = vi.hoisted(() => ({
   getSupplier: vi.fn(),
   listSupplierPurchases: vi.fn(),
   listPurchases: vi.fn(),
+  getPurchaseOverview: vi.fn(),
   getPurchase: vi.fn(),
   getProcurementCapabilities: vi.fn(),
 }));
@@ -85,6 +86,7 @@ describe("Pemasok & Pembelian read-side", () => {
     serviceMock.getSupplier.mockReset();
     serviceMock.listSupplierPurchases.mockReset();
     serviceMock.listPurchases.mockReset();
+    serviceMock.getPurchaseOverview.mockReset();
     serviceMock.getPurchase.mockReset();
     resetCapabilities();
   });
@@ -121,9 +123,14 @@ describe("Pemasok & Pembelian read-side", () => {
   test("purchase list supports tenant read-side and empty state", async () => {
     serviceMock.getPemasokContext.mockResolvedValue(context);
     serviceMock.listPurchases.mockResolvedValue({ purchases: [], total: 0 });
+    serviceMock.getPurchaseOverview.mockResolvedValue({ total: 12, draft: 3, completed: 9, pendingUnits: 5 });
     renderWithQuery(<PurchaseList />, "/pembelian");
-    expect(await screen.findByText("Belum ada draft pembelian")).toBeInTheDocument();
-    expect(screen.getByText(/Buat draft pengadaan baru/i)).toBeInTheDocument();
+    expect(await screen.findByText("Belum ada pembelian")).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Ringkasan pembelian" })).toBeInTheDocument();
+    const kpis = within(screen.getByRole("group", { name: "Ringkasan pembelian" }));
+    expect(kpis.getByText("Draf").parentElement).toHaveTextContent("3");
+    expect(kpis.getByText("Belum masuk").parentElement).toHaveTextContent("5");
+    expect(screen.getByText(/Status pembayaran dan penerimaan inventaris/i)).toBeInTheDocument();
   });
 
   test("purchase detail presents line facts and explains automatic receiving after completion", async () => {

@@ -72,6 +72,36 @@ export async function getPerawatanContext(): Promise<MaintenanceContext> {
   };
 }
 
+export type MaintenanceOverview = {
+  total: number;
+  planned: number;
+  inProgress: number;
+  completed: number;
+};
+
+/** Read-only whole-tenant counts for the maintenance work queue. */
+export async function getMaintenanceOverview(usahaId: string): Promise<MaintenanceOverview> {
+  const countByStatus = async (status?: string) => {
+    let query = supabase
+      .from("perawatan")
+      .select("perawatan_id", { count: "exact", head: true })
+      .eq("usaha_id", usahaId);
+    if (status) query = query.eq("status", status);
+    const { count, error } = await query;
+    if (error) throw error;
+    return count ?? 0;
+  };
+
+  const [total, planned, inProgress, completed] = await Promise.all([
+    countByStatus(),
+    countByStatus("planned"),
+    countByStatus("in_progress"),
+    countByStatus("completed"),
+  ]);
+
+  return { total, planned, inProgress, completed };
+}
+
 export async function listMaintenanceQueue(
   usahaId: string,
   input: { status?: string; search?: string } = {},

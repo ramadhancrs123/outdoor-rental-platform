@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getKeuanganContext, listFinanceAccounts, type FinanceAccount } from "@/features/keuangan";
-import { adjustSaleStock, createQuickSaleProduct, createSale, getSaleReceiptData, listSaleCatalogItems, listSales } from "@/features/penjualan";
+import { adjustSaleStock, createQuickSaleProduct, createSale, getSaleReceiptData, getSalesOverview, listSaleCatalogItems, listSales } from "@/features/penjualan";
 import { listCatalogCategories } from "@/features/katalog/service";
 import type { SaleCatalogItem, SaleCartLine, SalePaymentMethod, SaleReceiptData } from "@/features/penjualan";
 import { buildSaleReceiptThermalHtml } from "@/features/penjualan/receipt";
@@ -101,6 +101,12 @@ export function PenjualanPage() {
     enabled:Boolean(context.data?.usahaId),
     staleTime:10_000,
   });
+  const overview=useQuery({
+    queryKey:["penjualan","overview",context.data?.usahaId,context.data?.timezone],
+    queryFn:()=>getSalesOverview(context.data!.usahaId,context.data!.timezone),
+    enabled:Boolean(context.data?.usahaId),
+    staleTime:10_000,
+  });
   const receipt=useQuery<SaleReceiptData>({
     queryKey:["penjualan","receipt",context.data?.usahaId,completedSaleId],
     queryFn:()=>getSaleReceiptData(context.data!.usahaId,completedSaleId),
@@ -177,6 +183,7 @@ export function PenjualanPage() {
       await Promise.all([
         queryClient.invalidateQueries({queryKey:["penjualan","catalog",context.data?.usahaId]}),
         queryClient.invalidateQueries({queryKey:["penjualan","history",context.data?.usahaId]}),
+        queryClient.invalidateQueries({queryKey:["penjualan","overview",context.data?.usahaId]}),
         queryClient.invalidateQueries({queryKey:["inventaris"]}),
         queryClient.invalidateQueries({queryKey:["keuangan"]}),
       ]);
@@ -247,11 +254,36 @@ export function PenjualanPage() {
   if(context.error||products.error||accounts.error) return <Alert variant="destructive"><AlertTitle>Halaman penjualan belum tersedia</AlertTitle><AlertDescription>{messageOf(context.error??products.error??accounts.error,"Data penjualan gagal dimuat.")}</AlertDescription></Alert>;
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-4 pb-28">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <div><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Point of Sale</p><h1 className="text-2xl font-bold tracking-tight">Penjualan</h1><p className="mt-1 text-xs text-muted-foreground">Katalog visual, keranjang, dan checkout cepat untuk barang yang dibeli pelanggan.</p></div>
-        <Button asChild variant="outline" className="h-9 rounded-xl"><Link to={paths.katalog}>Atur katalog<ArrowRight className="size-4"/></Link></Button>
+    <div className="mx-auto w-full max-w-7xl space-y-3 pb-28 sm:space-y-4">
+      <header className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Point of Sale</p>
+          <h1 className="text-[22px] font-bold leading-tight tracking-tight sm:text-2xl">Penjualan</h1>
+        </div>
+        <Button asChild variant="outline" className="h-9 shrink-0 rounded-xl px-3 text-xs sm:h-10 sm:text-sm"><Link to={paths.katalog}>Atur katalog<ArrowRight className="size-4"/></Link></Button>
       </header>
+
+      <div role="group" aria-label="Ringkasan penjualan" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {([
+          ["Total transaksi", overview.data?.totalTransactions, false],
+          ["Hari ini", overview.data?.todayTransactions, false],
+          ["Omzet hari ini", overview.data?.todayRevenue, true],
+          ["Belum lunas", overview.data?.unpaidTransactions, false],
+        ] as const).map(([label, value, isCurrency]) => (
+          <Card key={label} className="gap-0 rounded-xl border-border/70 py-0 shadow-none">
+            <CardContent className="px-3 py-2.5">
+              <p className="truncate text-[10px] font-medium text-muted-foreground sm:text-xs">{label}</p>
+              <p className="mt-0.5 truncate text-base font-semibold leading-5 tabular-nums sm:text-lg" title={isCurrency && value != null ? money(value) : undefined}>
+                {overview.isPending || overview.isError
+                  ? "—"
+                  : isCurrency
+                    ? money(value ?? 0)
+                    : value ?? 0}
+              </p>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
 
       {completedSaleId ? (
         <Card className="rounded-2xl border-emerald-300/70 bg-emerald-50/40 dark:bg-emerald-950/10">
@@ -276,7 +308,7 @@ export function PenjualanPage() {
         {filteredItems.length?(
           <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
             {filteredItems.map(item=>(
-              <Card key={item.key} className="overflow-hidden rounded-2xl shadow-none">
+              <Card key={item.key} className="gap-0 overflow-hidden rounded-2xl py-0 shadow-none">
                 <div className="relative aspect-[4/3] bg-muted/50">
                   {item.cover_url?<img src={item.cover_url} alt="" loading="lazy" className="size-full object-cover"/>:<div className="grid size-full place-items-center text-muted-foreground"><Package className="size-9"/></div>}
                   <Badge className="absolute left-2 top-2 rounded-full bg-background/90 text-foreground hover:bg-background/90">{item.inventory_mode==="quantity"?"Stok terpantau":item.inventory_mode==="untracked"?"Tanpa stok":"Unit fisik"}</Badge>

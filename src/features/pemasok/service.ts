@@ -360,6 +360,57 @@ async function getPurchaseLineInventoryProgress(
 }
 
 
+export type PurchaseOverview = {
+  total: number;
+  draft: number;
+  completed: number;
+  pendingUnits: number;
+};
+
+/** Read-only procurement KPIs. Pending units use the same receiving reconciliation as purchase detail. */
+export async function getPurchaseOverview(usahaId: string): Promise<PurchaseOverview> {
+  const [totalResult, draftResult, completedResult] = await Promise.all([
+    supabase.from("pembelian").select("pembelian_id", { count: "exact", head: true }).eq("usaha_id", usahaId),
+    supabase.from("pembelian").select("pembelian_id", { count: "exact", head: true }).eq("usaha_id", usahaId).eq("status", "draft"),
+    supabase.from("pembelian").select("pembelian_id", { count: "exact", head: true }).eq("usaha_id", usahaId).eq("status", "completed"),
+  ]);
+  if (totalResult.error) throw totalResult.error;
+  if (draftResult.error) throw draftResult.error;
+  if (completedResult.error) throw completedResult.error;
+
+  const completedPurchaseIds: string[] = [];
+  const pageSize = 500;
+  let offset = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from("pembelian")
+      .select("pembelian_id")
+      .eq("usaha_id", usahaId)
+      .eq("status", "completed")
+      .order("pembelian_id", { ascending: true })
+      .range(offset, offset + pageSize - 1);
+    if (error) throw error;
+
+    const rows = data ?? [];
+    completedPurchaseIds.push(...rows.map((row) => row.pembelian_id as string));
+    if (rows.length < pageSize) break;
+    offset += pageSize;
+  }
+
+  const progress = await getPurchaseLineInventoryProgress(usahaId, completedPurchaseIds);
+  const pendingUnits = Array.from(progress.byPurchase.values()).reduce(
+    (sum, purchase) => sum + purchase.pendingUnits,
+    0,
+  );
+
+  return {
+    total: totalResult.count ?? 0,
+    draft: draftResult.count ?? 0,
+    completed: completedResult.count ?? 0,
+    pendingUnits,
+  };
+}
+
 export async function listPurchases(
   usahaId: string,
   filters: PurchaseListFilters,

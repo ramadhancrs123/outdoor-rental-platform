@@ -1,16 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import {
   ArrowRight,
-  CalendarDays,
   CheckCircle2,
-  Filter,
-  Layers3,
   Plus,
   RefreshCw,
   Search,
   SearchCheck,
-  SlidersHorizontal,
-  Tag,
   Wrench,
   X,
 } from "lucide-react";
@@ -22,9 +17,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { listInspectionQueue } from "@/features/pemeriksaan";
 import { semanticInspectionLabel } from "@/features/pemeriksaan/utils";
-import { getPerawatanContext, listMaintenanceQueue } from "@/features/perawatan";
+import { getMaintenanceOverview, getPerawatanContext, listMaintenanceQueue } from "@/features/perawatan";
 import { formatMaintenanceDateTime, semanticMaintenanceLabel } from "@/features/perawatan/utils";
 import { paths } from "@/routes/paths";
 
@@ -42,48 +38,14 @@ function queueStatusLabel(item: { status: string; unit_status: string; verificat
   return semanticMaintenanceLabel(item.status);
 }
 
-const CARD_TONES = [
-  "bg-card",
-  "bg-emerald-50/40 dark:bg-emerald-950/10",
-  "bg-sky-50/40 dark:bg-sky-950/10",
-  "bg-amber-50/40 dark:bg-amber-950/10",
-] as const;
-
-function FilterChip({
-  label,
-  icon,
-  active,
-  onClick,
-}: {
-  label: string;
-  icon: React.ReactNode;
-  active?: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <Button
-      type="button"
-      variant="outline"
-      className={[
-        "h-10 shrink-0 rounded-full px-4 shadow-none",
-        active ? "border-primary bg-primary/[0.04] text-primary ring-1 ring-primary/10" : "bg-background",
-      ].join(" ")}
-      onClick={onClick}
-    >
-      {icon}
-      {label}
-    </Button>
-  );
-}
-
-function MaintenanceCard({ item, index }: { item: Awaited<ReturnType<typeof listMaintenanceQueue>>[number]; index: number }) {
+function MaintenanceCard({ item }: { item: Awaited<ReturnType<typeof listMaintenanceQueue>>[number] }) {
   return (
     <Link
       to={paths.perawatan + "/" + item.perawatan_id}
       className="block rounded-[20px] outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
     >
-      <Card className={`overflow-hidden rounded-[20px] border-border/70 ${CARD_TONES[index % CARD_TONES.length]} shadow-[0_1px_3px_rgba(0,0,0,0.05)] transition hover:-translate-y-px`}>
-        <CardContent className="p-3.5">
+      <Card className="gap-0 overflow-hidden rounded-2xl border-border/70 bg-card py-0 shadow-[0_1px_3px_rgba(0,0,0,0.04)] transition hover:border-primary/25">
+        <CardContent className="p-3">
           <div className="grid grid-cols-[42px_minmax(0,1fr)_auto] items-start gap-3">
             <div className="grid size-10 place-items-center rounded-2xl bg-primary/[0.08] text-primary">
               <Wrench className="size-5" />
@@ -111,13 +73,13 @@ function MaintenanceCard({ item, index }: { item: Awaited<ReturnType<typeof list
   );
 }
 
-function InspectionCard({ item, index }: { item: Awaited<ReturnType<typeof listInspectionQueue>>[number]; index: number }) {
+function InspectionCard({ item }: { item: Awaited<ReturnType<typeof listInspectionQueue>>[number] }) {
   const inProgress = item.inspection_state === "in_progress";
   const completed = item.inspection_state === "completed";
 
   return (
-    <Card className={`overflow-hidden rounded-[20px] border-border/70 ${CARD_TONES[index % CARD_TONES.length]} shadow-[0_1px_3px_rgba(0,0,0,0.05)] transition hover:-translate-y-px`}>
-      <CardContent className="p-3.5">
+    <Card className="gap-0 overflow-hidden rounded-2xl border-border/70 bg-card py-0 shadow-[0_1px_3px_rgba(0,0,0,0.04)] transition hover:border-primary/25">
+      <CardContent className="p-3">
         <div className="grid grid-cols-[42px_minmax(0,1fr)_auto] items-start gap-3">
           <div className="grid size-10 place-items-center rounded-2xl bg-primary/[0.08] text-primary">
             <SearchCheck className="size-5" />
@@ -175,6 +137,13 @@ export function PerawatanList() {
     staleTime: 60_000,
   });
 
+  const overview = useQuery({
+    queryKey: ["perawatan", "overview", context.data?.usahaId],
+    queryFn: () => getMaintenanceOverview(context.data!.usahaId),
+    enabled: Boolean(context.data?.usahaId),
+    staleTime: 15_000,
+  });
+
   const queue = useQuery({
     queryKey: ["perawatan", "queue", context.data?.usahaId, status, search],
     queryFn: () => listMaintenanceQueue(context.data!.usahaId, { status, search }),
@@ -191,10 +160,11 @@ export function PerawatanList() {
 
   if (context.isPending) {
     return (
-      <div className="space-y-4">
-        <Skeleton className="h-20 rounded-2xl" />
-        <Skeleton className="h-14 rounded-2xl" />
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-44 rounded-2xl" />)}</div>
+      <div className="space-y-3">
+        <Skeleton className="h-12 rounded-xl" />
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-[66px] rounded-xl" />)}</div>
+        <Skeleton className="h-10 rounded-xl" />
+        <div className="grid gap-2 md:grid-cols-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-36 rounded-2xl" />)}</div>
       </div>
     );
   }
@@ -209,42 +179,44 @@ export function PerawatanList() {
 
   return (
     <div className="space-y-4 pb-28 sm:space-y-5 lg:pb-10">
-      <header className="space-y-2">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-primary">Perawatan/Pemeriksaan</p>
-            <h1 className="text-[25px] font-bold leading-tight tracking-tight sm:text-[28px]">Kondisi Unit</h1>
-          </div>
-          {activeTab === "maintenance" ? (
-            <Button asChild className="h-10 shrink-0 rounded-xl px-4">
-              <Link to={paths.perawatan + "/create"}><Plus />Buat Perawatan</Link>
-            </Button>
-          ) : null}
+      <header className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-[22px] font-bold leading-tight tracking-tight sm:text-[25px]">Perawatan</h1>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">Kondisi unit · {context.data.usahaNama}</p>
         </div>
-        <p className="max-w-2xl text-sm leading-5 text-muted-foreground">
-          Satu workspace untuk pemeriksaan kondisi unit setelah pengembalian dan tindak lanjut perawatan bila diperlukan.
-        </p>
+        {activeTab === "maintenance" ? (
+          <Button asChild className="h-9 shrink-0 rounded-xl px-3 text-xs sm:h-10 sm:px-4 sm:text-sm">
+            <Link to={paths.perawatan + "/create"}><Plus className="size-4" />Buat Perawatan</Link>
+          </Button>
+        ) : null}
       </header>
 
-      <div className="flex flex-wrap gap-2">
-        <div className="inline-flex h-10 items-center gap-2 rounded-full border bg-background px-3.5 text-sm font-medium">
-          <Tag className="size-4 text-primary" />
-          Usaha: {context.data.usahaNama}
-        </div>
-        <div className="inline-flex h-10 items-center gap-2 rounded-full border bg-background px-3.5 text-sm text-muted-foreground">
-          <Layers3 className="size-4" />
-          Unit pasca-pengembalian
-        </div>
+      <div role="group" aria-label="Ringkasan perawatan" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {([
+          ["Total", overview.data?.total],
+          ["Terjadwal", overview.data?.planned],
+          ["Berjalan", overview.data?.inProgress],
+          ["Selesai kerja", overview.data?.completed],
+        ] as const).map(([label, value]) => (
+          <Card key={label} className="gap-0 rounded-xl border-border/70 py-0 shadow-none">
+            <CardContent className="px-3 py-2.5">
+              <p className="truncate text-[10px] font-medium text-muted-foreground sm:text-xs">{label}</p>
+              <p className="mt-0.5 text-lg font-semibold leading-5 tabular-nums sm:text-xl">
+                {overview.isPending || overview.isError ? "—" : value ?? 0}
+              </p>
+            </CardContent>
+          </Card>
+        ))}
       </div>
 
-      <div role="tablist" aria-label="Alur kondisi unit" className="flex w-fit rounded-2xl bg-muted/45 p-1">
+      <div role="tablist" aria-label="Alur kondisi unit" className="grid w-full grid-cols-2 rounded-xl bg-muted/45 p-1 sm:flex sm:w-fit sm:rounded-2xl">
         <button
           type="button"
           role="tab"
           aria-selected={activeTab === "maintenance"}
           onClick={() => setActiveTab("maintenance")}
           className={[
-            "flex h-9 items-center gap-2 rounded-xl px-5 text-sm font-semibold transition-colors",
+            "flex h-9 items-center justify-center gap-2 rounded-lg px-3 text-xs font-semibold transition-colors sm:rounded-xl sm:px-5 sm:text-sm",
             activeTab === "maintenance" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
           ].join(" ")}
         >
@@ -256,7 +228,7 @@ export function PerawatanList() {
           aria-selected={activeTab === "inspection"}
           onClick={() => setActiveTab("inspection")}
           className={[
-            "flex h-9 items-center gap-2 rounded-xl px-5 text-sm font-semibold transition-colors",
+            "flex h-9 items-center justify-center gap-2 rounded-lg px-3 text-xs font-semibold transition-colors sm:rounded-xl sm:px-5 sm:text-sm",
             activeTab === "inspection" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
           ].join(" ")}
         >
@@ -266,8 +238,8 @@ export function PerawatanList() {
 
       {activeTab === "maintenance" ? (
         <div className="space-y-4">
-          <Card className="overflow-hidden rounded-2xl border-border/70 shadow-[0_1px_3px_rgba(0,0,0,0.05)]">
-            <CardContent className="space-y-3 p-3 sm:p-4">
+          <Card className="gap-0 overflow-hidden rounded-2xl border-border/70 py-0 shadow-[0_1px_3px_rgba(0,0,0,0.05)]">
+            <CardContent className="space-y-2.5 p-3 sm:p-3.5">
               <div className="relative">
                 <Search className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
                 <Input
@@ -275,7 +247,7 @@ export function PerawatanList() {
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder="Cari kode unit, barang, pelaksana, atau pekerjaan..."
-                  className="h-11 rounded-xl bg-background pl-10 pr-10"
+                  className="h-10 rounded-xl bg-background pl-10 pr-10 text-sm"
                   autoComplete="off"
                 />
                 {search ? (
@@ -285,12 +257,20 @@ export function PerawatanList() {
                 ) : null}
               </div>
 
-              <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
-                <FilterChip label="Perlu Tindakan" icon={<Wrench className="size-4" />} active={status === "active"} onClick={() => setStatus("active")} />
-                <FilterChip label="Direncanakan" icon={<CalendarDays className="size-4" />} active={status === "planned"} onClick={() => setStatus("planned")} />
-                <FilterChip label="Berjalan" icon={<SlidersHorizontal className="size-4" />} active={status === "in_progress"} onClick={() => setStatus("in_progress")} />
-                <FilterChip label="Selesai" icon={<CheckCircle2 className="size-4" />} active={status === "completed"} onClick={() => setStatus("completed")} />
-                <FilterChip label="Semua" icon={<Filter className="size-4" />} active={status === "all"} onClick={() => setStatus("all")} />
+              <div className="flex items-center gap-2">
+                <span className="hidden text-xs font-medium text-muted-foreground sm:block">Status</span>
+                <Select value={status} onValueChange={setStatus}>
+                  <SelectTrigger aria-label="Status perawatan" className="h-9 w-full rounded-xl bg-background text-xs sm:max-w-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="active">Perlu Tindakan</SelectItem>
+                    <SelectItem value="planned">Direncanakan</SelectItem>
+                    <SelectItem value="in_progress">Berjalan</SelectItem>
+                    <SelectItem value="completed">Selesai</SelectItem>
+                    <SelectItem value="all">Semua Status</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
 
               {maintenanceFilterActive ? (
@@ -303,7 +283,7 @@ export function PerawatanList() {
           </Card>
 
           {queue.isPending ? (
-            <div className="grid gap-2.5 lg:grid-cols-2">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-40 rounded-[20px]" />)}</div>
+            <div className="grid gap-2.5 md:grid-cols-2">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-40 rounded-[20px]" />)}</div>
           ) : queue.error ? (
             <Alert variant="destructive">
               <AlertTitle>Daftar perawatan gagal dimuat</AlertTitle>
@@ -328,8 +308,8 @@ export function PerawatanList() {
                 <span className="text-muted-foreground">{queue.data.length} pekerjaan ditampilkan</span>
                 <span className="hidden text-xs text-muted-foreground sm:inline">Perlu tindakan: {queue.data.filter((item) => item.status === "planned" || item.status === "in_progress" || (item.status === "completed" && item.unit_status === "maintenance")).length}</span>
               </div>
-              <div className="grid gap-2.5 lg:grid-cols-2">
-                {queue.data.map((item, index) => <MaintenanceCard key={item.perawatan_id} item={item} index={index} />)}
+              <div className="grid gap-2.5 md:grid-cols-2">
+                {queue.data.map((item) => <MaintenanceCard key={item.perawatan_id} item={item} />)}
               </div>
             </>
           )}
@@ -352,7 +332,7 @@ export function PerawatanList() {
                   value={inspectionSearch}
                   onChange={(e) => setInspectionSearch(e.target.value)}
                   placeholder="Cari kode unit, penyewa, atau nomor pengembalian..."
-                  className="h-11 rounded-xl bg-background pl-10 pr-10"
+                  className="h-10 rounded-xl bg-background pl-10 pr-10 text-sm"
                   autoComplete="off"
                 />
                 {inspectionSearch ? (
@@ -372,7 +352,7 @@ export function PerawatanList() {
           ) : null}
 
           {inspectionQueue.isPending ? (
-            <div className="grid gap-2.5 lg:grid-cols-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-44 rounded-[20px]" />)}</div>
+            <div className="grid gap-2.5 md:grid-cols-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-44 rounded-[20px]" />)}</div>
           ) : inspectionQueue.error ? (
             <Alert variant="destructive">
               <AlertTitle>Antrean pemeriksaan gagal dimuat</AlertTitle>
@@ -397,8 +377,8 @@ export function PerawatanList() {
                 <span className="text-muted-foreground">{inspectionItems.length} unit pemeriksaan</span>
                 <span className="hidden text-xs text-muted-foreground sm:inline">Sumber: Pengembalian</span>
               </div>
-              <div className="grid gap-2.5 lg:grid-cols-2">
-                {inspectionItems.map((item, index) => <InspectionCard key={item.detail_pengembalian_id} item={item} index={index} />)}
+              <div className="grid gap-2.5 md:grid-cols-2">
+                {inspectionItems.map((item) => <InspectionCard key={item.detail_pengembalian_id} item={item} />)}
               </div>
             </>
           )}
@@ -406,7 +386,7 @@ export function PerawatanList() {
       )}
 
       <div className="hidden items-center justify-between border-t pt-3 text-xs text-muted-foreground sm:flex">
-        <span>Warna card membantu membedakan item dengan cepat.</span>
+        <span>Prioritaskan unit yang masih membutuhkan tindak lanjut.</span>
         <span>Alur tetap: Pengembalian → Pemeriksaan → Perawatan → verifikasi kesiapan.</span>
       </div>
     </div>

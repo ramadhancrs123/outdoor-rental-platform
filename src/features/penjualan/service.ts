@@ -3,6 +3,7 @@ import { supabase } from "@/app/providers/supabase/client";
 import { getCatalogMediaUrl } from "@/features/katalog/service";
 import type { CreateSaleInput, MixedCheckoutCommandResult, SaleCatalogItem, SaleCommandResult, SaleListItem, SalePaymentMethod, SaleReceiptData } from "./types";
 import type { CheckoutDiscountRequest } from "@/features/penyewaan/types";
+import { getFinanceBusinessDateOnly, localDateTimeToUtcIso } from "@/features/keuangan/utils";
 
 type ProductRow = {
   barang_id: string;
@@ -365,6 +366,79 @@ export async function reconcileRetailCommand(
   });
   if(error) throw error;
   return data as {state:"committed"|"not_found"|"unknown";response:Record<string,unknown>|null};
+}
+
+export type SalesOverview = {
+  totalTransactions: number;
+  todayTransactions: number;
+  todayRevenue: number;
+  unpaidTransactions: number;
+};
+
+/** Read-only POS overview. Daily boundaries follow the active business timezone. */
+export async function getSalesOverview(
+  usahaId: string,
+  timezone = "Asia/Jakarta",
+): Promise<SalesOverview> {
+  const today = getFinanceBusinessDateOnly(timezone);
+  const nextDayDate = new Date(today + "T00:00:00.000Z");
+  nextDayDate.setUTCDate(nextDayDate.getUTCDate() + 1);
+  const nextDay = nextDayDate.toISOString().slice(0, 10);
+  const from = localDateTimeToUtcIso(today + "T00:00", timezone);
+  const until = localDateTimeToUtcIso(nextDay + "T00:00", timezone);
+
+  const [totalResult, unpaidResult, todayCountResult] = await Promise.all([
+    supabase
+      .from("penjualan")
+      .select("penjualan_id", { count: "exact", head: true })
+      .eq("usaha_id", usahaId)
+      .eq("status", "completed"),
+    supabase
+      .from("penjualan")
+      .select("penjualan_id", { count: "exact", head: true })
+      .eq("usaha_id", usahaId)
+      .eq("status", "completed")
+      .in("payment_status", ["unpaid", "partial"]),
+    supabase
+      .from("penjualan")
+      .select("penjualan_id", { count: "exact", head: true })
+      .eq("usaha_id", usahaId)
+      .eq("status", "completed")
+      .gte("created_at", from)
+      .lt("created_at", until),
+  ]);
+
+  if (totalResult.error) throw totalResult.error;
+  if (unpaidResult.error) throw unpaidResult.error;
+  if (todayCountResult.error) throw todayCountResult.error;
+
+  let todayRevenue = 0;
+  let offset = 0;
+  const pageSize = 500;
+  while (true) {
+    const { data, error } = await supabase
+      .from("penjualan")
+      .select("total_amount")
+      .eq("usaha_id", usahaId)
+      .eq("status", "completed")
+      .gte("created_at", from)
+      .lt("created_at", until)
+      .order("created_at", { ascending: true })
+      .range(offset, offset + pageSize - 1);
+    if (error) throw error;
+
+    const rows = data ?? [];
+    todayRevenue += rows.reduce((sum, row) => sum + Number(row.total_amount ?? 0), 0);
+    if (rows.length < pageSize) break;
+    offset += pageSize;
+  }
+
+  return {
+    totalTransactions: totalResult.count ?? 0,
+    todayTransactions: todayCountResult.count ?? 0,
+    todayRevenue,
+    unpaidTransactions: unpaidResult.count ?? 0,
+  };
 }
 
 export async function listSales(usahaId: string, search = "", limit = 50): Promise<SaleListItem[]> {

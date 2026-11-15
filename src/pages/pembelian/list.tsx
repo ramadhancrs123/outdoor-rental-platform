@@ -12,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   DEFAULT_PURCHASE_LIST_FILTERS,
   getPemasokContext,
+  getPurchaseOverview,
   listPurchases,
   type PurchaseListFilters,
   formatProcurementDate,
@@ -33,6 +34,12 @@ export function PurchaseList() {
     queryFn: () => listPurchases(context.data!.usahaId, filters),
     enabled: Boolean(context.data?.usahaId),
   });
+  const overview = useQuery({
+    queryKey: ["pembelian", "overview", context.data?.usahaId],
+    queryFn: () => getPurchaseOverview(context.data!.usahaId),
+    enabled: Boolean(context.data?.usahaId),
+    staleTime: 15_000,
+  });
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil((purchases.data?.total ?? 0) / filters.pageSize)), [filters.pageSize, purchases.data?.total]);
   const setFilter = <K extends keyof PurchaseListFilters>(key: K, value: PurchaseListFilters[K]) => {
@@ -40,7 +47,7 @@ export function PurchaseList() {
   };
 
   if (context.isPending) {
-    return <div className="space-y-4"><Skeleton className="h-24 rounded-2xl" /><Skeleton className="h-11 rounded-2xl" /><div className="space-y-3">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-36 rounded-2xl" />)}</div></div>;
+    return <div className="space-y-3"><Skeleton className="h-12 rounded-xl" /><div className="grid grid-cols-2 gap-2 sm:grid-cols-4">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-[66px] rounded-xl" />)}</div><Skeleton className="h-24 rounded-2xl" /><div className="grid gap-2 md:grid-cols-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-36 rounded-2xl" />)}</div></div>;
   }
 
   if (context.error || !context.data) {
@@ -48,51 +55,72 @@ export function PurchaseList() {
   }
 
   return (
-    <div className="space-y-4 pb-24 lg:space-y-5 lg:pb-8">
-      <header className="flex items-start justify-between gap-3">
+    <div className="space-y-3 pb-24 lg:space-y-4 lg:pb-8">
+      <header className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-xs text-muted-foreground">Pembelian</p>
-          <h1 className="mt-0.5 text-[26px] font-bold tracking-tight">Pembelian</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Kelola draft pembelian usaha Anda.</p>
+          <h1 className="text-[22px] font-bold leading-tight tracking-tight sm:text-[25px]">Pembelian</h1>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">{context.data.usahaNama}</p>
         </div>
-        <div className="flex shrink-0 flex-wrap gap-2">
-          <Button asChild variant="outline" className="h-10 rounded-xl"><Link to={paths.pemasok}><Building2 /><span className="hidden sm:inline">Master Pemasok</span><span className="sm:hidden">Pemasok</span></Link></Button>
-          <Button asChild className="h-10 rounded-xl px-3 sm:px-4"><Link to={paths.pembelian + "/create"}><Plus /><span>Buat Draft Pembelian</span></Link></Button>
+        <div className="flex shrink-0 gap-1.5 sm:gap-2">
+          <Button asChild variant="outline" className="h-9 rounded-xl px-2.5 text-xs sm:h-10 sm:px-3 sm:text-sm"><Link to={paths.pemasok}><Building2 className="size-4" /><span className="hidden sm:inline">Master Pemasok</span><span className="sm:hidden">Pemasok</span></Link></Button>
+          <Button asChild className="h-9 rounded-xl px-2.5 text-xs sm:h-10 sm:px-4 sm:text-sm"><Link to={paths.pembelian + "/create"}><Plus className="size-4" /><span>Buat Pembelian</span></Link></Button>
         </div>
       </header>
 
-      <div className="space-y-2">
-        <label className="relative block" htmlFor="purchase-search">
+      <div role="group" aria-label="Ringkasan pembelian" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {([
+          ["Total", overview.data?.total],
+          ["Draf", overview.data?.draft],
+          ["Selesai", overview.data?.completed],
+          ["Belum masuk", overview.data?.pendingUnits],
+        ] as const).map(([label, value]) => (
+          <Card key={label} className="gap-0 rounded-xl border-border/70 py-0 shadow-none">
+            <CardContent className="px-3 py-2.5">
+              <p className="truncate text-[10px] font-medium text-muted-foreground sm:text-xs">{label}</p>
+              <p className="mt-0.5 text-lg font-semibold leading-5 tabular-nums sm:text-xl">
+                {overview.isPending || overview.isError ? "—" : value ?? 0}
+              </p>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      <Card className="gap-0 rounded-2xl border-border/70 py-0 shadow-none">
+        <CardContent className="space-y-2.5 p-3">
+          <label className="relative block" htmlFor="purchase-search">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
           <Input
             id="purchase-search"
-            placeholder="Cari nomor, pemasok, atau tanggal..."
+            placeholder="Cari nomor pembelian atau pemasok..."
             value={filters.search}
             onChange={(e) => setFilter("search", e.target.value)}
-            className="h-11 rounded-xl pl-9"
+            className="h-10 rounded-xl pl-9 text-sm"
           />
         </label>
-        <div className="flex gap-2 overflow-x-auto pb-1" role="tablist" aria-label="Filter status pembelian">
-          {[
-            ["all", "Semua"],
-            ["draft", "Draft"],
-          ].map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              role="tab"
-              aria-selected={filters.status === value}
-              onClick={() => setFilter("status", value as PurchaseListFilters["status"])}
-              className={[
-                "shrink-0 rounded-full border px-4 py-2 text-xs font-semibold",
-                filters.status === value ? "border-primary bg-primary text-primary-foreground" : "bg-card text-muted-foreground",
-              ].join(" ")}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      </div>
+          <div className="flex gap-1.5 overflow-x-auto pb-0.5" role="tablist" aria-label="Filter status pembelian">
+            {[
+              ["all", "Semua"],
+              ["draft", "Draf"],
+              ["completed", "Selesai"],
+              ["cancelled", "Dibatalkan"],
+            ].map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                role="tab"
+                aria-selected={filters.status === value}
+                onClick={() => setFilter("status", value as PurchaseListFilters["status"])}
+                className={[
+                  "h-8 shrink-0 rounded-full border px-3 text-[11px] font-semibold transition-colors",
+                  filters.status === value ? "border-primary bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:text-foreground",
+                ].join(" ")}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
 
       {purchases.isPending ? (
         <div className="space-y-3">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-36 rounded-2xl" />)}</div>
@@ -103,19 +131,19 @@ export function PurchaseList() {
         </Alert>
       ) : purchases.data.purchases.length === 0 ? (
         <Card className="rounded-2xl">
-          <CardContent className="flex min-h-64 flex-col items-center justify-center gap-3 p-6 text-center">
+          <CardContent className="flex min-h-48 flex-col items-center justify-center gap-2.5 p-4 text-center sm:min-h-56 sm:p-6">
             <div className="grid size-14 place-items-center rounded-2xl bg-primary/10 text-primary"><ClipboardList className="size-7" /></div>
-            <div><h2 className="font-semibold">Belum ada draft pembelian</h2><p className="mt-1 max-w-md text-sm leading-6 text-muted-foreground">Buat draft pengadaan baru tanpa otomatis membuat receiving, unit inventaris, atau pembayaran.</p></div>
+            <div><h2 className="font-semibold">{filters.status === "all" ? "Belum ada pembelian" : "Tidak ada pembelian pada status ini"}</h2><p className="mt-1 max-w-md text-sm leading-6 text-muted-foreground">Status pembayaran dan penerimaan inventaris akan ditampilkan di sini.</p></div>
             <Button asChild className="rounded-xl"><Link to={paths.pembelian + "/create"}><Plus />Buat Draft Pembelian</Link></Button>
           </CardContent>
         </Card>
       ) : (
         <>
-          <div className="grid gap-3 md:hidden">
+          <div className="grid gap-2.5 lg:grid-cols-2 2xl:hidden">
             {purchases.data.purchases.map((purchase) => (
               <Link key={purchase.pembelian_id} to={paths.pembelian + "/" + purchase.pembelian_id}>
-                <Card className="rounded-2xl shadow-sm transition-colors hover:bg-accent/40">
-                  <CardContent className="space-y-3 p-4">
+                <Card className="gap-0 rounded-2xl border-border/70 py-0 shadow-none transition-colors hover:border-primary/25">
+                  <CardContent className="space-y-2.5 p-3 sm:p-3.5">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0"><h2 className="font-bold">{purchase.nomor_pembelian}</h2><p className="mt-1 text-sm text-muted-foreground">{purchase.pemasok_nama ?? "Pemasok tidak dicatat"}</p></div>
                       <Badge variant={purchaseStatusVariant()} className="shrink-0 rounded-full bg-amber-50 text-amber-700 hover:bg-amber-50">{purchaseStatusLabel(purchase.status)}</Badge>
@@ -136,7 +164,7 @@ export function PurchaseList() {
             ))}
           </div>
 
-          <div className="hidden overflow-hidden rounded-2xl border bg-card shadow-sm md:block">
+          <div className="hidden overflow-hidden rounded-2xl border bg-card shadow-sm 2xl:block">
             <table className="w-full text-sm">
               <thead className="border-b bg-muted/35 text-left"><tr><th className="px-5 py-3 font-medium">Nomor</th><th className="px-5 py-3 font-medium">Pemasok</th><th className="px-5 py-3 font-medium">Tanggal</th><th className="px-5 py-3 font-medium">Item</th><th className="px-5 py-3 font-medium">Total</th><th className="px-5 py-3 font-medium">Inventaris</th><th className="px-5 py-3 font-medium">Status</th></tr></thead>
               <tbody>
@@ -157,9 +185,9 @@ export function PurchaseList() {
             </table>
           </div>
 
-          <div className="hidden flex-col gap-2 border-t pt-3 text-sm sm:flex md:flex-row md:items-center md:justify-between">
+          <div className="flex flex-col gap-2 border-t pt-3 text-xs sm:flex-row sm:items-center sm:justify-between sm:text-sm">
             <span className="text-muted-foreground">{purchases.data.total} pembelian · Halaman {filters.page} dari {totalPages}</span>
-            <div className="flex gap-2"><Button variant="outline" className="rounded-xl" disabled={filters.page <= 1} onClick={() => setFilter("page", filters.page - 1)}>Sebelumnya</Button><Button variant="outline" className="rounded-xl" disabled={filters.page >= totalPages} onClick={() => setFilter("page", filters.page + 1)}>Berikutnya</Button></div>
+            <div className="flex gap-2"><Button variant="outline" size="sm" className="h-8 rounded-lg px-3" disabled={filters.page <= 1} onClick={() => setFilter("page", filters.page - 1)}>Sebelumnya</Button><Button variant="outline" size="sm" className="h-8 rounded-lg px-3" disabled={filters.page >= totalPages} onClick={() => setFilter("page", filters.page + 1)}>Berikutnya</Button></div>
           </div>
         </>
       )}
